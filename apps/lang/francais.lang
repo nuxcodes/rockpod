@@ -2210,6 +2210,20 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_TAGNAVI_ALL_TRACKS_SORTED_RANDOMLY_BY_ALBUM
+  desc: "[By album randomly]" entry in tag browser
+  user: core
+  <source>
+    *: "[By album randomly]"
+  </source>
+  <dest>
+    *: "[Par album aléatoirement]"
+  </dest>
+  <voice>
+    *: "Toutes les pistes triées aléatoirement par album"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_DISPLAY
   desc: in settings_menu()
   user: core
