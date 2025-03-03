@@ -50,6 +50,7 @@
 #define FILE_ATTR_OPX   0x1400 /* open plugins shortcut */
 #define FILE_ATTR_LOG   0x1500 /* log file */
 #define FILE_ATTR_MASK  0xFF00 /* which bits tree.c uses for file types */
+#define FILE_ATTR_MULTISELECTION 0x40000000 /* is file a part of a multiselection ? */
 
 long tree_get_filetype_voiceclip(int attr);
 

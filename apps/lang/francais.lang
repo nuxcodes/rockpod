@@ -5931,6 +5931,62 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_MULTISELECT_ENABLE
+  desc: enable multiselection (in lists)
+  user: core
+  <source>
+    *: "Enable Multiselection"
+  </source>
+  <dest>
+    *: "Activer la Multisélection"
+  </dest>
+  <voice>
+    *: "Activer la Multisélection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_MULTISELECT_DISABLE
+  desc: disable multiselection (in lists)
+  user: core
+  <source>
+    *: "Disable Multiselection"
+  </source>
+  <dest>
+    *: "Désactiver la Multisélection"
+  </dest>
+  <voice>
+    *: "Désactiver la Multisélection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_MULTISELECT_TOGGLE
+  desc: enable or disable multiselection in lists (toggle enable/disable)
+  user: core
+  <source>
+    *: "Toggle Multiselection"
+  </source>
+  <dest>
+    *: "Activer/Désactiver la Multisélection"
+  </dest>
+  <voice>
+    *: "Activer ou Désactiver la Multisélection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_ALL_FOLDERS_FROM_CURRENT_SELECTION
+  desc: ask yes/no popup
+  user: core
+  <source>
+    *: "All folders from current selection"
+  </source>
+  <dest>
+    *: "Tous les dossiers de la sélection courante"
+  </dest>
+  <voice>
+    *: "Tous les dossiers de la sélection courante"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_DISK_FREE_INFO
   desc: disk size info
   user: core

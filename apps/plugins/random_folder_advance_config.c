@@ -370,7 +370,7 @@ static int edit(struct rfa_scan *scan)
     }
     scan->dirty = false;
     rb->gui_synclist_init(&lists, list_get_name_cb, (void *) scan,
-                          false, 1, NULL);
+                          false, 1, NULL, false);
     rb->gui_synclist_set_nb_items(&lists, scan->dirs->count);
     rb->gui_synclist_select_item(&lists, 0);
     set_title(&lists, false, scan->dirs->count);

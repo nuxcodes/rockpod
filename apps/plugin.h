@@ -395,7 +395,8 @@ struct plugin_api {
     void (*gui_synclist_init)(struct gui_synclist * lists,
             list_get_name callback_get_item_name, void * data,
             bool scroll_all,int selected_size,
-            struct viewport parent[NB_SCREENS]);
+            struct viewport parent[NB_SCREENS],
+            bool multiple_selection_force_single_entry_scroll);
     void (*gui_synclist_set_nb_items)(struct gui_synclist * lists, int nb_items);
     void (*gui_synclist_set_voice_callback)(struct gui_synclist * lists, list_speak_item voice_callback);
     void (*gui_synclist_set_icon_callback)(struct gui_synclist * lists,
@@ -539,6 +540,7 @@ struct plugin_api {
     void (*set_dirfilter)(int l_dirfilter);
 
     void (*onplay_show_playlist_menu)(const char* path, int attr, void (*playlist_insert_cb));
+    struct add_to_pl_param* (*onplay_show_playlist_menu_get_choice)(void);
     void (*onplay_show_playlist_cat_menu)(const char* track_name, int attr,
                                           void (*add_to_pl_cb));
     bool (*browse_id3)(struct mp3entry *id3,
@@ -868,7 +870,7 @@ struct plugin_api {
             const char *filename, int position, bool queue, bool sync);
     int (*playlist_insert_directory)(struct playlist_info* playlist,
                               const char *dirname, int position, bool queue,
-                              bool recurse, struct playlist_insert_context *context);
+                              bool recurse, struct playlist_insert_context* context_to_use);
     int (*playlist_insert_playlist)(struct playlist_info* playlist,
                                     const char *filename, int position, bool queue);
     int (*playlist_insert_context_create)(struct playlist_info* playlist,

@@ -5986,6 +5986,62 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_MULTISELECT_ENABLE
+  desc: enable multiselection (in lists)
+  user: core
+  <source>
+    *: "Enable Multiselection"
+  </source>
+  <dest>
+    *: "Enable Multiselection"
+  </dest>
+  <voice>
+    *: "Enable Multiselection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_MULTISELECT_DISABLE
+  desc: disable multiselection (in lists)
+  user: core
+  <source>
+    *: "Disable Multiselection"
+  </source>
+  <dest>
+    *: "Disable Multiselection"
+  </dest>
+  <voice>
+    *: "Disable Multiselection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_MULTISELECT_TOGGLE
+  desc: enable or disable multiselection in lists (toggle enable/disable)
+  user: core
+  <source>
+    *: "Toggle Multiselection"
+  </source>
+  <dest>
+    *: "Toggle Multiselection"
+  </dest>
+  <voice>
+    *: "Toggle Multiselection"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_ALL_FOLDERS_FROM_CURRENT_SELECTION
+  desc: ask yes/no popup
+  user: core
+  <source>
+    *: "All folders from current selection"
+  </source>
+  <dest>
+    *: "All folders from current selection"
+  </dest>
+  <voice>
+    *: "All folders from current selection"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_DISK_FREE_INFO
   desc: disk size info
   user: core

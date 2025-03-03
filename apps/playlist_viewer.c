@@ -120,10 +120,13 @@ struct playlist_viewer {
     int *initial_selection;     /* The initially selected track              */
     int current_playing_track;  /* Index of current playing track            */
     int selected_track;         /* The selected track, relative (first is 0) */
+    int selected_size;      /* Multiselection. Offset is the selected track. */
+    int min_index_forbid_limit; /* don't let the user scroll under it */
+    int end_index_forbid_limit; /* don't let the user scroll past (number_items-this var) */
+    bool multiselection_enabled;
+    int multiselection_offset_track;
     int moving_track;           /* The track to move, relative (first is 0)
                                    or -1 if nothing is currently being moved */
-    int moving_playlist_index;  /* Playlist-relative index (as opposed to
-                                   viewer-relative index) of moving track    */
     struct playlist_buffer buffer;
     struct mp3entry *id3;
     bool allow_view_text_plugin;
@@ -477,8 +480,11 @@ static bool playlist_viewer_init(struct playlist_viewer * viewer,
     }
     playlist_buffer_init(&viewer->buffer, buffer, buffer_size);
 
+    viewer->min_index_forbid_limit = 0;
+    viewer->end_index_forbid_limit = 0;
+    viewer->selected_size = 1;
     viewer->moving_track = -1;
-    viewer->moving_playlist_index = -1;
+    viewer->multiselection_enabled = false;
     viewer->initial_selection = most_recent_selection;
 
     if (!reload)
@@ -673,21 +679,98 @@ static enum pv_context_result open_pictureflow(const struct playlist_entry *curr
 #endif
 #endif /*defined(HAVE_HOTKEY) || defined(HAVE_TAGCACHE)*/
 
-static enum pv_context_result delete_track(int current_track_index,
-                                          int index, bool current_was_playing)
+static enum pv_context_result add_tracks_to_current_playlist(int index, struct add_to_pl_param *choice)
 {
-    playlist_delete(viewer.playlist, current_track_index);
+    bool modified = false;
+    struct playlist_entry *current_track;
+    if (choice != NULL)
+    {
+        int selected_size = viewer.selected_size;
+        if (selected_size < 0)
+        {
+            index -= (- selected_size);
+            selected_size = ((- selected_size) + 1);
+        }
+        struct playlist_insert_context pl_context;
+        bool queue = (choice->flags & PL_QUEUE) == PL_QUEUE;
+        bool new_playlist = (choice->flags & PL_REPLACE) == PL_REPLACE;
+        if (new_playlist && global_settings.keep_current_track_on_replace_playlist)
+        {
+            if (audio_status() & AUDIO_STATUS_PLAY)
+            {
+                modified = true;
+                playlist_remove_all_tracks(NULL);
+                new_playlist = false;
+            }
+        }
+        if (new_playlist)
+        {
+            modified = true;
+            playlist_create(NULL, NULL);
+        }
+        
+        if (playlist_insert_context_create(NULL, &pl_context, choice->position, queue, true) >= 0)
+        {
+            for (int i = 0; i < selected_size; i++)
+            {
+                current_track = playlist_buffer_get_track(&viewer.buffer, index + i);
+                if (playlist_insert_context_add(&pl_context, current_track->name) < 0)
+                {
+                    break;
+                }
+                modified = true;
+            }
+        }
+        playlist_insert_context_release(&pl_context);
+        if (new_playlist && (playlist_amount() > 0))
+        {
+            if (global_settings.playlist_shuffle)
+                playlist_shuffle(current_tick, -1);
+            playlist_start(0, 0, 0);
+        }
+    }
+    return modified ? PV_CONTEXT_MODIFIED : PV_CONTEXT_UNCHANGED;
+}
+
+static enum pv_context_result delete_tracks(int index)
+{
+    if (viewer.selected_size < 0)
+    {
+        index -= (- viewer.selected_size);
+        viewer.selected_size = ((- viewer.selected_size) + 1);
+    }
+    bool current_was_playing = false;
+    int pl_track_info_index;
+                    
+    for (int i = 0; i < viewer.selected_size; i++)
+    {
+        /* Playlist viewer orders songs based on display index. We need to
+            convert to real playlist index to access track */
+        pl_track_info_index = (index + playlist_get_first_index(viewer.playlist)) 
+                                    % viewer.num_tracks;
+        if (!current_was_playing) 
+            current_was_playing = (audio_status() & AUDIO_STATUS_PLAY) && /* or paused */
+                (pl_track_info_index == viewer.current_playing_track);
+        playlist_delete(viewer.playlist, pl_track_info_index);
+        if (i + 1 < viewer.selected_size)
+        {
+            if (!viewer.playlist)
+                playlist_get_resume_info(&viewer.current_playing_track);
+            else
+                viewer.current_playing_track = -1;
+        
+            viewer.num_tracks = playlist_amount_ex(viewer.playlist);
+        }
+    }
     if (current_was_playing)
     {
         if (playlist_amount_ex(viewer.playlist) <= 0)
             audio_stop();
         else
         {
-           /* Start playing new track except if it's the lasttrack
-              track in the playlist and repeat mode is disabled */
-            struct playlist_entry *current_track =
-                playlist_buffer_get_track(&viewer.buffer, index);
-            if (current_track->display_index != viewer.num_tracks ||
+            /* Start playing new track except if it's the lasttrack
+                track in the playlist and repeat mode is disabled */
+            if ((index + 1) != playlist_amount_ex(viewer.playlist) ||
                 global_settings.repeat_mode == REPEAT_ALL)
             {
                 audio_play(0, 0);
@@ -700,14 +783,11 @@ static enum pv_context_result delete_track(int current_track_index,
 
 static enum pv_context_result context_menu(int index)
 {
-    struct playlist_entry *current_track = playlist_buffer_get_track(&viewer.buffer,
-                                                                     index);
-    bool current_was_playing = (audio_status() & AUDIO_STATUS_PLAY) && /* or paused */
-                               (current_track->index == viewer.current_playing_track);
+    struct playlist_entry *current_track;
 
     MENUITEM_STRINGLIST(menu_items, ID2P(LANG_PLAYLIST), NULL,
                         ID2P(LANG_PLAYING_NEXT), ID2P(LANG_ADD_TO_PL),
-                        ID2P(LANG_REMOVE), ID2P(LANG_MOVE),
+                        ID2P(LANG_MULTISELECT_ENABLE), ID2P(LANG_REMOVE), ID2P(LANG_MOVE),
                         ID2P(LANG_MENU_SHOW_ID3_INFO),
                         ID2P(LANG_SHUFFLE), ID2P(LANG_SAVE),
                         ID2P(LANG_PLAYLISTVIEWER_SETTINGS)
@@ -715,35 +795,95 @@ static enum pv_context_result context_menu(int index)
                         ,ID2P(LANG_ONPLAY_PICTUREFLOW)
 #endif
                         );
-    int sel = do_menu(&menu_items, NULL, NULL, false);
+    
+    MENUITEM_STRINGLIST(menu_items_multiselection_enabled, ID2P(LANG_PLAYLIST), NULL,
+                        ID2P(LANG_PLAYING_NEXT), ID2P(LANG_ADD_TO_PL),
+                        ID2P(LANG_MULTISELECT_DISABLE), ID2P(LANG_REMOVE), ID2P(LANG_MOVE)
+                        );
+    int sel;
+    if (viewer.multiselection_enabled)
+        sel = do_menu(&menu_items_multiselection_enabled, NULL, NULL, false);
+    else
+        sel = do_menu(&menu_items, NULL, NULL, false);
     if (sel == MENU_ATTACHED_USB)
         return PV_CONTEXT_USB;
     else if (sel >= 0)
     {
         /* Abort current move */
         viewer.moving_track = -1;
-        viewer.moving_playlist_index = -1;
 
         switch (sel)
         {
             case 0:
+            {
                 /* Playing Next... menu */
-                onplay_show_playlist_menu(current_track->name, FILE_ATTR_AUDIO, NULL);
-                return PV_CONTEXT_UNCHANGED;
+                struct add_to_pl_param *choice = onplay_show_playlist_menu_get_choice();
+                return add_tracks_to_current_playlist(index, choice);
+            }
             case 1:
+            {
                 /* Add to Playlist... menu */
-                onplay_show_playlist_cat_menu(current_track->name, FILE_ATTR_AUDIO, NULL);
+                char* choice = onplay_show_playlist_cat_menu_get_choice();
+                if (viewer.selected_size < 0)
+                {
+                    index -= (- viewer.selected_size);
+                    viewer.selected_size = ((- viewer.selected_size) + 1);
+                }
+                if (choice != NULL)
+                {
+                    bool new_playlist = onplay_show_playlist_cat_menu_current_choice_is_new_playlist();
+                    for (int i = 0; i < viewer.selected_size; i++)
+                    {
+                        current_track = playlist_buffer_get_track(&viewer.buffer, index + i);
+                        if (catalog_insert_into(choice, new_playlist, current_track->name, FILE_ATTR_AUDIO, NULL) != 0)
+                        {
+                            splash(HZ*2, ID2P(LANG_PLAYLIST_ACCESS_ERROR));
+                            break;
+                        }
+                        new_playlist = false;
+                    }
+                    viewer.selected_size = 1;
+                    viewer.multiselection_enabled = false;
+                }
                 return PV_CONTEXT_UNCHANGED;
+            }
             case 2:
-                return delete_track(current_track->index, index, current_was_playing);
+                /* Make a multiselection */
+                if (!viewer.multiselection_enabled)
+                {
+                    viewer.multiselection_enabled = true;
+                    viewer.multiselection_offset_track = index;
+                    return PV_CONTEXT_UNCHANGED;
+                }
+                else
+                {
+                    /* Will be disabled later bacause of PV_CONTEXT_MODIFIED */
+                    return PV_CONTEXT_MODIFIED;
+                }
             case 3:
+                return delete_tracks(index);
+            case 4:
                 /* move track */
                 viewer.moving_track = index;
-                viewer.moving_playlist_index = current_track->index;
+                if (viewer.multiselection_enabled)
+                {
+                    int selected_size = viewer.selected_size;
+                    if (selected_size < 0)
+                    {
+                        viewer.min_index_forbid_limit = (- selected_size);
+                        viewer.end_index_forbid_limit = 0;
+                    }
+                    else
+                    {
+                        viewer.min_index_forbid_limit = 0;
+                        viewer.end_index_forbid_limit = (selected_size - 1);
+                    }
+                }
                 return PV_CONTEXT_UNCHANGED;
-            case 4:
-                return show_track_info(current_track);
             case 5:
+                current_track = playlist_buffer_get_track(&viewer.buffer, index);
+                return show_track_info(current_track);
+            case 6:
                 /* shuffle */
                 if (!yesno_pop_confirm(ID2P(LANG_SHUFFLE)))
                     return PV_CONTEXT_UNCHANGED;
@@ -751,11 +891,11 @@ static enum pv_context_result context_menu(int index)
                 playlist_randomise(viewer.playlist, current_tick, !viewer.playlist);
                 viewer.selected_track = 0;
                 return PV_CONTEXT_MODIFIED;
-            case 6:
+            case 7:
                 save_playlist_screen(viewer.playlist);
                 /* playlist indices of current playlist may have changed */
                 return viewer.playlist ? PV_CONTEXT_UNCHANGED : PV_CONTEXT_PL_UPDATE;
-            case 7:
+            case 8:
             {
                 /* playlist viewer settings */
                 sel = global_settings.playlist_viewer_track_display;
@@ -766,7 +906,8 @@ static enum pv_context_result context_menu(int index)
                            PV_CONTEXT_UNCHANGED : PV_CONTEXT_PL_UPDATE;
             }
 #ifdef HAVE_TAGCACHE
-            case 8:
+            case 9:
+                current_track = playlist_buffer_get_track(&viewer.buffer, index);
                 return open_pictureflow(current_track);
 #endif
         }
@@ -777,24 +918,40 @@ static enum pv_context_result context_menu(int index)
 static int get_track_num(struct playlist_viewer *local_viewer,
                          int selected_item)
 {
+    int result = selected_item;
     if (local_viewer->moving_track >= 0)
     {
-        if (local_viewer->selected_track == selected_item)
+        int selected_size = viewer.selected_size;
+        int moving_track = local_viewer->moving_track;
+        int cur_selected_track = local_viewer->selected_track;
+        if (selected_size < 0)
         {
-            return local_viewer->moving_track;
+            moving_track -= (- selected_size);
+            cur_selected_track -= (- selected_size);
+            selected_size = ((- selected_size) + 1);
         }
-        else if (local_viewer->selected_track > selected_item
-            && selected_item >= local_viewer->moving_track)
+        for (int i = 0; i < selected_size; i++)
         {
-            return selected_item+1; /* move down */
-        }
-        else if (local_viewer->selected_track < selected_item
-            && selected_item <= local_viewer->moving_track)
-        {
-            return selected_item-1; /* move up */
+            if ((cur_selected_track + i) == selected_item)
+            {
+                result = moving_track + i;
+                break;
+            }
+            else if ((cur_selected_track + (selected_size - 1 - i)) > selected_item
+                && selected_item >= (moving_track + (selected_size - 1 - i)))
+            {
+                /* move down */
+                result = selected_item + i + 1;
+            }
+            else if ((cur_selected_track + i) < selected_item
+                && selected_item <= (moving_track + i))
+            {
+                /* move up */
+                result = selected_item - i - 1;
+            }
         }
     }
-    return selected_item;
+    return result;
 }
 
 static struct playlist_entry* pv_get_track(struct playlist_viewer *local_viewer, int selected_item)
@@ -821,15 +978,24 @@ static enum themable_icons playlist_callback_icons(int selected_item,
 {
     struct playlist_viewer *local_viewer = (struct playlist_viewer *)data;
     struct playlist_entry *track = pv_get_track(local_viewer, selected_item);
+    int moving_track = local_viewer->moving_track;
+    int selected_size = local_viewer->selected_size;
+    if (moving_track >= 0 && selected_size < 0)
+    {
+        moving_track -= (- selected_size);
+        selected_size = ((- selected_size) + 1);
+    }
 
     if (track->index == local_viewer->current_playing_track)
     {
         /* Current playing track */
         return Icon_Audio;
     }
-    else if (track->index == local_viewer->moving_playlist_index)
+    else if (moving_track >= 0
+        && track->index >= moving_track
+        && track->index < (moving_track + selected_size))
     {
-        /* Track we are moving */
+        /* Tracks we are moving */
         return Icon_Moving;
     }
     else if (track->attr & PLAYLIST_ATTR_QUEUED)
@@ -885,7 +1051,10 @@ static void update_gui(struct gui_synclist * playlist_lists, bool init)
 {
     if (init)
         gui_synclist_init(playlist_lists, playlist_callback_name,
-                          &viewer, false, 1, NULL);
+                          &viewer, false, 1, NULL, true);
+    playlist_lists->selected_size = viewer.selected_size;
+    playlist_lists->min_index_forbid_limit = viewer.min_index_forbid_limit;
+    playlist_lists->end_index_forbid_limit = viewer.end_index_forbid_limit;
     gui_synclist_set_nb_items(playlist_lists, viewer.num_tracks);
     gui_synclist_set_voice_callback(playlist_lists,
                                     global_settings.talk_file?
@@ -903,7 +1072,11 @@ static bool update_viewer(struct gui_synclist *playlist_lists, enum pv_context_r
 {
     bool exit = false;
     if (res == PV_CONTEXT_MODIFIED)
+    {
+        viewer.selected_size = 1;
+        viewer.multiselection_enabled = false;
         playlist_set_modified(viewer.playlist, true);
+    }
 
     if (res == PV_CONTEXT_MODIFIED || res == PV_CONTEXT_PL_UPDATE)
     {
@@ -977,17 +1150,73 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
         /* during moving, another redraw is going to be needed,
          * since viewer.selected_track is updated too late (after the first draw)
          * drawing the moving item needs it */
-        viewer.selected_track=gui_synclist_get_sel_pos(&playlist_lists);
+        bool list_redraw_needed = false;
+        if (viewer.selected_track != gui_synclist_get_sel_pos(&playlist_lists))
+        {
+            viewer.selected_track = gui_synclist_get_sel_pos(&playlist_lists);
+            list_redraw_needed = true;
+        }
+        if (viewer.multiselection_enabled)
+        {
+            if (viewer.moving_track < 0)
+            {
+                int offsetdiff = viewer.selected_track - viewer.multiselection_offset_track;
+                if (offsetdiff < 0)
+                {
+                    viewer.selected_size = (- offsetdiff) + 1;
+                }
+                else if (offsetdiff == 0)
+                {
+                    viewer.selected_size = 1;
+                }
+                else
+                {
+                    viewer.selected_size = - (offsetdiff);
+                }
+                viewer.min_index_forbid_limit = 0;
+                viewer.end_index_forbid_limit = 0;
+            }
+        }
+        else
+        {
+            viewer.selected_size = 1;
+            viewer.min_index_forbid_limit = 0;
+            viewer.end_index_forbid_limit = 0;
+        }
+        if (playlist_lists.selected_size != viewer.selected_size)
+        {
+            playlist_lists.selected_size = viewer.selected_size;
+            list_redraw_needed = true;
+        }
+        if (playlist_lists.min_index_forbid_limit != viewer.min_index_forbid_limit)
+        {
+            playlist_lists.min_index_forbid_limit = viewer.min_index_forbid_limit;
+            list_redraw_needed = true;
+        }
+        if (playlist_lists.end_index_forbid_limit != viewer.end_index_forbid_limit)
+        {
+            playlist_lists.end_index_forbid_limit = viewer.end_index_forbid_limit;
+            list_redraw_needed = true;
+        }
         if (res)
         {
             bool reload = playlist_buffer_needs_reload(&viewer.buffer,
                     viewer.selected_track);
             if (reload)
+            {
                 playlist_buffer_load_entries_screen(&viewer.buffer,
                     button == ACTION_STD_NEXT ? FORWARD : BACKWARD,
                     viewer.selected_track);
-            if (reload || viewer.moving_track >= 0)
-                gui_synclist_draw(&playlist_lists);
+                list_redraw_needed = true;
+            }
+        }
+        if (list_redraw_needed)
+            /* it's important to refresh conditionally only when something changed,
+                or all texts scrolling will be broken */
+            gui_synclist_draw(&playlist_lists);
+        if (viewer.moving_track < 0 && button == ACTION_STD_OK && viewer.selected_size != 1)
+        {
+            button = ACTION_STD_CONTEXT;
         }
         switch (button)
         {
@@ -999,7 +1228,15 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                     viewer.selected_track = viewer.moving_track;
                     gui_synclist_select_item(&playlist_lists, viewer.moving_track);
                     viewer.moving_track = -1;
-                    viewer.moving_playlist_index = -1;
+                    viewer.selected_size = 1;
+                    viewer.multiselection_enabled = false;
+                    gui_synclist_draw(&playlist_lists);
+                    gui_synclist_speak_item(&playlist_lists);
+                }
+                else if (viewer.multiselection_enabled)
+                {
+                    viewer.selected_size = 1;
+                    viewer.multiselection_enabled = false;
                     gui_synclist_draw(&playlist_lists);
                     gui_synclist_speak_item(&playlist_lists);
                 }
@@ -1019,22 +1256,40 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                 int ret_val, start_index = current_track->index;
                 if (viewer.moving_track >= 0)
                 {
-                    /* Move track */
-                    ret_val = playlist_move(viewer.playlist,
-                                            viewer.moving_playlist_index,
-                                            current_track->index);
-                    if (ret_val < 0)
+                    /* Move tracks */
+                    int moving_track = viewer.moving_track;
+                    int distance = (viewer.selected_track - moving_track);
+                    if (viewer.selected_size < 0)
                     {
-                         cond_talk_ids_fq(LANG_MOVE, LANG_FAILED);
-                         splashf(HZ, (unsigned char *)"%s %s", str(LANG_MOVE),
-                                                               str(LANG_FAILED));
+                        moving_track -= (- viewer.selected_size);
+                        viewer.selected_size = ((- viewer.selected_size) + 1);
                     }
-
+                    for (int i = 0; i < viewer.selected_size; i++)
+                    {
+                        int start_index = moving_track;
+                        int dest_index = moving_track + distance;
+                        if (start_index > dest_index)
+                        {
+                            start_index = start_index + i;
+                            dest_index = dest_index + i;
+                        }
+                        else if (viewer.selected_size > 1 && distance > 0)
+                            dest_index = (dest_index + (viewer.selected_size - 1));
+                        ret_val = playlist_move(viewer.playlist,
+                                (playlist_buffer_get_track(&viewer.buffer, start_index)->index),
+                                (playlist_buffer_get_track(&viewer.buffer, dest_index)->index));
+                        if (ret_val < 0)
+                        {
+                            cond_talk_ids_fq(LANG_MOVE, LANG_FAILED);
+                            splashf(HZ, (unsigned char *)"%s %s", str(LANG_MOVE),
+                                                                str(LANG_FAILED));
+                            break;
+                        }
+                    }
                     playlist_set_modified(viewer.playlist, true);
-
                     update_playlist(true);
+                    viewer.multiselection_enabled = false;
                     viewer.moving_track = -1;
-                    viewer.moving_playlist_index = -1;
                 }
                 else if (global_settings.party_mode)
                 {
@@ -1150,6 +1405,22 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                         goto exit;
                     }
                 }
+                else if (global_settings.hotkey_tree == HOTKEY_MULTISELECTION)
+                {
+                    /* Make a multiselection */
+                    if (!viewer.multiselection_enabled)
+                    {
+                        viewer.multiselection_enabled = true;
+                        viewer.multiselection_offset_track = current_track->index;
+                        /* Reset current text scrollings to avoid graphical glitches */
+                        gui_synclist_draw(&playlist_lists);
+                    }
+                    else
+                    {
+                        /* Will be disabled later bacause of PV_CONTEXT_MODIFIED */
+                        update_viewer(&playlist_lists, PV_CONTEXT_MODIFIED);
+                    }
+                }
                 else if (global_settings.hotkey_tree == HOTKEY_PROPERTIES)
                 {
                     if (show_track_info(current_track) == PV_CONTEXT_USB)
@@ -1161,17 +1432,18 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                 }
                 else if (global_settings.hotkey_tree == HOTKEY_DELETE)
                 {
-                    if (update_viewer(&playlist_lists,
-                            delete_track(current_track->index,
-                            viewer.selected_track,
-                            (current_track->index == viewer.current_playing_track))))
+                    if (update_viewer(&playlist_lists, delete_tracks(viewer.selected_track)))
                     {
                         ret = PLAYLIST_VIEWER_CANCEL;
                         exit = true;
                     }
                 }
                 else
-                    onplay(current_track->name, FILE_ATTR_AUDIO, CONTEXT_STD, true, ONPLAY_NO_CUSTOMACTION);
+                {
+                    onplay(current_track->name, FILE_ATTR_AUDIO, CONTEXT_STD, true, ONPLAY_NO_CUSTOMACTION, true);
+                    struct add_to_pl_param *choice = onplay_show_playlist_menu_get_current_choice();
+                    update_viewer(&playlist_lists, add_tracks_to_current_playlist(viewer.selected_track, choice));
+                }
                 break;
             }
 #endif /* HAVE_HOTKEY */
@@ -1284,7 +1556,7 @@ bool search_playlist(void)
     backlight_on();
     struct playlist_search_data s_data = {.track = &track, .found_indicies = found_indicies};
     gui_synclist_init(&playlist_lists, playlist_search_callback_name,
-                      &s_data, false, 1, NULL);
+                      &s_data, false, 1, NULL, true);
     gui_synclist_set_title(&playlist_lists, str(LANG_SEARCH_RESULTS), NOICON);
     if(global_settings.talk_file)
         gui_synclist_set_voice_callback(&playlist_lists,

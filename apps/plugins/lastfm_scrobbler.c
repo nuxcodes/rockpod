@@ -398,7 +398,7 @@ static void clear_display(void)
 
     if (!lists.title) /* initialize the list, only used to display the title..*/
     {
-        rb->gui_synclist_init(&lists, NULL, NULL, false,1, NULL);
+        rb->gui_synclist_init(&lists, NULL, NULL, false, 1, NULL, false);
         rb->gui_synclist_set_title(&lists, rb->str(LANG_AUDIOSCROBBLER), Icon_Moving);
     }
 

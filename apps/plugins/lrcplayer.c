@@ -2051,7 +2051,7 @@ static int timetag_editor(void)
             selected = idx;
     }
 
-    rb->gui_synclist_init(&gui_editor, &get_lrc_timeline, NULL, false, 1, NULL);
+    rb->gui_synclist_init(&gui_editor, &get_lrc_timeline, NULL, false, 1, NULL, false);
     rb->gui_synclist_set_nb_items(&gui_editor, current.nlrcline);
     rb->gui_synclist_set_icon_callback(&gui_editor, get_icon);
     rb->gui_synclist_set_title(&gui_editor, "Timetag Editor",

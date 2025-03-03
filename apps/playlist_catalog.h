@@ -36,9 +36,6 @@ bool catalog_view_playlists(void);
 bool catalog_pick_new_playlist_name(char *pl_name, size_t buf_size,
                                     const char* curr_pl_name);
 
-int catalog_insert_into(const char* playlist, bool new_playlist,
-                        const char* sel, int sel_attr);
-
 /*
  * Add something to a playlist (new or select from list of playlists in
  * catalog).
@@ -55,5 +52,11 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
 bool catalog_add_to_a_playlist(const char* sel, int sel_attr,
                                bool new_playlist, char* m3u8name,
                                void (*add_to_pl_cb));
+
+char* catalog_add_to_a_playlist_get_choice(const char* sel, int sel_attr,
+                               bool new_playlist, char* m3u8name);
+
+int catalog_insert_into(const char* playlist, bool new_playlist,
+    const char* sel, int sel_attr, bool* forced_recurse_dir);
 
 #endif

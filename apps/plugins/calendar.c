@@ -974,7 +974,7 @@ static bool view_events(int selected, struct shown *shown)
     bool exit=false;
     int button;
 
-    rb->gui_synclist_init(&gui_memos, &get_event_text, shown, false, 1, NULL);
+    rb->gui_synclist_init(&gui_memos, &get_event_text, shown, false, 1, NULL, false);
     rb->gui_synclist_set_title(&gui_memos, "Events (" CALENDAR_EVENT_MENU_NAME " : menu)", NOICON);
     rb->gui_synclist_set_nb_items(&gui_memos, memos_in_shown_memory);
     rb->gui_synclist_select_item(&gui_memos, selected);

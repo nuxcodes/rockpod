@@ -66,18 +66,18 @@ static dbyte callctr, callbeg;
 #define ST_DIRE  2
 #define ST_MISC  3
 
-#define PL_NONE    0
-#define PL_PAUSE   1
-#define PL_LEADER  2
-#define PL_DATA    3
-#define PL_END     4
-#define PL_PSEQ    5
-#define PL_DIRE    6
+#define TFPL_NONE    0
+#define TFPL_PAUSE   1
+#define TFPL_LEADER  2
+#define TFPL_DATA    3
+#define TFPL_END     4
+#define TFPL_PSEQ    5
+#define TFPL_DIRE    6
 
 #define IMP_1MS   3500
 
 static dbyte lead_pause;
-static int playstate = PL_NONE;
+static int playstate = TFPL_NONE;
 static int currlev;
 
 #define DEF_LEAD_PAUSE 2000
@@ -339,7 +339,7 @@ static int end_seg(struct seginfo *csp)
     segi++;
     isbeg();
   }
-  playstate = PL_NONE;
+  playstate = TFPL_NONE;
   return 1;
 }
 
@@ -717,7 +717,7 @@ byte *tf_get_block(int i)
 
 int next_byte(void)
 {
-  playstate = PL_NONE;
+  playstate = TFPL_NONE;
   return next_data();
 }
 
@@ -737,7 +737,7 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
   while(impbuf < impbufend - 1 && timelen > 0) {
     switch(playstate) {
       
-    case PL_PAUSE:
+    case TFPL_PAUSE:
       if(currlev && lead_pause) {
     PULSE(IMP_1MS);
     lead_pause --;
@@ -758,15 +758,15 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
        tf_cseg.ptr != tf_cseg.len) finished = 0;
 
     switch (tf_cseg.type) {
-    case ST_NORM: playstate = PL_LEADER; break;
-    case ST_DIRE: playstate = PL_DIRE;   dirpulse = 0; break;
-    case ST_PSEQ: playstate = PL_PSEQ;   break;
-    default:      playstate = PL_NONE;
+    case ST_NORM: playstate = TFPL_LEADER; break;
+    case ST_DIRE: playstate = TFPL_DIRE;   dirpulse = 0; break;
+    case ST_PSEQ: playstate = TFPL_PSEQ;   break;
+    default:      playstate = TFPL_NONE;
     }
       }
       break;
 
-    case PL_LEADER:
+    case TFPL_LEADER:
       if(tf_cseg.num >= 2) {
     DPULSE(tf_cseg.pulse, tf_cseg.pulse);
     tf_cseg.num -= 2;
@@ -780,15 +780,15 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
     if(tf_cseg.sync1p || tf_cseg.sync2p) 
       DPULSE(tf_cseg.sync1p, tf_cseg.sync2p);
     bitrem = 0;
-    playstate = PL_DATA;
+    playstate = TFPL_DATA;
       }
       break;
       
-    case PL_DATA:
+    case TFPL_DATA:
       if(!bitrem) {
     toput = next_data();
     if(toput < 0) {
-      playstate = PL_END;
+      playstate = TFPL_END;
       break;
     }
     if(tf_cseg.ptr != tf_cseg.len) {
@@ -822,14 +822,14 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
       bitrem--, toput <<= 1;
       break;
 
-    case PL_PSEQ:
+    case TFPL_PSEQ:
       {
     int b1, b2;
     dbyte pulse1, pulse2;
     b1 = next_data();
     b2 = next_data();
     if(b1 < 0 || b2 < 0) {
-      playstate = PL_END;
+      playstate = TFPL_END;
       break;
     }
     pulse1 = b1 + (b2 << 8);
@@ -838,7 +838,7 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
     b2 = next_data();
     if(b1 < 0 || b2 < 0) {
       PULSE(pulse1);
-      playstate = PL_END;
+      playstate = TFPL_END;
       break;
     }
     pulse2 = b1 + (b2 << 8);
@@ -846,12 +846,12 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
       }
       break;
 
-    case PL_DIRE:
+    case TFPL_DIRE:
       for(;;) {
     if(!bitrem) {
       toput = next_data();
       if(toput < 0) {
-        playstate = PL_END;
+        playstate = TFPL_END;
         DPULSE(dirpulse, 0);
         break;
       }
@@ -877,17 +877,17 @@ int next_imps(unsigned short *impbuf, int buflen, long timelen)
       }
       break;
 
-    case PL_END:
+    case TFPL_END:
       if(tf_cseg.pause) {
     PULSE(IMP_1MS);
     tf_cseg.pause--;
     if(currlev) PULSE(0);
     finished = 1;
       }
-      playstate = PL_NONE;
+      playstate = TFPL_NONE;
       break;
       
-    case PL_NONE:
+    case TFPL_NONE:
     default:
       return PTRDIFF(impbuf, impbufstart);
     }
@@ -916,10 +916,10 @@ int next_segment(void)
   }
 
   if(tf_cseg.segtype >= SEG_DATA) {
-    playstate = PL_PAUSE;
+    playstate = TFPL_PAUSE;
     if(lead_pause) finished = 1;
   }
-  else playstate = PL_NONE;
+  else playstate = TFPL_NONE;
   
   if(tf_cseg.segtype <= SEG_STOP && !finished) {
     endnext = 1;
@@ -930,7 +930,7 @@ int next_segment(void)
 
     tf_cseg.pause = 1;
     tf_cseg.segtype = SEG_VIRTUAL;
-    playstate = PL_END;
+    playstate = TFPL_END;
   }
 
   return tf_cseg.segtype;
@@ -954,7 +954,7 @@ unsigned segment_pos(void)
 void close_tapefile(void)
 {
   if(tapefd != -1) {
-    playstate = PL_NONE;
+    playstate = TFPL_NONE;
     rb->close(tapefd);
     tapefd = -1;
   }

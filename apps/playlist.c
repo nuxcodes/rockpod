@@ -2507,29 +2507,25 @@ void playlist_insert_context_release(struct playlist_insert_context *context)
  */
 int playlist_insert_directory(struct playlist_info* playlist,
                               const char *dirname, int position, bool queue,
-                              bool recurse, struct playlist_insert_context* context)
+                              bool recurse, struct playlist_insert_context* context_to_use)
 {
-    bool context_provided = context;
-    int result = 0;
-    struct playlist_insert_context c;
-
-    if (!context_provided)
-    {
-        context = &c;
-        result = playlist_insert_context_create(playlist, &c,
-                                                position, queue, true);
-    }
+    int result = -1;
+    struct playlist_insert_context context;
+    if (context_to_use == NULL)
+        result = playlist_insert_context_create(playlist, &context, position, queue, true);
+    else
+        result = 0;
     if (result >= 0)
     {
         cpu_boost(true);
 
         result = playlist_directory_tracksearch(dirname, recurse,
-            directory_search_callback, context);
+            directory_search_callback, context_to_use == NULL ? &context : context_to_use);
 
         cpu_boost(false);
     }
-    if (!context_provided)
-        playlist_insert_context_release(&c);
+    if (context_to_use == NULL)
+        playlist_insert_context_release(&context);
     return result;
 }
 

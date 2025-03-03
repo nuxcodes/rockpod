@@ -464,7 +464,7 @@ void browse_cuesheet(struct cuesheet *cue)
         title[sizeof(title) - 2] = '~'; /* give indication of truncation */
 
 
-    gui_synclist_init(&lists, list_get_name_cb, cue, false, 2, NULL);
+    gui_synclist_init(&lists, list_get_name_cb, cue, false, 2, NULL, false);
     gui_synclist_set_nb_items(&lists, 2*cue->track_count);
     gui_synclist_set_title(&lists, title, 0);
 

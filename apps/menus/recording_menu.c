@@ -489,7 +489,7 @@ int rectrigger(void)
         settings[STOP_THRESHOLD] =
                 find_setting(&global_settings.rec_stop_thres_linear);
     }
-    gui_synclist_init(&lists, trigger_get_name, settings, false, 2, vp);
+    gui_synclist_init(&lists, trigger_get_name, settings, false, 2, vp, false);
     gui_synclist_set_nb_items(&lists, TRIG_OPTION_COUNT*2);
     gui_synclist_set_icon_callback(&lists, global_settings.show_icons?trigger_get_icon:NULL);
     /* restart trigger with new values */

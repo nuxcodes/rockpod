@@ -650,7 +650,7 @@ static void synclist_set(char* menu_id, int selection, int items, int sel_size)
         selection = 0;
 
     rb->gui_synclist_init(&lists,list_get_name_cb,
-                          menu_id, false, sel_size, NULL);
+                          menu_id, false, sel_size, NULL, false);
 
     rb->gui_synclist_set_voice_callback(&lists, list_voice_cb);
     rb->gui_synclist_set_nb_items(&lists,items);

@@ -503,7 +503,7 @@ int handle_radio_presets(void)
     if(presets_loaded == false)
         return result;
 
-    gui_synclist_init(&lists, presets_get_name, NULL, false, 1, NULL);
+    gui_synclist_init(&lists, presets_get_name, NULL, false, 1, NULL, false);
     gui_synclist_set_title(&lists, str(LANG_PRESET), NOICON);
     if(global_settings.talk_file)
         gui_synclist_set_voice_callback(&lists, presets_speak_name);

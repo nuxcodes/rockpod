@@ -936,7 +936,7 @@ static void synclist_set(int selected_item, int items, int sel_size, struct prin
         selected_item = 0;
 
     rb->gui_synclist_init(&lists,list_get_name_cb,
-                          pc_data, false, sel_size, NULL);
+                          pc_data, false, sel_size, NULL, false);
 
     rb->gui_synclist_set_icon_callback(&lists, list_icon_cb);
     rb->gui_synclist_set_voice_callback(&lists, list_voice_cb);

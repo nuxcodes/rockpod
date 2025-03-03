@@ -506,7 +506,7 @@ bool option_screen(const struct settings_list *setting,
     else return false; /* only int/bools can go here */
     push_current_activity(ACTIVITY_OPTIONSELECT);
     gui_synclist_init(&lists, value_setting_get_name_cb,
-                      (void*)setting, false, 1, parent);
+                      (void*)setting, false, 1, parent, false);
     if (setting->lang_id == -1)
     {
         title = setting_get_cfgvals(setting);

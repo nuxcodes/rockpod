@@ -162,7 +162,7 @@ static void setup_properties_list(struct dir_stats *stats)
     else
         nb_props = NUM_DIR_PROPERTIES;
 
-    rb->gui_synclist_init(&properties_lists, &get_props, stats, false, 2, NULL);
+    rb->gui_synclist_init(&properties_lists, &get_props, stats, false, 2, NULL, false);
     rb->gui_synclist_set_title(&properties_lists,
                                rb->str(props_type == PROPS_DIR ?
                                        LANG_PROPERTIES_DIRECTORY_PROPERTIES :

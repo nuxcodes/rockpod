@@ -803,7 +803,7 @@ long gui_wps_show(void)
                     theme_enabled = false;
                     gwps_leave_wps(theme_enabled);
                     onplay(state->id3->path,
-                           FILE_ATTR_AUDIO, CONTEXT_WPS, hotkey, ONPLAY_NO_CUSTOMACTION);
+                           FILE_ATTR_AUDIO, CONTEXT_WPS, hotkey, ONPLAY_NO_CUSTOMACTION, false);
                     if (!audio_status())
                     {
                         /* re-enable theme since we're returning to SBS */
@@ -820,7 +820,7 @@ long gui_wps_show(void)
             {
                 gwps_leave_wps(true);
                 int retval = onplay(state->id3->path,
-                       FILE_ATTR_AUDIO, CONTEXT_WPS, hotkey, ONPLAY_NO_CUSTOMACTION);
+                       FILE_ATTR_AUDIO, CONTEXT_WPS, hotkey, ONPLAY_NO_CUSTOMACTION, false);
                 /* if music is stopped in the context menu we want to exit the wps */
                 if (retval == ONPLAY_MAINMENU
                     || !audio_status())

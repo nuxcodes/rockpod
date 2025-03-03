@@ -1087,7 +1087,7 @@ bool recording_screen(bool no_source)
             }
 
             /* init the bottom list */
-            gui_synclist_init(&lists, reclist_get_name, NULL, false, 1, vp_list);
+            gui_synclist_init(&lists, reclist_get_name, NULL, false, 1, vp_list, false);
             gui_synclist_set_title(&lists, NULL, Icon_NOICON);
 
             send_event(GUI_EVENT_ACTIONUPDATE, (void*)1); /* force a redraw */

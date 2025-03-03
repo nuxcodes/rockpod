@@ -25,13 +25,24 @@
 #include "menu.h"
 #endif
 
+/* argument for add_to_playlist (for use by menu callbacks) */
+#define PL_NONE    0x00
+#define PL_QUEUE   0x01
+#define PL_REPLACE 0x02
+
+struct add_to_pl_param
+{
+    int8_t position;
+    uint8_t flags;
+};
+
 enum {
     ONPLAY_NO_CUSTOMACTION,
     ONPLAY_CUSTOMACTION_SHUFFLE_SONGS,
     ONPLAY_CUSTOMACTION_FIRSTLETTER,
 };
 
-int onplay(char* file, int attr, int from_context, bool hotkey, int customaction);
+int onplay(char* file, int attr, int from_context, bool hotkey, int customaction, bool getchoice);
 int get_onplay_context(void);
 
 enum {
@@ -41,6 +52,7 @@ enum {
     ONPLAY_START_PLAY,
     ONPLAY_PLAYLIST,
     ONPLAY_PLUGIN,
+    ONPLAY_MULTISELECT,
 #ifdef HAVE_HOTKEY
     ONPLAY_FUNC_RETURN, /* for use in hotkey_assignment only */
 #endif
@@ -62,6 +74,7 @@ enum hotkey_action {
     HOTKEY_INSERT,
     HOTKEY_INSERT_SHUFFLED,
     HOTKEY_BOOKMARK_LIST,
+    HOTKEY_MULTISELECTION,
 };
 enum hotkey_flags {
     HOTKEY_FLAG_NONE = 0x0,
@@ -84,6 +97,10 @@ const struct hotkey_assignment *get_hotkey(int action);
 /* needed for the playlist viewer.. eventually clean this up */
 void onplay_show_playlist_cat_menu(const char* track_name, int attr,
                                    void (*add_to_pl_cb));
+bool onplay_show_playlist_cat_menu_current_choice_is_new_playlist(void);
+char* onplay_show_playlist_cat_menu_get_choice(void);
 void onplay_show_playlist_menu(const char* path, int attr, void (*playlist_insert_cb));
-
+struct add_to_pl_param* onplay_show_playlist_menu_get_choice(void);
+struct add_to_pl_param* onplay_show_playlist_menu_get_current_choice(void);
+char* onplay_show_playlist_cat_menu_get_current_choice(void);
 #endif

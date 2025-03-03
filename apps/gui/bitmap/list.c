@@ -248,7 +248,16 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     const int nb_lines = list_get_nb_lines(list, screen);
 
     linedes.height = list->line_height[screen];
-    linedes.nlines = list->selected_size;
+    int selected_item = list->selected_item;
+    int selected_size = list->selected_size;
+    if (selected_size <= 0)
+    {
+        selected_item += selected_size;
+        while (selected_item < 0)
+            selected_item += list->nb_items;
+        selected_size = ((- selected_size) + 1);
+    }
+    linedes.nlines = selected_size;
 #if LCD_DEPTH > 1
     /* XXX: Do we want to support the separator on remote displays? */
     if (display->screen_type == SCREEN_MAIN)
@@ -388,8 +397,8 @@ void list_draw(struct screen *display, struct gui_synclist *list)
             /* don't draw it during scrolling */
             list->scroll_mode == SCROLL_NONE &&
 #endif
-                i >= list->selected_item
-                && i <  list->selected_item + list->selected_size)
+                ((i >= selected_item && i < selected_item + selected_size) ||
+                (i < (selected_item + selected_size - list->nb_items))))
         {/* The selected item must be displayed scrolling */
 #ifdef HAVE_LCD_COLOR
             if (list->selection_color)
@@ -451,7 +460,7 @@ void list_draw(struct screen *display, struct gui_synclist *list)
 #endif
         linedes.style = style;
         linedes.scroll = is_selected ? true : list->scroll_all;
-        linedes.line = i % list->selected_size;
+        linedes.line = i % selected_size;
         icon = list->callback_get_item_icon ?
                     list->callback_get_item_icon(i, list->data) : Icon_NOICON;
 
@@ -484,6 +493,8 @@ void list_draw(struct screen *display, struct gui_synclist *list)
 
 #if defined(HAVE_TOUCHSCREEN)
 /* This needs to be fixed if we ever get more than 1 touchscreen on a target. */
+/* FIXME: Multiple selection (with multiple_selection_force_single_entry_scroll) 
+    is not coded (yet) for touchscreen devices */
 
 static void do_touch_scroll(struct gui_synclist *gui_list, int new_y_pos)
 {
