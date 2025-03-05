@@ -2042,6 +2042,20 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_DISPLAY_CDTRACKNUMTITLEALBUM_FROMTAGS
+  desc: track display options
+  user: core
+  <source>
+    *: "CD & Track num & Title & Album from ID3 tags"
+  </source>
+  <dest>
+    *: "CD & Track num & Title & Album from ID3 tags"
+  </dest>
+  <voice>
+    *: "CD and Track num and Title and Album from tags"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_DISPLAY_TITLEALBUM_FROMTAGS
   desc: track display options
   user: core

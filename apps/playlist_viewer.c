@@ -503,6 +503,7 @@ static void format_name(char* dest, const char* src, size_t bufsz)
         /* If loading from tags failed, only display the file name */
         case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE_AND_ALBUM:
         case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE:
+        case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM:
         default:
         {
             /* Only display the filename */
@@ -527,7 +528,14 @@ static void format_line(struct playlist_entry* track, char* str,
     char *skipped = "";
     if (track->attr & PLAYLIST_ATTR_SKIPPED)
         skipped = "(ERR) ";
-    if (!(track->attr & PLAYLIST_ATTR_RETRIEVE_ID3_ATTEMPTED))
+    if (!(track->attr & PLAYLIST_ATTR_RETRIEVE_ID3_ATTEMPTED) &&
+        (global_settings.playlist_viewer_track_display ==
+            PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE_AND_ALBUM ||
+        global_settings.playlist_viewer_track_display ==
+            PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE ||
+        global_settings.playlist_viewer_track_display ==
+            PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM
+    ))
     {
         /* iPod Classic 6G custom: always retrieve title from tags/db */
         track->attr |= PLAYLIST_ATTR_RETRIEVE_ID3_ATTEMPTED;
@@ -542,11 +550,111 @@ static void format_line(struct playlist_entry* track, char* str,
             }
             struct mp3entry * pid3 = viewer.id3;
             id3viewc[0] = '\0';
-            /* Title only (matching PictureFlow behavior) */
-            if (pid3->title && pid3->title[0] != '\0' &&
-                strmemccpy(id3viewc, pid3->title, MAX_PATH))
+            if (global_settings.playlist_viewer_track_display ==
+                PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE_AND_ALBUM
+                || global_settings.playlist_viewer_track_display ==
+                PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM)
             {
-                track->attr |= PLAYLIST_ATTR_RETRIEVE_ID3_SUCCEEDED;
+                /* Title & Album */
+                if (pid3->title && pid3->title[0] != '\0')
+                {
+                    char* cur_str = id3viewc;
+                    int str_len;
+                    int rem_space = MAX_PATH;
+                    int i;
+                    if (global_settings.playlist_viewer_track_display ==
+                        PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM)
+                    {
+                        if (pid3->disc_string)
+                        {
+                            str_len = strlen(pid3->disc_string);
+                            for (i = 0; i < str_len && rem_space > 0; i++)
+                            {
+                                cur_str[0] = pid3->disc_string[i];
+                                cur_str++;
+                                rem_space--;
+                            }
+                            if (rem_space > 0)
+                            {
+                                cur_str[0] = (char) '.';
+                                cur_str++;
+                                rem_space--;
+                            }
+                        }
+                        else if (pid3->discnum)
+                        {
+                            str_len = snprintf(cur_str, rem_space, "%d.", pid3->discnum);
+                            if (str_len > 0)
+                            {
+                                cur_str += str_len;
+                                rem_space -= str_len;
+                            }
+                        }
+                        if (pid3->track_string)
+                        {
+                            str_len = strlen(pid3->track_string);
+                            for (i = 0; i < str_len && rem_space > 0; i++)
+                            {
+                                cur_str[0] = pid3->track_string[i];
+                                cur_str++;
+                                rem_space--;
+                            }
+                            if (rem_space > 0)
+                            {
+                                cur_str[0] = (char) '.';
+                                cur_str++;
+                                rem_space--;
+                            }
+                        }
+                        else if (pid3->tracknum)
+                        {
+                            str_len = snprintf(cur_str, rem_space, "%02d.", pid3->tracknum);
+                            if (str_len > 0)
+                            {
+                                cur_str += str_len;
+                                rem_space -= str_len;
+                            }
+                        }
+                        if (rem_space > 0 && rem_space < MAX_PATH)
+                        {
+                            /* If something has been inserted (CD or track num) */
+                            cur_str[0] = (char) ' ';
+                            cur_str++;
+                            rem_space--;
+                        }
+                    }
+                    str_len = strlen(pid3->title);
+                    for (i = 0; i < str_len && rem_space > 0; i++)
+                    {
+                        cur_str[0] = pid3->title[i];
+                        cur_str++;
+                        rem_space--;
+                    }
+                    if (rem_space > 10)
+                    {
+                        cur_str[0] = (char) ' ';
+                        cur_str[1] = (char) '-';
+                        cur_str[2] = (char) ' ';
+                        cur_str += 3;
+                        rem_space -= 3;
+                        cur_str = strmemccpy(cur_str, (pid3->album &&
+                                             pid3->album[0] != '\0') ? pid3->album :
+                                             (char*) str(LANG_TAGNAVI_UNTAGGED),
+                                             rem_space);
+                        if (cur_str)
+                            track->attr |= PLAYLIST_ATTR_RETRIEVE_ID3_SUCCEEDED;
+                    }
+                }
+            }
+            else if (global_settings.playlist_viewer_track_display ==
+                     PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE)
+            {
+                /* Just the title */
+                if (pid3->title && pid3->title[0] != '\0' &&
+                    strmemccpy(id3viewc, pid3->title, MAX_PATH))
+                {
+                    track->attr |= PLAYLIST_ATTR_RETRIEVE_ID3_SUCCEEDED;
+                }
             }
             /* Yield to reduce as much as possible the perceived UI lag,
             because retrieving id3 tags is an expensive operation */
@@ -869,6 +977,8 @@ static int playlist_callback_voice(int selected_item, void *data)
         case PLAYLIST_VIEWER_ENTRY_SHOW_FILE_NAME:
             /*filename only*/
         case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE_AND_ALBUM:
+            /* If loading from tags failed, only talk the file name */
+        case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM:
             /* If loading from tags failed, only talk the file name */
         case PLAYLIST_VIEWER_ENTRY_SHOW_ID3_TITLE:
             /* If loading from tags failed, only talk the file name */
