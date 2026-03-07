@@ -241,12 +241,18 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 4) ? tx_buf[5] : 0);
 
 #ifdef USB_ENABLE_AUDIO
-    /* Suppress HID IN reports while USB audio source mode is streaming.
-     * The dock's USB host controller drops isochronous audio frames
-     * when it also has to process HID interrupt IN transfers in the
-     * same USB frame.  The dock still sends SET_REPORT queries (which
-     * are processed normally); we just withhold our IN responses. */
-    if (usb_audio_source_streaming())
+    /* Suppress Display Remote (0x03) and Extended Interface (0x04)
+     * responses during USB audio source streaming.  These lingos carry
+     * periodic track-info/status polls whose HID IN transfers cause
+     * the dock's USB host to miss isochronous audio frames.
+     * General (0x00) and Digital Audio (0x0A) responses are essential
+     * for connection setup and must always go through.
+     *
+     * IAP short packet in tx_buf:
+     *   [0] report_id  [1] 0x00(sync)  [2] 0x55  [3] len  [4] lingo */
+    if (usb_audio_source_streaming() &&
+        report_size >= 4 && tx_buf[2] == 0x55 && tx_buf[3] != 0x00 &&
+        (tx_buf[4] == 0x03 || tx_buf[4] == 0x04))
     {
         semaphore_release(&tx_complete_sem);
         return;
