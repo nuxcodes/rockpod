@@ -47,7 +47,7 @@
 #include "audiohw.h"
 #endif
 
-#define LOGF_ENABLE
+/* #define LOGF_ENABLE */
 #include "logf.h"
 
 /* Fixed-point conversion macros (signed Q16.16) */

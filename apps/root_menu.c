@@ -571,6 +571,7 @@ static struct menu_table menu_table[] = {
 #endif
     { "files", &file_browser },
     { "wps", &wps_item },
+    { "playlists", &playlists },
     { "plugins", &rocks_browser },
     { "shortcuts", &shortcut_menu },
     { "settings", &menu_ },

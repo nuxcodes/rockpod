@@ -36,8 +36,9 @@
 #include "usb_ch9.h"
 #include "iap.h"
 
-#define LOGF_ENABLE
+/* #define LOGF_ENABLE */
 #include "logf.h"
+#include "kernel.h"
 
 /* HID class-specific descriptor types */
 #define HID_DT_HID    0x21
@@ -173,6 +174,10 @@ static unsigned char rx_buf[64] USB_DEVBSS_ATTR;
 /* Save/restore the original iAP transport */
 static void (*saved_transport_send)(const unsigned char *buf, int len);
 
+/* TX completion semaphore — serializes access to tx_buf so
+ * back-to-back sends don't corrupt DMA-in-progress data. */
+static struct semaphore tx_complete_sem;
+
 /*
  * USB HID TX transport for iAP.
  *
@@ -186,6 +191,11 @@ static void iap_hid_tx(const unsigned char *buf, int len)
 
     if (!iap_hid_active || len <= 0)
         return;
+
+    /* Wait for previous HID TX to complete before touching tx_buf.
+     * A 64-byte full-speed interrupt transfer completes in <2ms.
+     * 20ms timeout avoids blocking audio if something goes wrong. */
+    semaphore_wait(&tx_complete_sem, HZ/50);
 
     /* find smallest IN report ID that fits */
     uint8_t report_id = 0;
@@ -227,7 +237,7 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
 
-    usb_drv_send(EP_IAP_HID_IN, tx_buf, 1 + report_size);
+    usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }
 
 /*
@@ -354,6 +364,7 @@ static void iap_hid_process_rx(const unsigned char *data, int len)
 
 void usb_iap_hid_init(void)
 {
+    semaphore_init(&tx_complete_sem, 1, 1);
     logf("iap_hid: init");
 }
 
@@ -399,6 +410,7 @@ void usb_iap_hid_disconnect(void)
     logf("iap_hid: disconnect");
     iap_hid_active = false;
     iap_hid_rx_in_progress = false;
+    semaphore_release(&tx_complete_sem);
 
     if (iap_hid_transport_active)
     {
@@ -413,7 +425,7 @@ void usb_iap_hid_transfer_complete(int ep, int dir, int status, int length)
     (void) dir;
     (void) status;
     (void) length;
-    /* INT IN transfer completed — nothing special to do */
+    semaphore_release(&tx_complete_sem);
 }
 
 bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
