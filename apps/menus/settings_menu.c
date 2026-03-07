@@ -369,6 +369,9 @@ MENUITEM_SETTING(usb_audio, &global_settings.usb_audio, NULL);
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)
 MENUITEM_SETTING(usb_skip_first_drive, &global_settings.usb_skip_first_drive, NULL);
 #endif
+#ifdef USB_ENABLE_IAP_HID
+MENUITEM_SETTING(usb_iap_hid, &global_settings.usb_iap_hid, NULL);
+#endif
 
 #ifdef HAVE_MORSE_INPUT
 MENUITEM_SETTING(morse_input, &global_settings.morse_input, NULL);
@@ -467,6 +470,9 @@ MAKE_MENU(system_menu, ID2P(LANG_SYSTEM),
 #endif
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)
             &usb_skip_first_drive,
+#endif
+#ifdef USB_ENABLE_IAP_HID
+            &usb_iap_hid,
 #endif
 
 #if defined(DX50) || defined(DX90)

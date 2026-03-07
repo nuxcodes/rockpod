@@ -2335,6 +2335,10 @@ const struct settings_list settings[] = {
     OFFON_SETTING(0, usb_skip_first_drive, LANG_USB_SKIP_FIRST_DRIVE, false, "usb skip first drive", usb_set_skip_first_drive),
 #endif
 
+#ifdef USB_ENABLE_IAP_HID
+    OFFON_SETTING(0, usb_iap_hid, LANG_USB_IAP_HID, true, "usb iap hid", NULL),
+#endif
+
     /* Customizable list */
     VIEWPORT_SETTING(ui_vp_config, "ui viewport"),
 #ifdef HAVE_REMOTE_LCD

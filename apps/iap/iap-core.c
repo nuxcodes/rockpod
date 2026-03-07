@@ -966,9 +966,8 @@ void iap_periodic(void)
     if (device.auth.idps) return;
 
     /* Suppress unsolicited notifications while USB audio source mode
-     * is streaming.  HID TX traffic causes the dock's USB host
-     * controller to miss isochronous audio frames.  The dock still
-     * receives responses to its SET_REPORT polling. */
+     * is streaming.  Reduces HID TX traffic that can interfere with
+     * isochronous audio on some docks. */
 #ifdef USB_ENABLE_AUDIO
     if (usb_audio_source_streaming()) return;
 #endif
@@ -1560,11 +1559,6 @@ void iap_fill_power_state(void)
         IAP_TX_PUT(0x04);
         IAP_TX_PUT(0x00);
     }
-}
-
-bool iap_auth_is_idps(void)
-{
-    return device.auth.idps;
 }
 
 #include "lcd.h"

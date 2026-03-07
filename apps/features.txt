@@ -264,6 +264,10 @@ usb_hid_mouse
 #endif
 #endif
 
+#if defined(USB_ENABLE_IAP_HID)
+usb_iap_hid
+#endif
+
 #if defined(HAVE_SPDIF_IN)
 recording_digital
 #endif

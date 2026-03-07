@@ -51,8 +51,4 @@ extern bool iap_record(bool onoff);
 #endif
 void iap_reset_state(IF_IAP_MP_NONVOID(int port) ); /* 0 is dock, 1 is headphone */
 bool dbg_iap(void);
-
-/* Returns true if the current accessory authenticated via IDPS */
-bool iap_auth_is_idps(void);
-
 #endif

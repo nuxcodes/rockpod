@@ -35,9 +35,6 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
-#ifdef USB_ENABLE_AUDIO
-#include "usb_audio.h"
-#endif
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -241,17 +238,6 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 4) ? tx_buf[5] : 0);
 
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
-
-#ifdef USB_ENABLE_AUDIO
-    /* Space out HID IN responses during source streaming for non-IDPS
-     * docks.  The Onkyo ND-S1's USB host drops isochronous audio
-     * frames when it has to schedule a burst of EP0 + HID IN + ISO IN
-     * in the same few-ms window.  This sleep ensures each HID IN
-     * response is isolated among ~100 ISO-only frames.
-     * IDPS devices (like HA-2SE) don't poll during streaming. */
-    if (usb_audio_source_streaming() && !iap_auth_is_idps())
-        sleep(HZ/10); /* 100ms */
-#endif
 }
 
 /*
