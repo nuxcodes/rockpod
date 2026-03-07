@@ -584,6 +584,8 @@ static int16_t source_last_sample[2]; /* last L/R sample for fade-out on underfl
  * At 44.1kHz, we need 44.1 samples/frame. We track the fractional remainder
  * and send an extra sample every 10th frame (9x44 + 1x45 = 441 per 10ms). */
 static int source_frac_num;  /* accumulated fractional numerator */
+static volatile int source_underflow_count;
+static volatile int source_frames_sent;
 static unsigned char tx_send_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 static unsigned char silence_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 
@@ -1039,6 +1041,8 @@ static void usb_audio_start_source(void)
     tx_write_pos = 0;
     tx_read_pos = 0;
     source_frac_num = 0;
+    source_underflow_count = 0;
+    source_frames_sent = 0;
     memset(silence_buf, 0, sizeof(silence_buf));
     memset(tx_send_buf, 0, sizeof(tx_send_buf));
 
@@ -1625,6 +1629,16 @@ int usb_audio_get_source_ring_available(void)
         return TX_RING_SIZE - read + write;
 }
 
+int usb_audio_get_source_underflow_count(void)
+{
+    return source_underflow_count;
+}
+
+int usb_audio_get_source_frames_sent(void)
+{
+    return source_frames_sent;
+}
+
 /* determine if enough prebuffering has been done to restart audio */
 bool prebuffering_done(void)
 {
@@ -1842,9 +1856,11 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
             source_last_sample[0] = 0;
             source_last_sample[1] = 0;
             tx_read_pos = tx_write_pos; /* discard stale partial data */
+            source_underflow_count++;
             source_prebuffering = true;
             usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
         }
+        source_frames_sent++;
         retval = true;
     }
 

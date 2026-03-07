@@ -272,4 +272,8 @@ unsigned long usb_audio_get_source_sampling_frequency(void);
 
 int usb_audio_get_source_ring_available(void);
 
+int usb_audio_get_source_underflow_count(void);
+
+int usb_audio_get_source_frames_sent(void);
+
 #endif

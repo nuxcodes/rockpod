@@ -35,9 +35,6 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
-#ifdef USB_ENABLE_AUDIO
-#include "usb_audio.h"
-#endif
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -239,25 +236,6 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          tx_buf[0], tx_buf[1], tx_buf[2],
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
-
-#ifdef USB_ENABLE_AUDIO
-    /* Suppress Display Remote (0x03) and Extended Interface (0x04)
-     * responses during USB audio source streaming.  These lingos carry
-     * periodic track-info/status polls whose HID IN transfers cause
-     * the dock's USB host to miss isochronous audio frames.
-     * General (0x00) and Digital Audio (0x0A) responses are essential
-     * for connection setup and must always go through.
-     *
-     * IAP short packet in tx_buf:
-     *   [0] report_id  [1] 0x00(sync)  [2] 0x55  [3] len  [4] lingo */
-    if (usb_audio_source_streaming() &&
-        report_size >= 4 && tx_buf[2] == 0x55 && tx_buf[3] != 0x00 &&
-        (tx_buf[4] == 0x03 || tx_buf[4] == 0x04))
-    {
-        semaphore_release(&tx_complete_sem);
-        return;
-    }
-#endif
 
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }

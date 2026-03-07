@@ -2566,6 +2566,10 @@ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
         usb_audio_get_source_sampling_frequency());
     simplelist_addline("Source ring: %d bytes",
         usb_audio_get_source_ring_available());
+    simplelist_addline("Source underflows: %d",
+        usb_audio_get_source_underflow_count());
+    simplelist_addline("Source frames: %d",
+        usb_audio_get_source_frames_sent());
     if (action == ACTION_NONE)
     {
         action = ACTION_REDRAW;
