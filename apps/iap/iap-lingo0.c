@@ -846,6 +846,7 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             iap_send_tx();
             device.auth.state = AUST_AUTH;
+            device.accinfo = ACCST_INIT;
 
             /* After IDPS auth, initiate digital audio via periodic handler.
              * Do NOT call iap_set_remote_volume() or any other send here —
@@ -1096,7 +1097,12 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
                 iap_send_tx();
             } else {
-                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                /* Return preference=0 for unsupported classes —
+                 * accessories may query before setting */
+                IAP_TX_PUT(buf[2]);
+                IAP_TX_PUT(0x00);
+
+                iap_send_tx();
             }
 
             break;
@@ -1145,7 +1151,9 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
                     cmd_ok(cmd);
                 }
             } else {
-                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                /* Accept unsupported preference classes (video, etc.) —
+                 * accessories disconnect if preferences are rejected */
+                cmd_ok(cmd);
             }
 
             break;
