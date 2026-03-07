@@ -1,0 +1,2523 @@
+usb_core: SET_CONFIG 0 to 0
+usb_core_exit() finished
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usbaudio: (init) supported frequencies
+usbaudio: playback 48000 Hz
+usbaudio: playback 44100 Hz
+usbaudio: source 8000 Hz
+usbaudio: source 11025 Hz
+usbaudio: source 12000 Hz
+usbaudio: source 16000 Hz
+usbaudio: source 22050 Hz
+usbaudio: source 24000 Hz
+usbaudio: source 32000 Hz
+usbaudio: source 44100 Hz
+usbaudio: source 48000 Hz
+iap_hid: init
+usb_core_init() finished
+usb_core: bus reset
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+ctrl received 979, req=0x5
+ctrl handled 979 req=0x5
+usbaudio: usb_interface=0
+iap_hid: usb_interface=2
+usb_core: SET_ADR 1
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+ctrl received 979, req=0x6
+ctrl handled 979 req=0x6
+usb_core: GET_DESC 1
+data 18 (18)
+ctrl complete 979, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+ctrl received 980, req=0x6
+ctrl handled 980 req=0x6
+usb_core: GET_DESC 3
+STRING 0
+data 4 (255)
+ctrl complete 980, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+ctrl received 980, req=0x6
+ctrl handled 980 req=0x6
+usb_core: GET_DESC 2
+data 57 (8)
+ctrl complete 980, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+ctrl received 980, req=0x6
+ctrl handled 980 req=0x6
+usb_core: GET_DESC 2
+data 57 (57)
+ctrl complete 980, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 980, req=0x6
+ctrl handled 980 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 980, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 981, req=0x6
+ctrl handled 981 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 981, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+ctrl received 981, req=0x9
+ctrl handled 981 req=0x9
+usb_core: SET_CONFIG 0 to 2
+usbaudio: init connection
+iap_hid: init connection
+ctrl complete 981, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 981, req=0x6
+ctrl handled 981 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 981, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 981, req=0x6
+ctrl handled 981 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 981, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+ctrl received 982, req=0x6
+ctrl handled 982 req=0x6
+ctrl complete 982, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+ctrl received 1011, req=0x9
+ctrl handled 1011 req=0x9
+ctrl received 1011, req=0x9
+ctrl handled 1011 req=0x9
+iap_hid: rx id=8 len=19 wLen=21
+iap_hid: [08 00 55 0e 00 13 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1011, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+ctrl received 1062, req=0x9
+ctrl handled 1062 req=0x9
+ctrl received 1062, req=0x9
+ctrl handled 1062 req=0x9
+iap_hid: rx id=5 len=7 wLen=9
+iap_hid: [05 00 55 02 00 0d f1 00]
+iap_hid: tx id=3 len=16 [03 00 55 0c 00 0e]
+ctrl complete 1062, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1073, req=0x9
+ctrl handled 1073 req=0x9
+ctrl received 1073, req=0x9
+ctrl handled 1073 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1073, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1083, req=0x9
+ctrl handled 1083 req=0x9
+ctrl received 1083, req=0x9
+ctrl handled 1083 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1083, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1093, req=0x9
+ctrl handled 1093 req=0x9
+ctrl received 1093, req=0x9
+ctrl handled 1093 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1093, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1103, req=0x9
+ctrl handled 1103 req=0x9
+ctrl received 1103, req=0x9
+ctrl handled 1103 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1103, 0
+iap_hid: tx id=1 len=6 [01 00 55 02 00 14]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1110, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 03 02 01 02 02 0f]
+ctrl complete 1110, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+ctrl received 1110, req=0x9
+ctrl handled 1110 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 14 41 70 70 6c 65]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1110, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1111, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 74 79 31 35 30 33]
+ctrl complete 1111, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 38 31 31 31 31 31]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1111, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+ctrl received 1111, req=0x9
+ctrl handled 1111 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1111, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 65 72 2c 20 49 6e]
+ctrl complete 1112, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 50 41 5f 33 34 33]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1112, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1112, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 1b 45 84 ca 3d 22]
+ctrl complete 1112, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+ctrl received 1112, req=0x9
+ctrl handled 1112 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 4a 92 64 b3 76 bf]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1113, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1113, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 01 a3 60 30 5e 30]
+ctrl complete 1113, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+ctrl received 1113, req=0x9
+ctrl handled 1113 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 ec 5e 0d d2 30 1f]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1113, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1114, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1114, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+ctrl received 1114, req=0x9
+ctrl handled 1114 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 61 69 d6 ea 43 c0]
+ctrl complete 1114, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 8f 0a 60 f3 c2 b5]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1115, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1115, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 a8 cd 41 9e 46 83]
+ctrl complete 1115, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+ctrl received 1115, req=0x9
+ctrl handled 1115 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 9a 8d 88 19 cc 3f]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1116, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1116, req=0x9
+ctrl handled 1117 req=0x9
+ctrl received 1117, req=0x9
+ctrl handled 1117 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 00 55 37 00 15 02 00]
+iap_hid: tx id=1 len=7 [01 00 55ctrl complete 1117, 0
+ 03 00 16]
+iap_hid: tx id=4 len=27 [04 00 55 17 00 17]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1123, req=0x9
+ctrl handled 1123 req=0x9
+ctrl received 1123, req=0x9
+ctrl handled 1123 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1123, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1133, req=0x9
+ctrl handled 1133 req=0x9
+ctrl received 1133, req=0x9
+ctrl handled 1133 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1134, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1143, req=0x9
+ctrl handled 1143 req=0x9
+ctrl received 1143, req=0x9
+ctrl handled 1143 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 1144, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 82 00 18 32 c0]
+ctrl complete 1146, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 fb bc 97 bb 9f e3]
+ctrl complete 1146, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+ctrl received 1146, req=0x9
+ctrl handled 1146 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 01 69 53 d5 3d 2e 7c]
+iap_hid: tx id=1 len=7 [01 00 55 03 00 19]
+ctrl complete 1147, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1153, req=0x9
+ctrl handled 1153 req=0x9
+ctrl received 1153, req=0x9
+ctrl handled 1153 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+ctrl complete 1153, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1154, req=0x9
+ctrl handled 1154 req=0x9
+ctrl received 1154, req=0x9
+ctrl handled 1154 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1155, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1255, req=0x9
+ctrl handled 1255 req=0x9
+ctrl received 1255, req=0x9
+ctrl handled 1255 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1255, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1355, req=0x9
+ctrl handled 1355 req=0x9
+ctrl received 1355, req=0x9
+ctrl handled 1355 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1355, 0
+usb_core: SET_CONFIG 2 to 0
+usbaudio: disconnect
+usbaudio: stop playback
+usbaudio: stop source
+iap_hid: disconnect
+usb_core_exit() finished
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usbaudio: (init) supported frequencies
+usbaudio: playback 48000 Hz
+usbaudio: playback 44100 Hz
+usbaudio: source 8000 Hz
+usbaudio: source 11025 Hz
+usbaudio: source 12000 Hz
+usbaudio: source 16000 Hz
+usbaudio: source 22050 Hz
+usbaudio: source 24000 Hz
+usbaudio: source 32000 Hz
+usbaudio: source 44100 Hz
+usbaudio: source 48000 Hz
+iap_hid: init
+usb_core_init() finished
+usb_core: bus reset
+Codec: calling entrypoint
+Codec: not an encoder
+Codec: entering run state
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+ctrl received 1514, req=0x5
+ctrl handled 1515 req=0x5
+usbaudio: usb_interface=0
+iap_hid: usb_interface=2
+usb_core: SET_ADR 1
+ctrl complete 1515, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+ctrl received 1515, req=0x6
+ctrl handled 1516 req=0x6
+usb_core: GET_DESC 1
+data 18 (18)
+ctrl complete 1516, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+ctrl received 1516, req=0x6
+ctrl handled 1516 req=0x6
+usb_core: GET_DESC 3
+STRING 0
+data 4 (255)
+ctrl complete 1516, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+ctrl received 1516, req=0x6
+ctrl handled 1516 req=0x6
+usb_core: GET_DESC 2
+data 57 (8)
+ctrl complete 1516, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+ctrl received 1516, req=0x6
+ctrl handled 1516 req=0x6
+usb_core: GET_DESC 2
+data 57 (57)
+ctrl complete 1516, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 1517, req=0x6
+ctrl handled 1517 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 1517, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 1517, req=0x6
+ctrl handled 1517 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 1517, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+ctrl received 1517, req=0x9
+ctrl handled 1517 req=0x9
+usb_core: SET_CONFIG 0 to 2
+usbaudio: init connection
+AAC: Decoded 9152 samples
+
+Codec: cleaning up
+iap_hid: init connection
+ctrl complete 1518, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 1518, req=0x6
+ctrl handled 1518 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 1518, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 1518, req=0x6
+ctrl handled 1519 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 1519, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+ctrl received 1519, req=0x6
+ctrl handled 1519 req=0x6
+ctrl complete 1519, 0
+Codec: calling entrypoint
+Codec: not an encoder
+Codec: entering run state
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+ctrl received 1548, req=0x9
+ctrl handled 1549 req=0x9
+ctrl received 1549, req=0x9
+ctrl handled 1549 req=0x9
+iap_hid: rx id=8 len=19 wLen=21
+iap_hid: [08 00 55 0e 00 13 00 00]
+ctrl complete 1549, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=6 [01 00 55 02 00 14]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1550, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 03 02 01 02 02 0f]
+ctrl complete 1550, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+ctrl received 1550, req=0x9
+ctrl handled 1550 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 14 41 70 70 6c 65]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1550, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1551, req=0x9
+ctrl handled 1551 req=0x9
+ctrl received 1551, req=0x9
+ctrl handled 1551 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1551, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1551, req=0x9
+ctrl handled 1551 req=0x9
+ctrl received 1551, req=0x9
+ctrl handled 1551 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 74 79 31 35 30 33]
+ctrl complete 1551, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1551, req=0x9
+ctrl handled 1552 req=0x9
+ctrl received 1552, req=0x9
+ctrl handled 1552 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 38 31 31 31 31 31]
+ctrl complete 1552, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1552, req=0x9
+ctrl handled 1552 req=0x9
+ctrl received 1552, req=0x9
+ctrl handled 1552 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1552, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1552, req=0x9
+ctrl handled 1552 req=0x9
+ctrl received 1552, req=0x9
+ctrl handled 1552 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 65 72 2c 20 49 6e]
+ctrl complete 1552, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1553, req=0x9
+ctrl handled 1553 req=0x9
+ctrl received 1553, req=0x9
+ctrl handled 1553 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 50 41 5f 33 34 33]
+ctrl complete 1553, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1553, req=0x9
+ctrl handled 1553 req=0x9
+ctrl received 1553, req=0x9
+ctrl handled 1553 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1553, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1554, req=0x9
+ctrl handled 1554 req=0x9
+ctrl received 1554, req=0x9
+ctrl handled 1554 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 1b 45 84 ca 3d 22]
+ctrl complete 1554, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1554, req=0x9
+ctrl handled 1554 req=0x9
+ctrl received 1554, req=0x9
+ctrl handled 1554 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 4a 92 64 b3 76 bf]
+ctrl complete 1554, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1554, req=0x9
+ctrl handled 1555 req=0x9
+ctrl received 1555, req=0x9
+ctrl handled 1555 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1555, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 01 a3 60 30 5e 30]
+ctrl complete 1556, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 ec 5e 0d d2 30 1f]
+ctrl complete 1556, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+ctrl received 1556, req=0x9
+ctrl handled 1556 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1556, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1557, req=0x9
+ctrl handled 1557 req=0x9
+ctrl received 1557, req=0x9
+ctrl handled 1557 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 61 69 d6 ea 43 c0]
+ctrl complete 1557, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1557, req=0x9
+ctrl handled 1557 req=0x9
+ctrl received 1557, req=0x9
+ctrl handled 1557 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 8f 0a 60 f3 c2 b5]
+ctrl complete 1557, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 1558, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 a8 cd 41 9e 46 83]
+ctrl complete 1558, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+ctrl received 1558, req=0x9
+ctrl handled 1558 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 9a 8d 88 19 cc 3f]
+ctrl complete 1558, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1559, req=0x9
+ctrl handled 1559 req=0x9
+ctrl received 1559, req=0x9
+ctrl handled 1559 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 00 55 37 00 15 02 00]
+ctrl complete 1559, 0
+iap_hid: tx id=1 len=7 [01 00 55 03 00 16]
+iap_hid: tx id=4 len=27 [04 00 55 17 00 17]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1586, req=0x9
+ctrl handled 1586 req=0x9
+ctrl received 1586, req=0x9
+ctrl handled 1586 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 82 00 18 32 c0]
+ctrl complete 1586, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 1587, req=0x9
+ctrl handled 1587 req=0x9
+ctrl received 1587, req=0x9
+ctrl handled 1587 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 fb bc 97 bb 9f e3]
+ctrl complete 1587, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1587, req=0x9
+ctrl handled 1587 req=0x9
+ctrl received 1587, req=0x9
+ctrl handled 1587 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 01 69 53 d5 3d 2e 7c]
+ctrl complete 1587, 0
+iap_hid: tx id=1 len=7 [01 00 55 03 00 19]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+ctrl received 1598, req=0x9
+ctrl handled 1598 req=0x9
+ctrl received 1598, req=0x9
+ctrl handled 1598 req=0x9
+iap_hid: rx id=5 len=7 wLen=9
+iap_hid: [05 00 55 02 00 0d f1 00]
+ctrl complete 1598, 0
+iap_hid: tx id=3 len=16 [03 00 55 0c 00 0e]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1609, req=0x9
+ctrl handled 1609 req=0x9
+ctrl received 1609, req=0x9
+ctrl handled 1609 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+ctrl complete 1609, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1610, req=0x9
+ctrl handled 1610 req=0x9
+ctrl received 1610, req=0x9
+ctrl handled 1610 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 1610, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1710, req=0x9
+ctrl handled 1710 req=0x9
+ctrl received 1710, req=0x9
+ctrl handled 1710 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 1710, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1810, req=0x9
+ctrl handled 1810 req=0x9
+ctrl received 1810, req=0x9
+ctrl handled 1810 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 1810, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 1910, req=0x9
+ctrl handled 1910 req=0x9
+ctrl received 1910, req=0x9
+ctrl handled 1910 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 1910, 0
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2010, req=0x9
+ctrl handled 2010 req=0x9
+ctrl received 2010, req=0x9
+ctrl handled 2010 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 2010, 0
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2110, req=0x9
+ctrl handled 2112 req=0x9
+ctrl received 2112, req=0x9
+ctrl handled 2112 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2112, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2210, req=0x9
+ctrl handled 2211 req=0x9
+ctrl received 2211, req=0x9
+ctrl handled 2211 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2211, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2310, req=0x9
+ctrl handled 2312 req=0x9
+ctrl received 2312, req=0x9
+ctrl handled 2312 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2312, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2410, req=0x9
+ctrl handled 2411 req=0x9
+ctrl received 2411, req=0x9
+ctrl handled 2411 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2411, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_core: SET_CONFIG 2 to 0
+usbaudio: disconnect
+usbaudio: stop playback
+usbaudio: stop source
+iap_hid: disconnect
+usb_core_exit() finished
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usbaudio: (init) supported frequencies
+usbaudio: playback 48000 Hz
+usbaudio: playback 44100 Hz
+usbaudio: source 8000 Hz
+usbaudio: source 11025 Hz
+usbaudio: source 12000 Hz
+usbaudio: source 16000 Hz
+usbaudio: source 22050 Hz
+usbaudio: source 24000 Hz
+usbaudio: source 32000 Hz
+usbaudio: source 44100 Hz
+usbaudio: source 48000 Hz
+iap_hid: init
+usb_core_init() finished
+usb_core: bus reset
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+ctrl received 2615, req=0x5
+ctrl handled 2615 req=0x5
+usbaudio: usb_interface=0
+iap_hid: usb_interface=2
+usb_core: SETctrl complete 2615, 0
+_ADR 1
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+ctrl received 2615, req=0x6
+ctrl handled 2615 req=0x6
+usb_core: GET_DESC 1
+data 18 (18)
+ctrl complete 2615, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+ctrl received 2615, req=0x6
+ctrl handled 2615 req=0x6
+usb_core: GET_DESC 3
+STRING 0
+data 4 (255)
+ctrl complete 2615, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+ctrl received 2615, req=0x6
+ctrl handled 2615 req=0x6
+usb_core: GET_DESC 2
+data 57 (8)
+ctrl complete 2615, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+ctrl received 2615, req=0x6
+ctrl handled 2615 req=0x6
+usb_core: GET_DESC 2
+data 57 (57)
+ctrl complete 2616, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 2616, req=0x6
+ctrl handled 2617 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 2617, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 2617, req=0x6
+ctrl handled 2618 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 2618, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+ctrl received 2618, req=0x9
+ctrl handled 2619 req=0x9
+usb_core: SET_CONFIG 0 to 2
+usbaudio: init connection
+iap_hid: init connection
+ctrl complete 2619, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 2619, req=0x6
+ctrl handled 2619 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 2619, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 2619, req=0x6
+ctrl handled 2620 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 2621, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+ctrl received 2621, req=0x6
+ctrl handled 2622 req=0x6
+ctrl complete 2622, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+ctrl received 2651, req=0x9
+ctrl handled 2651 req=0x9
+ctrl received 2651, req=0x9
+ctrl handled 2651 req=0x9
+iap_hid: rx id=8 len=19 wLen=21
+iap_hid: [08 00 55 0e 00 13 00 00]
+ctrl complete 2651, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=6 [01 00 55 02 00 14]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2660, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 03 02 01 02 02 0f]
+ctrl complete 2660, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+ctrl received 2660, req=0x9
+ctrl handled 2660 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 14 41 70 70 6c 65]
+ctrl complete 2660, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2661, req=0x9
+ctrl handled 2662 req=0x9
+ctrl received 2662, req=0x9
+ctrl handled 2662 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2662, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2662, req=0x9
+ctrl handled 2664 req=0x9
+ctrl received 2664, req=0x9
+ctrl handled 2664 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 74 79 31 35 30 33]
+ctrl complete 2664, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2664, req=0x9
+ctrl handled 2665 req=0x9
+ctrl received 2665, req=0x9
+ctrl handled 2665 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 38 31 31 31 31 31]
+ctrl complete 2665, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2665, req=0x9
+ctrl handled 2667 req=0x9
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2667, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 65 72 2c 20 49 6e]
+ctrl complete 2667, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 50 41 5f 33 34 33]
+ctrl complete 2667, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+ctrl received 2667, req=0x9
+ctrl handled 2667 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2667, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 1b 45 84 ca 3d 22]
+ctrl complete 2668, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 4a 92 64 b3 76 bf]
+ctrl complete 2668, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+ctrl received 2668, req=0x9
+ctrl handled 2668 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2668, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2668, req=0x9
+ctrl handled 2669 req=0x9
+ctrl received 2669, req=0x9
+ctrl handled 2669 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 01 a3 60 30 5e 30]
+ctrl complete 2669, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 ec 5e 0d d2 30 1f]
+ctrl complete 2670, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2670, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 61 69 d6 ea 43 c0]
+ctrl complete 2670, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2670, req=0x9
+ctrl handled 2670 req=0x9
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 8f 0a 60 f3 c2 b5]
+ctrl complete 2671, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 2671, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 a8 cd 41 9e 46 83]
+ctrl complete 2671, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+ctrl received 2671, req=0x9
+ctrl handled 2671 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 9a 8d 88 19 cc 3f]
+ctrl complete 2671, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2672, req=0x9
+ctrl handled 2673 req=0x9
+ctrl received 2673, req=0x9
+ctrl handled 2673 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 00 55 37 00 15 02 00]
+ctrl complete 2673, 0
+iap_hid: tx id=1 len=7 [01 00 55 03 00 16]
+iap_hid: tx id=4 len=27 [04 00 55 17 00 17]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+ctrl received 2698, req=0x9
+ctrl handled 2698 req=0x9
+ctrl received 2698, req=0x9
+ctrl handled 2698 req=0x9
+iap_hid: rx id=5 len=7 wLen=9
+iap_hid: [05 00 55 02 00 0d f1 00]
+ctrl complete 2698, 0
+iap_hid: tx id=3 len=16 [03 00 55 0c 00 0e]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2707, req=0x9
+ctrl handled 2707 req=0x9
+ctrl received 2707, req=0x9
+ctrl handled 2707 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 82 00 18 32 c0]
+ctrl complete 2707, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 2707, req=0x9
+ctrl handled 2708 req=0x9
+ctrl received 2708, req=0x9
+ctrl handled 2708 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 fb bc 97 bb 9f e3]
+ctrl complete 2708, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2708, req=0x9
+ctrl handled 2708 req=0x9
+ctrl received 2708, req=0x9
+ctrl handled 2708 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 01 69 53 d5 3d 2e 7c]
+iap_hid: tx id=ctrl complete 2708, 0
+1 len=7 [01 00 55 03 00 19]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2709, req=0x9
+ctrl handled 2709 req=0x9
+ctrl received 2709, req=0x9
+ctrl handled 2709 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+ctrl complete 2709, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2710, req=0x9
+ctrl handled 2710 req=0x9
+ctrl received 2710, req=0x9
+ctrl handled 2711 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2711, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2810, req=0x9
+ctrl handled 2811 req=0x9
+ctrl received 2811, req=0x9
+ctrl handled 2811 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hictrl complete 2811, 0
+d: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 2910, req=0x9
+ctrl handled 2910 req=0x9
+ctrl received 2910, req=0x9
+ctrl handled 2910 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 2910, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3010, req=0x9
+ctrl handled 3010 req=0x9
+ctrl received 3010, req=0x9
+ctrl handled 3010 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3010, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3110, req=0x9
+ctrl handled 3110 req=0x9
+ctrl received 3110, req=0x9
+ctrl handled 3110 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 3110, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3210, req=0x9
+ctrl handled 3210 req=0x9
+ctrl received 3210, req=0x9
+ctrl handled 3210 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3210, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3310, req=0x9
+ctrl handled 3311 req=0x9
+ctrl received 3311, req=0x9
+ctrl handled 3311 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3311, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3411, req=0x9
+ctrl handled 3411 req=0x9
+ctrl received 3411, req=0x9
+ctrl handled 3411 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3411, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3511, req=0x9
+ctrl handled 3512 req=0x9
+ctrl received 3512, req=0x9
+ctrl handled 3512 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3512, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_core: SET_CONFIG 2 to 0
+usbaudio: disconnect
+usbaudio: stop playback
+usbaudio: stop source
+iap_hid: disconnect
+usb_core_exit() finished
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usbaudio: (init) supported frequencies
+usbaudio: playback 48000 Hz
+usbaudio: playback 44100 Hz
+usbaudio: source 8000 Hz
+usbaudio: source 11025 Hz
+usbaudio: source 12000 Hz
+usbaudio: source 16000 Hz
+usbaudio: source 22050 Hz
+usbaudio: source 24000 Hz
+usbaudio: source 32000 Hz
+usbaudio: source 44100 Hz
+usbaudio: source 48000 Hz
+iap_hid: init
+usb_core_init() finished
+usb_core: bus reset
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+ctrl received 3715, req=0x5
+ctrl handled 3715 req=0x5
+usbaudio: usb_interface=0
+iap_hid: usb_interface=2
+ctrl complete 3715, 0
+usb_core: SET_ADR 1
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+ctrl received 3715, req=0x6
+ctrl handled 3716 req=0x6
+usb_core: GET_DESC 1
+data 18 (18)
+ctrl complete 3716, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+ctrl received 3716, req=0x6
+ctrl handled 3716 req=0x6
+usb_core: GET_DESC 3
+STRING 0
+data 4 (255)
+ctrl complete 3716, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+ctrl received 3716, req=0x6
+ctrl handled 3718 req=0x6
+usb_core: GET_DESC 2
+data 57 (8)
+ctrl complete 3718, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+ctrl received 3718, req=0x6
+ctrl handled 3719 req=0x6
+usb_core: GET_DESC 2
+data 57 (57)
+ctrl complete 3719, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 3720, req=0x6
+ctrl handled 3721 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 3721, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 3721, req=0x6
+ctrl handled 3723 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 3723, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+ctrl received 3723, req=0x9
+ctrl handled 3724 req=0x9
+usb_core: SET_CONFIG 0 to 2
+usbaudio: init connection
+iap_hid: init connection
+ctrl complete 3724, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 3724, req=0x6
+ctrl handled 3725 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 3725, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 3725, req=0x6
+ctrl handled 3725 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 3725, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+ctrl received 3726, req=0x6
+ctrl handled 3726 req=0x6
+ctrl complete 3726, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+ctrl received 3755, req=0x9
+ctrl handled 3756 req=0x9
+ctrl received 3756, req=0x9
+ctrl handled 3756 req=0x9
+iap_hid: rx id=8 len=19 wLen=21
+iap_hid: [08 00 55 0e 00 13 00 00]
+ctrl complete 3756, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=6 [01 00 55 02 00 14]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3760, req=0x9
+ctrl handled 3761 req=0x9
+ctrl received 3761, req=0x9
+ctrl handled 3761 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3761, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3761, req=0x9
+ctrl handled 3761 req=0x9
+ctrl received 3761, req=0x9
+ctrl handled 3761 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 03 02 01 02 02 0f]
+ctrl complete 3761, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 14 41 70 70 6c 65]
+iap_hid: tx id=1 lenctrl complete 3762, 0
+=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3762, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 74 79 31 35 30 33]
+ctrl complete 3762, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+ctrl received 3762, req=0x9
+ctrl handled 3762 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 38 31 31 31 31 31]
+ctrl complete 3762, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3763, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 65 72 2c 20 49 6e]
+ctrl complete 3763, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+ctrl received 3763, req=0x9
+ctrl handled 3763 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 50 41 5f 33 34 33]
+ctrl complete 3763, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3764, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 1b 45 84 ca 3d 22]
+ctrl complete 3764, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+ctrl received 3764, req=0x9
+ctrl handled 3764 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 4a 92 64 b3 76 bf]
+ctrl complete 3764, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3765, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 01 a3 60 30 5e 30]
+ctrl complete 3765, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 ec 5e 0d d2 30 1f]
+iap_hid: tx id=1ctrl complete 3765, 0
+ len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+ctrl received 3765, req=0x9
+ctrl handled 3765 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3765, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3766, req=0x9
+ctrl handled 3766 req=0x9
+ctrl received 3766, req=0x9
+ctrl handled 3768 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 61 69 d6 ea 43 c0]
+ctrl complete 3768, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3768, req=0x9
+ctrl handled 3768 req=0x9
+ctrl received 3768, req=0x9
+ctrl handled 3768 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 8f 0a 60 f3 c2 b5]
+ctrl complete 3768, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3769, req=0x9
+ctrl handled 3770 req=0x9
+ctrl received 3770, req=0x9
+ctrl handled 3770 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 3770, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3770, req=0x9
+ctrl handled 3772 req=0x9
+ctrl received 3772, req=0x9
+ctrl handled 3772 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 a8 cd 41 9e 46 83]
+ctrl complete 3772, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 3772, req=0x9
+ctrl handled 3773 req=0x9
+ctrl received 3773, req=0x9
+ctrl handled 3773 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 9a 8d 88 19 cc 3f]
+ctrl complete 3773, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3773, req=0x9
+ctrl handled 3775 req=0x9
+ctrl received 3775, req=0x9
+ctrl handled 3775 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 00 55 37 00 15 02 00]
+ctrl complete 3775, 0
+iap_hid: tx id=1 len=7 [01 00 55 03 00 16]
+iap_hid: tx id=4 len=27 [04 00 55 17 00 17]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+ctrl received 3798, req=0x9
+ctrl handled 3798 req=0x9
+ctrl received 3798, req=0x9
+ctrl handled 3798 req=0x9
+iap_hid: rx id=5 len=7 wLen=9
+iap_hid: [05 00 55 02 00 0d f1 00]
+ctrl complete 3798, 0
+iap_hid: tx id=3 len=16 [03 00 55 0c 00 0e]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 82 00 18 32 c0]
+ctrl complete 3807, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 fb bc 97 bb 9f e3]
+ctrl complete 3807, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+ctrl received 3807, req=0x9
+ctrl handled 3807 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 01 69 53 d5 3d 2e 7c]
+ctrl complete 3807, 0
+iap_hid: tx id=1 len=7 [01 00 55 03 00 19]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3809, req=0x9
+ctrl handled 3809 req=0x9
+ctrl received 3809, req=0x9
+ctrl handled 3809 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+ctrl complete 3809, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3810, req=0x9
+ctrl handled 3812 req=0x9
+ctrl received 3812, req=0x9
+ctrl handled 3812 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3812, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 3910, req=0x9
+ctrl handled 3911 req=0x9
+ctrl received 3911, req=0x9
+ctrl handled 3911 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 3911, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4010, req=0x9
+ctrl handled 4012 req=0x9
+ctrl received 4012, req=0x9
+ctrl handled 4012 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4012, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4110, req=0x9
+ctrl handled 4111 req=0x9
+ctrl received 4111, req=0x9
+ctrl handled 4111 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4112, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+iap_hid: tx id=1 len=9 [01 00 55 05 03 09]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4211, req=0x9
+ctrl handled 4211 req=0x9
+ctrl received 4211, req=0x9
+ctrl handled 4211 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4211, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4311, req=0x9
+ctrl handled 4312 req=0x9
+ctrl received 4312, req=0x9
+ctrl handled 4312 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4312, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4411, req=0x9
+ctrl handled 4412 req=0x9
+ctrl received 4412, req=0x9
+ctrl handled 4412 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4412, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4511, req=0x9
+ctrl handled 4512 req=0x9
+ctrl received 4512, req=0x9
+ctrl handled 4512 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4512, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4611, req=0x9
+ctrl handled 4612 req=0x9
+ctrl received 4612, req=0x9
+ctrl handled 4612 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+ctrl complete 4612, 0
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+usb_core: SET_CONFIG 2 to 0
+usbaudio: disconnect
+usbaudio: stop playback
+usbaudio: stop source
+iap_hid: disconnect
+usb_core_exit() finished
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usbaudio: (init) supported frequencies
+usbaudio: playback 48000 Hz
+usbaudio: playback 44100 Hz
+usbaudio: source 8000 Hz
+usbaudio: source 11025 Hz
+usbaudio: source 12000 Hz
+usbaudio: source 16000 Hz
+usbaudio: source 22050 Hz
+usbaudio: source 24000 Hz
+usbaudio: source 32000 Hz
+usbaudio: source 44100 Hz
+usbaudio: source 48000 Hz
+iap_hid: init
+usb_core_init() finished
+usb_core: bus reset
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+ctrl received 4815, req=0x5
+ctrl handled 4815 req=0x5
+usbaudio: usb_interface=0
+iap_hid: usb_interface=2
+ctrl complete 4815, 0
+usb_core: SET_ADR 1
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+ctrl received 4815, req=0x6
+ctrl handled 4815 req=0x6
+usb_core: GET_DESC 1
+data 18 (18)
+ctrl complete 4815, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+ctrl received 4815, req=0x6
+ctrl handled 4816 req=0x6
+usb_core: GET_DESC 3
+STRING 0
+data 4 (255)
+ctrl complete 4816, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+ctrl received 4816, req=0x6
+ctrl handled 4816 req=0x6
+usb_core: GET_DESC 2
+data 57 (8)
+ctrl complete 4816, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+ctrl received 4816, req=0x6
+ctrl handled 4816 req=0x6
+usb_core: GET_DESC 2
+data 57 (57)
+ctrl complete 4816, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 4816, req=0x6
+ctrl handled 4816 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 4816, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 4816, req=0x6
+ctrl handled 4816 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 4816, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+ctrl received 4817, req=0x9
+ctrl handled 4817 req=0x9
+usb_core: SET_CONFIG 0 to 2
+usbaudio: init connection
+iap_hid: init connection
+ctrl complete 4817, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+ctrl received 4817, req=0x6
+ctrl handled 4817 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (8)
+ctrl complete 4817, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+ctrl received 4817, req=0x6
+ctrl handled 4817 req=0x6
+usb_core: GET_DESC 2
+get config descriptors (source-only)
+usbaudio: port_speed=fs
+data 149 (149)
+ctrl complete 4817, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+ctrl received 4818, req=0x6
+ctrl handled 4818 req=0x6
+ctrl complete 4818, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+ctrl received 4847, req=0x9
+ctrl handled 4847 req=0x9
+ctrl received 4847, req=0x9
+ctrl handled 4847 req=0x9
+iap_hid: rx id=8 len=19 wLen=21
+iap_hid: [08 00 55 0e 00 13 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4847, 0
+iap_hid: tx id=1 len=6 [01 00 55 02 00 14]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4850, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 03 02 01 02 02 0f]
+ctrl complete 4850, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+ctrl received 4850, req=0x9
+ctrl handled 4850 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 14 41 70 70 6c 65]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4850, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4851, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 74 79 31 35 30 33]
+ctrl complete 4851, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 38 31 31 31 31 31]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4851, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+ctrl received 4851, req=0x9
+ctrl handled 4851 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4851, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 65 72 2c 20 49 6e]
+ctrl complete 4852, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 50 41 5f 33 34 33]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4852, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4852, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+ctrl received 4852, req=0x9
+ctrl handled 4852 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 1b 45 84 ca 3d 22]
+ctrl complete 4852, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 4a 92 64 b3 76 bf]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4853, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4853, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 01 a3 60 30 5e 30]
+ctrl complete 4853, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+ctrl received 4853, req=0x9
+ctrl handled 4853 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 ec 5e 0d d2 30 1f]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4854, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4854, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 61 69 d6 ea 43 c0]
+ctrl complete 4854, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+ctrl received 4854, req=0x9
+ctrl handled 4854 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 8f 0a 60 f3 c2 b5]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4854, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 86 00 15 02 00]
+ctrl complete 4855, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 a8 cd 41 9e 46 83]
+ctrl complete 4855, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+iap_hid: rx id=7 len=13 wLen=15
+iap_hid: [07 01 9a 8d 88 19 cc 3f]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4855, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+ctrl received 4855, req=0x9
+ctrl handled 4855 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 00 55 37 00 15 02 00]
+iap_hid: tx id=1 len=7 [01 00 55 03 00 16]
+ctrl complete 4856, 0
+iap_hid: tx id=4 len=27 [04 00 55 17 00 17]
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 02 55 82 00 18 32 c0]
+ctrl complete 4886, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+iap_hid: rx id=9 len=62 wLen=64
+iap_hid: [09 03 fb bc 97 bb 9f e3]
+ctrl complete 4886, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+ctrl received 4886, req=0x9
+ctrl handled 4886 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 01 69 53 d5 3d 2e 7c]
+iap_hid: tx id=1 len=7 [01 00 55 03 00 19]
+ctrl complete 4886, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+ctrl received 4898, req=0x9
+ctrl handled 4898 req=0x9
+ctrl received 4898, req=0x9
+ctrl handled 4898 req=0x9
+iap_hid: rx id=5 len=7 wLen=9
+iap_hid: [05 00 55 02 00 0d f1 00]
+iap_hid: tx id=3 len=16 [03 00 55 0c 00 0e]
+ctrl complete 4898, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4909, req=0x9
+ctrl handled 4909 req=0x9
+ctrl received 4909, req=0x9
+ctrl handled 4909 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 06 03 08 00 00]
+iap_hid: tx id=1 len=8 [01 00 55 04 03 00]
+ctrl complete 4909, 0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+ctrl received 4910, req=0x9
+ctrl handled 4910 req=0x9
+ctrl received 4910, req=0x9
+ctrl handled 4910 req=0x9
+iap_hid: rx id=6 len=9 wLen=11
+iap_hid: [06 00 55 05 00 2b 00 01]
+iap_hid: tx id=1 len=8 [01 00 55 04 00 02]
+ctrl complete 4910, 0
+usb_core: SET_CONFIG 2 to 0
+usbaudio: disconnect
+usbaudio: stop playback
+usbaudio: stop source
+iap_hid: disconnect
+usb_core_exit() finished
