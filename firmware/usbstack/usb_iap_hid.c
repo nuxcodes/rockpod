@@ -35,6 +35,9 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
+#ifdef USB_ENABLE_AUDIO
+#include "usb_audio.h"
+#endif
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -236,6 +239,19 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          tx_buf[0], tx_buf[1], tx_buf[2],
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
+
+#ifdef USB_ENABLE_AUDIO
+    /* Suppress HID IN reports while USB audio source mode is streaming.
+     * The dock's USB host controller drops isochronous audio frames
+     * when it also has to process HID interrupt IN transfers in the
+     * same USB frame.  The dock still sends SET_REPORT queries (which
+     * are processed normally); we just withhold our IN responses. */
+    if (usb_audio_source_streaming())
+    {
+        semaphore_release(&tx_complete_sem);
+        return;
+    }
+#endif
 
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }

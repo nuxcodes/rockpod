@@ -2550,7 +2550,7 @@ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
     simplelist_addline("iface: %d alt: %d", usb_audio_get_main_intf(), usb_audio_get_alt_intf());
     simplelist_addline("out ep: 0x%X in ep: 0x%X", usb_audio_get_out_ep(), usb_audio_get_in_ep());
     simplelist_addline("Volume: %d", usb_audio_get_cur_volume());
-    simplelist_addline("Playback Frequency: %lu", usb_audio_get_playback_sampling_frequency());
+    simplelist_addline("Sink Frequency: %lu", usb_audio_get_playback_sampling_frequency());
     simplelist_addline("Frames dropped: %d", usb_audio_get_frames_dropped());
     simplelist_addline("ISO IN incomplete: %d", usb_drv_get_iisoixfr_count());
     simplelist_addline("Buffers filled: %f", (double)usb_audio_get_prebuffering_avg()/(1<<16)); // convert from 16.16 fixed to float
@@ -2561,6 +2561,11 @@ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
     simplelist_addline("%s", usb_audio_get_underflow()?"UNDERFLOW!":" ");
     simplelist_addline("%s", usb_audio_get_overflow()?"OVERFLOW!":" ");
     simplelist_addline("%s", usb_audio_get_alloc_failed()?"ALLOC FAILED!":" ");
+    simplelist_addline("Source: %s @ %lu Hz",
+        usb_audio_source_streaming()?"Streaming":"Off",
+        usb_audio_get_source_sampling_frequency());
+    simplelist_addline("Source ring: %d bytes",
+        usb_audio_get_source_ring_available());
     if (action == ACTION_NONE)
     {
         action = ACTION_REDRAW;

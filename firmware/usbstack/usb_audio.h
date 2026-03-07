@@ -268,4 +268,8 @@ bool usb_audio_get_active(void);
 
 bool usb_audio_source_streaming(void);
 
+unsigned long usb_audio_get_source_sampling_frequency(void);
+
+int usb_audio_get_source_ring_available(void);
+
 #endif

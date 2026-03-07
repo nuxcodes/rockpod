@@ -1610,6 +1610,21 @@ bool usb_audio_source_streaming(void)
     return source_streaming;
 }
 
+unsigned long usb_audio_get_source_sampling_frequency(void)
+{
+    return hw_freq_sampr[as_source_freq_idx];
+}
+
+int usb_audio_get_source_ring_available(void)
+{
+    int write = tx_write_pos;
+    int read = tx_read_pos;
+    if (write >= read)
+        return write - read;
+    else
+        return TX_RING_SIZE - read + write;
+}
+
 /* determine if enough prebuffering has been done to restart audio */
 bool prebuffering_done(void)
 {
