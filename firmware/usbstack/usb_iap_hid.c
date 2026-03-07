@@ -227,7 +227,7 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
 
-    usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
+    usb_drv_send(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }
 
 /*

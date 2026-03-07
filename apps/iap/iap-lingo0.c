@@ -848,10 +848,10 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             device.auth.state = AUST_AUTH;
             device.accinfo = ACCST_INIT;
 
-            /* After IDPS auth, initiate digital audio via periodic handler.
+            /* After auth, initiate digital audio via periodic handler.
              * Do NOT call iap_set_remote_volume() or any other send here —
              * tx_buf is shared and 0x19 hasn't finished DMA yet. */
-            if (device.auth.idps && DEVICE_LINGO_SUPPORTED(0x0A))
+            if (DEVICE_LINGO_SUPPORTED(0x0A))
                 device.audio_init_pending = true;
 
             break;
