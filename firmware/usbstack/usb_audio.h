@@ -266,4 +266,6 @@ int usb_audio_get_cur_volume(void);
 
 bool usb_audio_get_active(void);
 
+bool usb_audio_source_streaming(void);
+
 #endif

@@ -116,6 +116,7 @@
 
 #ifdef HAVE_USBSTACK
 #include "usb_core.h"
+#include "usb_drv.h"
 #ifdef USB_ENABLE_AUDIO
 #include "../usbstack/usb_audio.h"
 #endif
@@ -2551,6 +2552,7 @@ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
     simplelist_addline("Volume: %d", usb_audio_get_cur_volume());
     simplelist_addline("Playback Frequency: %lu", usb_audio_get_playback_sampling_frequency());
     simplelist_addline("Frames dropped: %d", usb_audio_get_frames_dropped());
+    simplelist_addline("ISO IN incomplete: %d", usb_drv_get_iisoixfr_count());
     simplelist_addline("Buffers filled: %f", (double)usb_audio_get_prebuffering_avg()/(1<<16)); // convert from 16.16 fixed to float
     simplelist_addline("Min: %d / Max: %d", usb_audio_get_prebuffering_maxmin(false), usb_audio_get_prebuffering_maxmin(true));
     simplelist_addline("Samples used per Frame: %f", (double)usb_audio_get_samplesperframe()/(1<<16)); // convert from 16.16 fixed to float

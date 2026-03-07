@@ -1605,6 +1605,11 @@ bool usb_audio_get_playing(void)
     return usb_audio_playing;
 }
 
+bool usb_audio_source_streaming(void)
+{
+    return source_streaming;
+}
+
 /* determine if enough prebuffering has been done to restart audio */
 bool prebuffering_done(void)
 {

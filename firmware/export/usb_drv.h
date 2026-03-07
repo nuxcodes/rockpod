@@ -107,6 +107,7 @@ int usb_drv_deinit_endpoint(int endpoint);
  *   number
  * thus in all mode, the frame number can be interpreted as the current millisecond *in USB time*. */
 int usb_drv_get_frame_number(void);
+int usb_drv_get_iisoixfr_count(void);
 #endif
 
 /* USB_STRING_INITIALIZER(u"Example String") */

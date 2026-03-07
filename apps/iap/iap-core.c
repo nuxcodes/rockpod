@@ -43,6 +43,9 @@
 #include "action.h"
 #include "powermgmt.h"
 #include "usb.h"
+#ifdef USB_ENABLE_AUDIO
+#include "../usbstack/usb_audio.h"
+#endif
 
 #include "tuner.h"
 #if CONFIG_TUNER
@@ -961,6 +964,14 @@ void iap_periodic(void)
     /* After IDPS, do not send unsolicited notifications — they lack
      * transIDs and the Go daemon reference doesn't send them either. */
     if (device.auth.idps) return;
+
+    /* Suppress unsolicited notifications while USB audio source mode
+     * is streaming.  HID TX traffic causes the dock's USB host
+     * controller to miss isochronous audio frames.  The dock still
+     * receives responses to its SET_REPORT polling. */
+#ifdef USB_ENABLE_AUDIO
+    if (usb_audio_source_streaming()) return;
+#endif
 
     if (!device.do_notify) return;
     if ((device.notifications == 0) && (interface_state != IST_EXTENDED)) return;

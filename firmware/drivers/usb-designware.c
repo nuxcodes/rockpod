@@ -38,8 +38,11 @@
 #include "usb-designware.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
-#define LOGF_ENABLE
+/* #define LOGF_ENABLE */
 #include "logf.h"
+
+/* Diagnostic counter: incomplete isochronous IN transfers */
+static volatile int iisoixfr_count = 0;
 
 
 /* The ARM940T uses a subset of the ARMv4 functions, not
@@ -1252,6 +1255,7 @@ static void usb_dw_irq(void)
                     DWC_DIEPCTL(ep) |= EPENA | CNAK | SETD1PIDOF;
             }
         }
+        iisoixfr_count++;
         DWC_GINTSTS = IISOIXFR;
     }
 
@@ -1763,4 +1767,9 @@ int usb_drv_get_frame_number()
     // The USB spec says a frame number is 11 bits. This way we get 1 frame per millisecond,
     // just like we're supposed to!
     return (DWC_DSTS >> 11) & 0x7FF;
+}
+
+int usb_drv_get_iisoixfr_count(void)
+{
+    return iisoixfr_count;
 }
