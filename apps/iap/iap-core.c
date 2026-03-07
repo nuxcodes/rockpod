@@ -1562,6 +1562,11 @@ void iap_fill_power_state(void)
     }
 }
 
+bool iap_auth_is_idps(void)
+{
+    return device.auth.idps;
+}
+
 #include "lcd.h"
 #include "font.h"
 bool dbg_iap(void)
