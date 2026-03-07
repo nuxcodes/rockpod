@@ -268,6 +268,13 @@ static void iap_hid_process_rx(const unsigned char *data, int len)
         iap_transport_send = iap_hid_tx;
         iap_hid_transport_active = true;
         iap_setup(0);
+        /* Allocate IAP buffers synchronously so the first packet is
+         * not dropped.  iap_setup() sets iap_running=false; in the
+         * serial path iap_getc() defers allocation via IAP_EV_MALLOC
+         * and the accessory retransmits.  In the USB HID path we feed
+         * an entire packet synchronously, so buffers must be ready
+         * before the first byte hits iap_getc(). */
+        iap_malloc();
     }
 
     uint8_t report_id = data[0];

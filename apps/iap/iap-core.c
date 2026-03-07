@@ -223,7 +223,7 @@ static struct buflib_callbacks iap_buflib_callbacks = {
 };
 #endif
 
-static void iap_malloc(void);
+void iap_malloc(void);
 
 static void iap_reset_buffers(void)
 {
@@ -517,7 +517,7 @@ static void iap_start(void)
     queue_post(&iap_queue, IAP_EV_MALLOC, 0);
 }
 
-static void iap_malloc(void)
+void iap_malloc(void)
 {
 #ifndef IAP_MALLOC_DYNAMIC
     static unsigned char serbuf[IAP_MALLOC_SIZE];

@@ -481,7 +481,6 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             uint32_t lingoes = get_u32(&buf[2]);
             uint32_t options = get_u32(&buf[6]);
             uint32_t deviceid = get_u32(&buf[0x0A]);
-            bool seen_unsupported = false;
             unsigned char i;
 
             CHECKLEN(14);
@@ -542,39 +541,39 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
              * Bit 5: RF Transmitter lingo
              */
 
-            /* Loop through the lingoes advertised by the device.
-             * If it tries to use a lingo we do not support, return
-             * a Command Failed ACK.
+            /* Strip unsupported lingoes from the requested set instead
+             * of rejecting the entire identification.  Accessories
+             * (e.g. Onkyo docks) may request lingoes that Apple firmware
+             * supports but Rockbox does not (Microphone, USB Host, etc.).
+             * Masking them out lets the accessory work with the subset
+             * Rockbox can handle.
              */
             for(i=0; i<32; i++) {
-                if (lingoes & BIT_N(i)) {
-                    /* Bit set by device */
-                    if (!LINGO_SUPPORTED(i)) {
-                        seen_unsupported = true;
-                    }
+                if ((lingoes & BIT_N(i)) && !LINGO_SUPPORTED(i)) {
+                    lingoes &= ~BIT_N(i);
                 }
             }
 
             /* Bit 0 _must_ be set by the device */
             if (!(lingoes & 1)) {
-                seen_unsupported = true;
+                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                break;
             }
 
             /* Specifying a deviceid without requesting authentication is
              * an error
              */
-            if (deviceid && !(options & 0x03))
-                seen_unsupported = true;
-
-            /* Specifying authentication without a deviceid is an error */
-            if (!deviceid && (options & 0x03))
-                seen_unsupported = true;
-
-            device.lingoes = 0;
-            if (seen_unsupported) {
+            if (deviceid && !(options & 0x03)) {
                 cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                 break;
             }
+
+            /* Specifying authentication without a deviceid is an error */
+            if (!deviceid && (options & 0x03)) {
+                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                break;
+            }
+
             iap_reset_device(&device);
             device.lingoes = lingoes;
 
