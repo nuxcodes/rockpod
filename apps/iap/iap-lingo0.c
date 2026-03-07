@@ -129,6 +129,11 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             iap_interface_state_change(IST_STANDARD);
             iap_reset_device(&device);
 
+            /* Legacy Identify has no authentication — grant access so
+             * CHECKAUTH does not block lingo commands.
+             */
+            device.auth.state = AUST_AUTH;
+
             switch (lingo) {
                 case 0x04:
                 {
@@ -587,6 +592,12 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             if (deviceid && (options & 0x03) && !DEVICE_AUTH_RUNNING) {
                 device.auth.state = AUST_INIT;
             } else {
+                /* No authentication requested — grant access immediately.
+                 * Without this, CHECKAUTH blocks all authenticated lingo
+                 * commands (e.g. SetRemoteEventNotification) and the
+                 * accessory retries forever.
+                 */
+                device.auth.state = AUST_AUTH;
                 device.accinfo = ACCST_INIT;
             }
 
