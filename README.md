@@ -179,16 +179,14 @@ Key files: `firmware/target/arm/s5l8702/ipod6g/power-6g.c`, `powermgmt-6g.c`
 
 ---
 
-### Simplified Menu
+### Menu
 
-The main menu is reduced to five entries:
+The full Rockbox menu is available — all standard items (File Browser, Playlists, Plugins, etc.) are accessible.
 
 |                     Main menu                     |                    Database track list                     |
 | :-----------------------------------------------: | :--------------------------------------------------------: |
 | <img src="screenshots/main-menu.png" width="280"> | <img src="screenshots/database-tracklist.png" width="280"> |
-|                   5 menu items                    |         Title only — no disc/track number clutter          |
-
-Removed: File Browser, Recording, FM Radio, Bookmarks, Plugins, Playlists, Shortcuts. If you need any of these back, edit `root_menu.c`.
+|           *(screenshot shows an older build)*           |         Title only — no disc/track number clutter          |
 
 ---
 
@@ -213,7 +211,7 @@ The repo includes a modified version of **adwaitapod_dark_simplified** with swap
 | **Cover Flow**          | 3 slides, no status bar, 70-degree tilt | 7 slides, status bar, parallel projection      |
 | **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake (HDD mode preserved)    |
 | **Codec power**         | Always on                               | Auto power-down on idle                        |
-| **Main menu**           | 12+ items                               | 5 items                                        |
+| **Main menu**           | 12+ items                               | Full menu restored                             |
 | **USB power**           | Charges from any USB source             | Smart charge gating for low-power accessories  |
 | **Auto-poweroff + USB** | Blocked indefinitely                    | Works for non-charging accessories             |
 
@@ -262,8 +260,6 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 - **16-bit PCM, 44.1 / 48 kHz** — USB Audio Class 1.0 ceiling
 - **iPod Classic only** — untested on other Rockbox targets
 - **No USB DAC (sink) mode** — USB audio config is repurposed for digital audio output
-- **Rockbox bootloader required** — needs an existing Rockbox installation
-- **Reduced menu** — if you need the file browser or plugins menu, edit `root_menu.c`
 
 ---
 
