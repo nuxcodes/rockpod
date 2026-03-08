@@ -81,6 +81,10 @@ static struct dmac_ch_cfg dma_play_ch_cfg = {
 #define WATERMARK_BYTES     (PCM_WATERMARK * 4)
 
 static volatile int locked = 0;
+/* When set, pcm_play_dma_start() returns immediately without starting
+ * I2S DMA.  Used by USB audio source pull mode where the USB ISR
+ * drives audio data instead of the DMA controller. */
+volatile bool pcm_dma_start_inhibit = false;
 static unsigned char dblbuf[2][WATERMARK_BYTES] CACHEALIGN_ATTR;
 static int active_dblbuf;
 size_t pcm_remaining;
@@ -143,6 +147,9 @@ static void dma_play_callback(void *cb_data)
 
 void pcm_play_dma_start(const void* addr, size_t size)
 {
+    if (pcm_dma_start_inhibit)
+        return;
+
     pcm_play_dma_stop();
 
     /* un-gate I2S clock before starting DMA */

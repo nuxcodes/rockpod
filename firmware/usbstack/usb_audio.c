@@ -42,6 +42,7 @@
 #include "settings.h"
 #include "core_alloc.h"
 #include "pcm_mixer.h"
+#include "pcm-internal.h"
 #include "dsp_core.h"
 #ifdef HAVE_CS42L55
 #include "audiohw.h"
@@ -589,6 +590,19 @@ static volatile int source_frames_sent;
 static unsigned char tx_send_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 static unsigned char silence_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 
+/* USB-driven pull mode state (replaces ring buffer in source mode).
+ * Audio data is pulled directly from the PCM mixer at USB frame rate,
+ * adapted from rockbox-mojyack's batch_get_more() pattern. */
+static const void *source_pull_buf;     /* current buffer from PCM mixer */
+static size_t source_pull_size;         /* total size of current buffer */
+static size_t source_pull_cursor;       /* bytes consumed from current buffer */
+static bool source_pull_mode = false;   /* true when USB ISR drives audio */
+
+/* DMA inhibit flag defined in pcm-s5l8702.c — prevents I2S DMA restart
+ * when the PCM engine internally calls pcm_play_dma_start() during
+ * pull mode. */
+extern volatile bool pcm_dma_start_inhibit;
+
 /* Schematic view of the RX situation:
  * (in case NR_BUFFERS = 4)
  *
@@ -987,6 +1001,10 @@ static void set_source_sampling_frequency(unsigned long f)
         hw_freq_sampr[as_source_freq_idx], f);
 }
 
+/* Ring buffer hook for legacy (non-pull) source mode.
+ * Currently unused — pull mode drives audio from the USB ISR directly.
+ * Kept for potential fallback. */
+static void source_buffer_hook(const void *start, size_t size) __attribute__((unused));
 static void source_buffer_hook(const void *start, size_t size)
 {
     if (!source_streaming || !tx_ring_buf)
@@ -1032,37 +1050,60 @@ static void source_buffer_hook(const void *start, size_t size)
 
 static void usb_audio_start_source(void)
 {
-    logf("usbaudio: start source at %lu Hz ep=0x%02X", hw_freq_sampr[as_source_freq_idx], EP_ISO_SOURCE_IN);
+    logf("usbaudio: start source (pull) at %lu Hz ep=0x%02X", hw_freq_sampr[as_source_freq_idx], EP_ISO_SOURCE_IN);
     source_streaming = true;
-    source_prebuffering = true;
-    source_fade_pos = SOURCE_FADE_FRAMES; /* no fade during initial silence */
+    source_pull_mode = true;
+    source_fade_pos = 0;       /* fade-in from silence when data arrives */
     source_last_sample[0] = 0;
     source_last_sample[1] = 0;
-    tx_write_pos = 0;
-    tx_read_pos = 0;
     source_frac_num = 0;
     source_underflow_count = 0;
     source_frames_sent = 0;
+    source_pull_buf = NULL;
+    source_pull_size = 0;
+    source_pull_cursor = 0;
+    source_prebuffering = false; /* not used in pull mode, clear for clarity */
+    tx_write_pos = 0;
+    tx_read_pos = 0;
     memset(silence_buf, 0, sizeof(silence_buf));
     memset(tx_send_buf, 0, sizeof(tx_send_buf));
 
-    /* register hook to capture playback audio */
-    mixer_channel_set_buffer_hook(PCM_MIXER_CHAN_PLAYBACK, source_buffer_hook);
-
-    /* start the ISO IN chain with a silence frame */
-    int frame_bytes = source_frame_bytes();
-    usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, silence_buf, frame_bytes);
+    /* Stop I2S DMA — USB ISR drives PCM data instead.
+     * Inhibit flag prevents mixer from restarting DMA.
+     * Do NOT register source_buffer_hook; data is pulled
+     * directly from the PCM mixer in the XFRC handler. */
+    pcm_dma_start_inhibit = true;
+    pcm_play_dma_stop();
 
 #ifdef HAVE_CS42L55
     /* Power down headphone amps — audio goes over USB, not the jack */
     audiohw_set_hp_power(false);
 #endif
+
+    /* start the ISO IN chain with a silence frame */
+    int frame_bytes = source_frame_bytes();
+    usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, silence_buf, frame_bytes);
 }
 
 static void usb_audio_stop_source(void)
 {
     logf("usbaudio: stop source");
     source_streaming = false;
+
+    if (source_pull_mode)
+    {
+        source_pull_mode = false;
+        source_pull_buf = NULL;
+        source_pull_size = 0;
+        source_pull_cursor = 0;
+
+        /* Re-enable DMA starts and cleanly reset PCM state.
+         * The playback engine will restart DMA when it has data. */
+        pcm_dma_start_inhibit = false;
+        pcm_play_stop();
+    }
+
+    /* Clear buffer hook (not set in pull mode, but clear unconditionally) */
     mixer_channel_set_buffer_hook(PCM_MIXER_CHAN_PLAYBACK, NULL);
 
 #ifdef HAVE_CS42L55
@@ -1621,6 +1662,9 @@ unsigned long usb_audio_get_source_sampling_frequency(void)
 
 int usb_audio_get_source_ring_available(void)
 {
+    if (source_pull_mode)
+        return (int)(source_pull_size - source_pull_cursor);
+
     int write = tx_write_pos;
     int read = tx_read_pos;
     if (write >= read)
@@ -1783,83 +1827,78 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
     {
         int frame_bytes = source_frame_bytes();
 
-        /* compute available data in ring buffer */
-        int write = tx_write_pos;
-        int read = tx_read_pos;
-        int available;
-        if (write >= read)
-            available = write - read;
-        else
-            available = TX_RING_SIZE - read + write;
+        /* USB-driven pull mode: get audio directly from PCM mixer.
+         * Pattern adapted from rockbox-mojyack batch_get_more().
+         * Eliminates the ring buffer and I2S DMA dependency that
+         * caused periodic glitches on the ND-S1 dock. */
+        int fill = 0;
 
-        /* pre-buffering: wait until ring buffer has enough cushion
-         * before sending real data, to avoid underflow clicks */
-        if (source_prebuffering && available >= SOURCE_PREBUF_BYTES)
+        while (fill < frame_bytes)
         {
-            source_prebuffering = false;
-            source_fade_pos = 0; /* start fade-in from silence to audio */
-        }
-
-        if (source_prebuffering)
-        {
-            usb_drv_send_nonblocking(EP_ISO_SOURCE_IN,
-                                     silence_buf, frame_bytes);
-        }
-        else if (available >= frame_bytes)
-        {
-            /* copy from ring buffer to send buffer with wraparound */
-            int first = MIN(frame_bytes, TX_RING_SIZE - read);
-            memcpy(tx_send_buf, tx_ring_buf + read, first);
-            if (frame_bytes > first)
-                memcpy(tx_send_buf + first, tx_ring_buf, frame_bytes - first);
-            tx_read_pos = (read + frame_bytes) % TX_RING_SIZE;
-
-            /* fade-in: ramp from silence to full amplitude to avoid
-             * a waveform discontinuity click at playback start */
-            if (source_fade_pos < SOURCE_FADE_FRAMES)
+            if (source_pull_cursor >= source_pull_size)
             {
-                int16_t *s = (int16_t *)tx_send_buf;
-                int n = frame_bytes / 4; /* stereo sample frames */
-                int i;
-                for (i = 0; i < n && source_fade_pos < SOURCE_FADE_FRAMES; i++)
+                /* Need next buffer from PCM engine.
+                 * pcm_play_dma_complete_callback -> pcm_get_more_int
+                 *   -> mixer callback (returns mixed audio data)
+                 * Returns false if mixer has no data (codec paused). */
+                if (!pcm_play_dma_complete_callback(PCM_DMAST_OK,
+                        &source_pull_buf, &source_pull_size))
                 {
-                    int32_t gain = (source_fade_pos * 32768) / (SOURCE_FADE_FRAMES - 1);
-                    s[i*2]   = (int16_t)((s[i*2]   * gain) >> 15);
-                    s[i*2+1] = (int16_t)((s[i*2+1] * gain) >> 15);
-                    source_fade_pos++;
+                    /* No audio data available — fill remainder with silence.
+                     * The mixer will restart when the codec has data;
+                     * pcm_dma_start_inhibit prevents I2S DMA from
+                     * actually starting, but callbacks get re-registered. */
+                    memset(tx_send_buf + fill, 0, frame_bytes - fill);
+                    fill = frame_bytes;
+                    source_underflow_count++;
+                    source_fade_pos = 0; /* fade-in when data returns */
+                    break;
                 }
+
+                pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+                source_pull_cursor = 0;
             }
 
-            /* save last sample for fade-out if underflow occurs */
+            /* Copy from current mixer buffer to USB send buffer */
+            size_t avail = source_pull_size - source_pull_cursor;
+            size_t need = (size_t)(frame_bytes - fill);
+            size_t copy = (avail < need) ? avail : need;
+
+            memcpy(tx_send_buf + fill,
+                   (const unsigned char *)source_pull_buf + source_pull_cursor,
+                   copy);
+            source_pull_cursor += copy;
+            fill += (int)copy;
+        }
+
+        /* Fade-in: ramp from silence to full amplitude to avoid
+         * a waveform discontinuity click at playback start */
+        if (source_fade_pos < SOURCE_FADE_FRAMES)
+        {
+            int16_t *s = (int16_t *)tx_send_buf;
+            int n = frame_bytes / 4; /* stereo sample frames */
+            int i;
+            for (i = 0; i < n && source_fade_pos < SOURCE_FADE_FRAMES; i++)
             {
-                int16_t *s = (int16_t *)tx_send_buf;
-                int n = frame_bytes / 4;
+                int32_t gain = (source_fade_pos * 32768) / (SOURCE_FADE_FRAMES - 1);
+                s[i*2]   = (int16_t)((s[i*2]   * gain) >> 15);
+                s[i*2+1] = (int16_t)((s[i*2+1] * gain) >> 15);
+                source_fade_pos++;
+            }
+        }
+
+        /* Save last sample for fade-out if underflow occurs */
+        {
+            int16_t *s = (int16_t *)tx_send_buf;
+            int n = frame_bytes / 4;
+            if (n > 0)
+            {
                 source_last_sample[0] = s[(n-1)*2];
                 source_last_sample[1] = s[(n-1)*2+1];
             }
+        }
 
-            usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
-        }
-        else
-        {
-            /* underflow: fade out from last sample to zero, then
-             * re-enter pre-buffering to rebuild cushion */
-            int16_t *s = (int16_t *)tx_send_buf;
-            int n = frame_bytes / 4;
-            int i;
-            for (i = 0; i < n; i++)
-            {
-                int32_t gain = ((n - 1 - i) * 32768) / (n - 1);
-                s[i*2]   = (int16_t)((source_last_sample[0] * gain) >> 15);
-                s[i*2+1] = (int16_t)((source_last_sample[1] * gain) >> 15);
-            }
-            source_last_sample[0] = 0;
-            source_last_sample[1] = 0;
-            tx_read_pos = tx_write_pos; /* discard stale partial data */
-            source_underflow_count++;
-            source_prebuffering = true;
-            usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
-        }
+        usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
         source_frames_sent++;
         retval = true;
     }
