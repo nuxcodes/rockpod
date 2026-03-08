@@ -186,7 +186,7 @@ All standard Rockbox menu items are available.
 |                     Main menu                     |                    Database track list                     |
 | :-----------------------------------------------: | :--------------------------------------------------------: |
 | <img src="screenshots/main-menu.png" width="280"> | <img src="screenshots/database-tracklist.png" width="280"> |
-|           *(screenshot shows an older build)*           |         Title only — no disc/track number clutter          |
+|       Full menu available, shown customized        |         Title only — no disc/track number clutter          |
 
 ---
 
