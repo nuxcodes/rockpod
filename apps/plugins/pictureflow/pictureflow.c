@@ -760,7 +760,7 @@ static void config_set_defaults(struct pf_config_t *cfg)
      cfg->show_fps = false;
      cfg->auto_wps = 0;
      cfg->last_album = 0;
-     cfg->backlight_mode = 0;
+     cfg->backlight_mode = 1;
      cfg->resize = true;
      cfg->cache_version = CACHE_REBUILD;
      cfg->show_album_name = (LCD_HEIGHT > 100)
