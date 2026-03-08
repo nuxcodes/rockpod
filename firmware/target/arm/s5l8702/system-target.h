@@ -31,6 +31,9 @@
 #define CPUFREQ_MAX     216000000
 #define CPUFREQ_DEFAULT 54000000
 #define CPUFREQ_NORMAL  54000000
+
+void set_ahb_boost(bool on);
+
 #elif (CONFIG_CPU == S5L8720)
 #define CPUFREQ_MAX     266000000
 #define CPUFREQ_DEFAULT 133000000

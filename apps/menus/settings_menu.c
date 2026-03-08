@@ -365,6 +365,7 @@ MENUITEM_SETTING(usb_keypad_mode, &global_settings.usb_keypad_mode, NULL);
 #endif
 #ifdef USB_ENABLE_AUDIO
 MENUITEM_SETTING(usb_audio, &global_settings.usb_audio, NULL);
+MENUITEM_SETTING(usb_audio_boost, &global_settings.usb_audio_boost, NULL);
 #endif
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)
 MENUITEM_SETTING(usb_skip_first_drive, &global_settings.usb_skip_first_drive, NULL);
@@ -464,6 +465,7 @@ MAKE_MENU(system_menu, ID2P(LANG_SYSTEM),
 #endif
 #ifdef USB_ENABLE_AUDIO
             &usb_audio,
+            &usb_audio_boost,
 #endif
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)
             &usb_skip_first_drive,

@@ -17080,3 +17080,20 @@
     disk_storage: "SSD"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_USB_AUDIO_BOOST
+  desc: in settings_menu
+  user: core
+  <source>
+    *: none
+    usbdac: "USB Audio Boost"
+  </source>
+  <dest>
+    *: none
+    usbdac: "USB Audio Boost"
+  </dest>
+  <voice>
+    *: none
+    usbdac: "USB Audio Boost"
+  </voice>
+</phrase>

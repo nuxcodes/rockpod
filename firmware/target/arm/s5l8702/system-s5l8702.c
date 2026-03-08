@@ -111,6 +111,7 @@ static const struct clocking_mode clk_modes[] =
    /* cdiv  hdiv  hprat  hsdiv */    /* CClk  HClk  PClk  SM1Clk  FPS */
     { 1,    2,    2,     4 },        /* 216   108   54    27      42  */
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
+    { 4,    2,    4,     4 },        /* 54    108   27    27          */
     { 4,    4,    2,     2 },        /* 54    54    27    27      21  */
 #endif
 };
@@ -118,6 +119,9 @@ static const struct clocking_mode clk_modes[] =
 
 enum {
     CLK_BOOST = 0,
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+    CLK_USB = 1,
+#endif
     CLK_UNBOOST = N_CLK_MODES - 1,
 };
 
@@ -272,6 +276,16 @@ int system_memory_guard(int newmode)
 }
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
+static bool ahb_boost_flag = false;
+
+void set_ahb_boost(bool on)
+{
+    ahb_boost_flag = on;
+    /* Only change clocking if CPU is not fully boosted */
+    if (cpu_frequency != CPUFREQ_MAX)
+        set_clocking_level(on ? CLK_USB : CLK_UNBOOST);
+}
+
 void set_cpu_frequency(long frequency)
 {
     if (cpu_frequency == frequency)
@@ -284,7 +298,7 @@ void set_cpu_frequency(long frequency)
     }
     else
     {
-        set_clocking_level(CLK_UNBOOST);
+        set_clocking_level(ahb_boost_flag ? CLK_USB : CLK_UNBOOST);
         pmu_set_cpu_voltage(false); /* low */
     }
 

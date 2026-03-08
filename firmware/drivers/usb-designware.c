@@ -38,7 +38,7 @@
 #include "usb-designware.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
-#define LOGF_ENABLE
+/* #define LOGF_ENABLE */
 #include "logf.h"
 
 /* Diagnostic counter: incomplete isochronous IN transfers */
@@ -1055,17 +1055,6 @@ static void usb_dw_handle_xfer_complete(int epnum, enum usb_dw_epdir epdir)
     uint32_t bytes_left = DWC_EPTSIZ(epnum, epdir) & 0x7ffff;
     uint32_t transferred = (is_ep0out ? 64 : dw_ep->size) - bytes_left;
 
-    /* Diagnostic: log ISO IN short transfers */
-    if (epdir == USB_DW_EPDIR_IN && epnum != 0 && bytes_left > 0)
-    {
-        uint32_t eptype = (DWC_DIEPCTL(epnum) >> 18) & 0x3;
-        if (eptype == EPTYP_ISOCHRONOUS)
-            logf("DWC ISO SHORT: ep%d size=%lu left=%lu f=%lu",
-                 epnum, (unsigned long)dw_ep->size,
-                 (unsigned long)bytes_left,
-                 (unsigned long)((DWC_DSTS >> 8) & 0x3FFF));
-    }
-
     if(transferred > dw_ep->sizeleft)
     {
         /* Host sent more data than expected.
@@ -1261,7 +1250,6 @@ static void usb_dw_irq(void)
      * programming; we just need to update the frame parity and re-enable. */
     if (DWC_GINTSTS & IISOIXFR)
     {
-        logf("IISOIXFR: f=%lu", (unsigned long)((DWC_DSTS >> 8) & 0x3FFF));
         for (ep = 1; ep < USB_NUM_ENDPOINTS; ep++)
         {
             uint32_t epctl = DWC_DIEPCTL(ep);

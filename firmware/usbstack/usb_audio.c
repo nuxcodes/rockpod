@@ -587,13 +587,12 @@ static int16_t source_last_sample[2]; /* last L/R sample for fade-out on underfl
 static int source_frac_num;  /* accumulated fractional numerator */
 static volatile int source_underflow_count;
 static volatile int source_frames_sent;
-/* Diagnostic counters for source mode debugging */
-static volatile int source_frame_gap_count;
-static volatile int source_short_xfer_count;
-static volatile int source_last_frame_num;
-static volatile int source_last_expected;
-static unsigned char tx_send_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
-static unsigned char silence_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
+/* Double buffer for ISO IN: one buffer is being DMA'd while the other
+ * is being filled.  This decouples the time-sensitive DMA re-arm
+ * (~1us) from the slower audio pull + fade-in (~100us at 54MHz). */
+static unsigned char tx_buf[2][TX_FRAME_SIZE] USB_DEVBSS_ATTR;
+static int tx_buf_idx;       /* index of buffer currently being DMA'd */
+static int tx_next_bytes;    /* pre-computed frame size for next re-arm */
 
 /* USB-driven pull mode state (replaces ring buffer in source mode).
  * Audio data is pulled directly from the PCM mixer at USB frame rate,
@@ -1053,9 +1052,77 @@ static void source_buffer_hook(const void *start, size_t size)
     tx_write_pos = (write + to_copy) % TX_RING_SIZE;
 }
 
+/* Fill a buffer with audio data from the PCM mixer.
+ * Pulls audio, applies fade-in, saves last sample.
+ * Called from ISR context (fast_transfer_complete) and
+ * from thread context (start_source pre-fill). */
+static void source_fill_buffer(unsigned char *buf, int frame_bytes)
+{
+    int fill = 0;
+
+    while (fill < frame_bytes)
+    {
+        if (source_pull_cursor >= source_pull_size)
+        {
+            if (!pcm_play_dma_complete_callback(PCM_DMAST_OK,
+                    &source_pull_buf, &source_pull_size))
+            {
+                memset(buf + fill, 0, frame_bytes - fill);
+                fill = frame_bytes;
+                source_underflow_count++;
+                source_fade_pos = 0;
+                break;
+            }
+
+            pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+            source_pull_cursor = 0;
+        }
+
+        size_t avail = source_pull_size - source_pull_cursor;
+        size_t need = (size_t)(frame_bytes - fill);
+        size_t copy = (avail < need) ? avail : need;
+
+        memcpy(buf + fill,
+               (const unsigned char *)source_pull_buf + source_pull_cursor,
+               copy);
+        source_pull_cursor += copy;
+        fill += (int)copy;
+    }
+
+    /* Fade-in: ramp from silence to full amplitude */
+    if (source_fade_pos < SOURCE_FADE_FRAMES)
+    {
+        int16_t *s = (int16_t *)buf;
+        int n = frame_bytes / 4;
+        int i;
+        for (i = 0; i < n && source_fade_pos < SOURCE_FADE_FRAMES; i++)
+        {
+            int32_t gain = (source_fade_pos * 32768) / (SOURCE_FADE_FRAMES - 1);
+            s[i*2]   = (int16_t)((s[i*2]   * gain) >> 15);
+            s[i*2+1] = (int16_t)((s[i*2+1] * gain) >> 15);
+            source_fade_pos++;
+        }
+    }
+
+    /* Save last sample for fade-out if underflow occurs */
+    {
+        int16_t *s = (int16_t *)buf;
+        int n = frame_bytes / 4;
+        if (n > 0)
+        {
+            source_last_sample[0] = s[(n-1)*2];
+            source_last_sample[1] = s[(n-1)*2+1];
+        }
+    }
+}
+
 static void usb_audio_start_source(void)
 {
     logf("usbaudio: start source (pull) at %lu Hz ep=0x%02X", hw_freq_sampr[as_source_freq_idx], EP_ISO_SOURCE_IN);
+
+    if (global_settings.usb_audio_boost)
+        set_ahb_boost(true);
+
     source_streaming = true;
     source_pull_mode = true;
     source_fade_pos = 0;       /* fade-in from silence when data arrives */
@@ -1064,18 +1131,14 @@ static void usb_audio_start_source(void)
     source_frac_num = 0;
     source_underflow_count = 0;
     source_frames_sent = 0;
-    source_frame_gap_count = 0;
-    source_short_xfer_count = 0;
-    source_last_frame_num = -1;
-    source_last_expected = 0;
     source_pull_buf = NULL;
     source_pull_size = 0;
     source_pull_cursor = 0;
     source_prebuffering = false; /* not used in pull mode, clear for clarity */
     tx_write_pos = 0;
     tx_read_pos = 0;
-    memset(silence_buf, 0, sizeof(silence_buf));
-    memset(tx_send_buf, 0, sizeof(tx_send_buf));
+    memset(tx_buf[0], 0, sizeof(tx_buf[0]));
+    memset(tx_buf[1], 0, sizeof(tx_buf[1]));
 
     /* Stop I2S DMA — USB ISR drives PCM data instead.
      * Inhibit flag prevents mixer from restarting DMA.
@@ -1092,9 +1155,17 @@ static void usb_audio_start_source(void)
     audiohw_enable_lineout(false);
 #endif
 
-    /* start the ISO IN chain with a silence frame */
-    int frame_bytes = source_frame_bytes();
-    usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, silence_buf, frame_bytes);
+    /* Pre-fill both double buffers and start the ISO IN chain.
+     * Buffer 0 is sent first; buffer 1 is pre-filled for the
+     * next frame.  The ISR will re-arm with the pre-filled buffer
+     * immediately (~1us) then fill the freed buffer afterward. */
+    int fb0 = source_frame_bytes();
+    source_fill_buffer(tx_buf[0], fb0);
+    int fb1 = source_frame_bytes();
+    source_fill_buffer(tx_buf[1], fb1);
+    tx_buf_idx = 0;
+    tx_next_bytes = fb1;
+    usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_buf[0], fb0);
 }
 
 static void usb_audio_stop_source(void)
@@ -1108,6 +1179,8 @@ static void usb_audio_stop_source(void)
         source_pull_buf = NULL;
         source_pull_size = 0;
         source_pull_cursor = 0;
+        tx_buf_idx = 0;
+        tx_next_bytes = 0;
 
         /* Re-enable DMA starts and cleanly reset PCM state.
          * The playback engine will restart DMA when it has data. */
@@ -1123,6 +1196,8 @@ static void usb_audio_stop_source(void)
     audiohw_set_hp_power(true);
     audiohw_enable_lineout(true);
 #endif
+
+    set_ahb_boost(false);
 }
 
 int usb_audio_set_interface(int intf, int alt)
@@ -1696,16 +1771,6 @@ int usb_audio_get_source_frames_sent(void)
     return source_frames_sent;
 }
 
-int usb_audio_get_source_frame_gap_count(void)
-{
-    return source_frame_gap_count;
-}
-
-int usb_audio_get_source_short_xfer_count(void)
-{
-    return source_short_xfer_count;
-}
-
 /* determine if enough prebuffering has been done to restart audio */
 bool prebuffering_done(void)
 {
@@ -1848,113 +1913,15 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
     /* Source mode: handle ISO IN completion for audio data */
     if(ep == EP_NUM(EP_ISO_SOURCE_IN) && source_streaming)
     {
-        /* --- Diagnostics --- */
-        int diag_frame = usb_drv_get_frame_number();
+        /* Double-buffer: re-arm DMA immediately with the pre-filled
+         * buffer (~1us), then fill the just-completed buffer for the
+         * next frame with ~999us of budget. */
+        int next = tx_buf_idx ^ 1;
+        usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_buf[next], tx_next_bytes);
 
-        /* Frame gap: detect skipped ISO frames */
-        if (source_last_frame_num >= 0)
-        {
-            int gap = (diag_frame - source_last_frame_num) & 0x7FF;
-            if (gap != 1 && gap != 0)
-            {
-                source_frame_gap_count++;
-                logf("SRC GAP: gap=%d f=%d prev=%d",
-                     gap, diag_frame, source_last_frame_num);
-            }
-        }
-        source_last_frame_num = diag_frame;
-
-        /* Previous transfer length check */
-        if (source_last_expected > 0 && length != source_last_expected)
-        {
-            source_short_xfer_count++;
-            logf("SRC SHORT: len=%d exp=%d f=%d",
-                 length, source_last_expected, diag_frame);
-        }
-
-        /* Periodic summary every 500 frames (~500ms) */
-        if (source_frames_sent > 0 && source_frames_sent % 500 == 0)
-        {
-            logf("SRC: f=%d sent=%d gaps=%d short=%d iisoixfr=%d",
-                 diag_frame, source_frames_sent, source_frame_gap_count,
-                 source_short_xfer_count, usb_drv_get_iisoixfr_count());
-        }
-
-        int frame_bytes = source_frame_bytes();
-
-        /* USB-driven pull mode: get audio directly from PCM mixer.
-         * Pattern adapted from rockbox-mojyack batch_get_more().
-         * Eliminates the ring buffer and I2S DMA dependency that
-         * caused periodic glitches on the ND-S1 dock. */
-        int fill = 0;
-
-        while (fill < frame_bytes)
-        {
-            if (source_pull_cursor >= source_pull_size)
-            {
-                /* Need next buffer from PCM engine.
-                 * pcm_play_dma_complete_callback -> pcm_get_more_int
-                 *   -> mixer callback (returns mixed audio data)
-                 * Returns false if mixer has no data (codec paused). */
-                if (!pcm_play_dma_complete_callback(PCM_DMAST_OK,
-                        &source_pull_buf, &source_pull_size))
-                {
-                    /* No audio data available — fill remainder with silence.
-                     * The mixer will restart when the codec has data;
-                     * pcm_dma_start_inhibit prevents I2S DMA from
-                     * actually starting, but callbacks get re-registered. */
-                    memset(tx_send_buf + fill, 0, frame_bytes - fill);
-                    fill = frame_bytes;
-                    source_underflow_count++;
-                    source_fade_pos = 0; /* fade-in when data returns */
-                    break;
-                }
-
-                pcm_play_dma_status_callback(PCM_DMAST_STARTED);
-                source_pull_cursor = 0;
-            }
-
-            /* Copy from current mixer buffer to USB send buffer */
-            size_t avail = source_pull_size - source_pull_cursor;
-            size_t need = (size_t)(frame_bytes - fill);
-            size_t copy = (avail < need) ? avail : need;
-
-            memcpy(tx_send_buf + fill,
-                   (const unsigned char *)source_pull_buf + source_pull_cursor,
-                   copy);
-            source_pull_cursor += copy;
-            fill += (int)copy;
-        }
-
-        /* Fade-in: ramp from silence to full amplitude to avoid
-         * a waveform discontinuity click at playback start */
-        if (source_fade_pos < SOURCE_FADE_FRAMES)
-        {
-            int16_t *s = (int16_t *)tx_send_buf;
-            int n = frame_bytes / 4; /* stereo sample frames */
-            int i;
-            for (i = 0; i < n && source_fade_pos < SOURCE_FADE_FRAMES; i++)
-            {
-                int32_t gain = (source_fade_pos * 32768) / (SOURCE_FADE_FRAMES - 1);
-                s[i*2]   = (int16_t)((s[i*2]   * gain) >> 15);
-                s[i*2+1] = (int16_t)((s[i*2+1] * gain) >> 15);
-                source_fade_pos++;
-            }
-        }
-
-        /* Save last sample for fade-out if underflow occurs */
-        {
-            int16_t *s = (int16_t *)tx_send_buf;
-            int n = frame_bytes / 4;
-            if (n > 0)
-            {
-                source_last_sample[0] = s[(n-1)*2];
-                source_last_sample[1] = s[(n-1)*2+1];
-            }
-        }
-
-        usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
-        source_last_expected = frame_bytes;
+        tx_next_bytes = source_frame_bytes();
+        source_fill_buffer(tx_buf[tx_buf_idx], tx_next_bytes);
+        tx_buf_idx = next;
         source_frames_sent++;
         retval = true;
     }
