@@ -181,7 +181,7 @@ Key files: `firmware/target/arm/s5l8702/ipod6g/power-6g.c`, `powermgmt-6g.c`
 
 ### Menu
 
-The full Rockbox menu is available — all standard items (File Browser, Playlists, Plugins, etc.) are accessible.
+All standard Rockbox menu items are available.
 
 |                     Main menu                     |                    Database track list                     |
 | :-----------------------------------------------: | :--------------------------------------------------------: |
@@ -211,7 +211,7 @@ The repo includes a modified version of **adwaitapod_dark_simplified** with swap
 | **Cover Flow**          | 3 slides, no status bar, 70-degree tilt | 7 slides, status bar, parallel projection      |
 | **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake (HDD mode preserved)    |
 | **Codec power**         | Always on                               | Auto power-down on idle                        |
-| **Main menu**           | 12+ items                               | Full menu restored                             |
+| **Main menu**           | 12+ items                               | All items available                            |
 | **USB power**           | Charges from any USB source             | Smart charge gating for low-power accessories  |
 | **Auto-poweroff + USB** | Blocked indefinitely                    | Works for non-charging accessories             |
 
@@ -260,6 +260,7 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 - **16-bit PCM, 44.1 / 48 kHz** — USB Audio Class 1.0 ceiling
 - **iPod Classic only** — untested on other Rockbox targets
 - **No USB DAC (sink) mode** — USB audio config is repurposed for digital audio output
+- **Rockbox bootloader required** — needs an existing Rockbox installation
 
 ---
 
