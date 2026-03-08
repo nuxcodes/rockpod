@@ -14,7 +14,7 @@
 
 ---
 
-Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic. It adds digital audio output support to iPod MFi accessories (DACs, speakers, docks, car stereos), a rewritten PictureFlow modeled on Apple's Cover Flow, SSD-aware power management, and a streamlined menu focused on music playback.
+Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic. It adds digital audio output support to iPod MFi accessories (DACs, speakers, docks, car stereos), a rewritten PictureFlow modeled on Apple's Cover Flow, and SSD-aware power management.
 
 Rockpod supports both HDD and iFlash-modded iPod Classic units. It's a drop-in replacement for the official Rockbox firmware, with no reformatting or data loss.
 
@@ -29,9 +29,8 @@ Rockpod is the first open source firmware to support digital audio output over t
 This works with any MFi iPod dock connector accessory — DACs, speakers, docks, car stereos, and other digital audio accessories built for the iPod.
 
 - **Full iAP/IDPS authentication** — certificate exchange, challenge-response, FID token negotiation, Digital Audio Lingo activation
-- **3 MB TX ring buffer** — absorbs codec decode bursts and compensates for I2S/USB clock drift (~44,117 Hz vs 44,100 Hz)
+- **Double-buffered ISO IN** — DMA re-arm decoupled from audio pull for glitch-free streaming on docks with HID polling
 - **Glitch-free transitions** — fade-in on play, fade-out on pause/underflow, buffer flush between tracks
-- **Drift throttle** — drops 1 stereo sample when ring buffer exceeds 75% full; fires only after ~6 hours of continuous play
 - **Full DSP chain preserved** — EQ, crossfeed, replaygain, stereo width all apply before the USB stream
 - **HP amps auto-mute** — CS42L55 headphone amplifiers power down during USB streaming
 - **USB-C compatible** — digital audio output also works with USB-C connector mods
@@ -77,8 +76,7 @@ iPod connects via dock USB
     │
     └─ Audio path:
           Codec → DSP (EQ, crossfeed, replaygain)
-            → PCM mixer → buffer hook → TX ring buffer
-              → ISO IN endpoint → MFi accessory
+            → PCM mixer → double-buffered ISO IN → MFi accessory
 ```
 
 The iAP HID transport handles multi-report fragmentation for large payloads (128-byte RSA signatures span multiple HID reports, reassembled via link control bytes). Transaction IDs are tracked and echoed for all post-IDPS commands.
@@ -211,7 +209,6 @@ The repo includes a modified version of **adwaitapod_dark_simplified** with swap
 | **Cover Flow**          | 3 slides, no status bar, 70-degree tilt | 7 slides, status bar, parallel projection      |
 | **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake (HDD mode preserved)    |
 | **Codec power**         | Always on                               | Auto power-down on idle                        |
-| **Main menu**           | 12+ items                               | All items available                            |
 | **USB power**           | Charges from any USB source             | Smart charge gating for low-power accessories  |
 | **Auto-poweroff + USB** | Blocked indefinitely                    | Works for non-charging accessories             |
 
