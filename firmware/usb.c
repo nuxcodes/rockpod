@@ -215,7 +215,7 @@ static inline void usb_configure_drivers(int for_state)
         usb_core_enable_driver(USB_DRIVER_AUDIO, true); /* config 2: always available, host selects */
 #endif /* USB_ENABLE_AUDIO */
 #ifdef USB_ENABLE_IAP_HID
-        usb_core_enable_driver(USB_DRIVER_IAP_HID, global_settings.usb_iap_hid);
+        usb_core_enable_driver(USB_DRIVER_IAP_HID, true);
 #endif
 
 #ifdef USB_ENABLE_CHARGING_ONLY
@@ -237,7 +237,7 @@ static inline void usb_configure_drivers(int for_state)
         usb_core_enable_driver(USB_DRIVER_AUDIO, true); /* config 2: always available, host selects */
 #endif /* USB_ENABLE_AUDIO */
 #ifdef USB_ENABLE_IAP_HID
-        usb_core_enable_driver(USB_DRIVER_IAP_HID, global_settings.usb_iap_hid);
+        usb_core_enable_driver(USB_DRIVER_IAP_HID, true);
 #endif
 #ifdef USB_ENABLE_CHARGING_ONLY
         usb_core_enable_driver(USB_DRIVER_CHARGING_ONLY, false);

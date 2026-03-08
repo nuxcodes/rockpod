@@ -10776,23 +10776,6 @@
   </voice>
 </phrase>
 <phrase>
-  id: LANG_USB_IAP_HID
-  desc: in settings_menu
-  user: core
-  <source>
-    *: none
-    usb_iap_hid: "USB iAP HID"
-  </source>
-  <dest>
-    *: none
-    usb_iap_hid: "USB iAP HID"
-  </dest>
-  <voice>
-    *: none
-    usb_iap_hid: "USB iAP HID"
-  </voice>
-</phrase>
-<phrase>
   id: LANG_QUEUE_LAST_SHUFFLED
   desc: in onplay menu.  queue a playlist randomly at end of dynamic playlist
   user: core

@@ -1076,8 +1076,11 @@ static void usb_audio_start_source(void)
     pcm_play_dma_stop();
 
 #ifdef HAVE_CS42L55
-    /* Power down headphone amps — audio goes over USB, not the jack */
+    /* Per MFi spec: line-out and USB audio are mutually exclusive.
+     * Disable both HP amps and line-out to prevent analog audio
+     * from interfering with the dock's digital audio receiver. */
     audiohw_set_hp_power(false);
+    audiohw_enable_lineout(false);
 #endif
 
     /* start the ISO IN chain with a silence frame */
@@ -1107,8 +1110,9 @@ static void usb_audio_stop_source(void)
     mixer_channel_set_buffer_hook(PCM_MIXER_CHAN_PLAYBACK, NULL);
 
 #ifdef HAVE_CS42L55
-    /* Restore headphone amp power — HP volume regs are intact */
+    /* Restore headphone amp and line-out power */
     audiohw_set_hp_power(true);
+    audiohw_enable_lineout(true);
 #endif
 }
 
