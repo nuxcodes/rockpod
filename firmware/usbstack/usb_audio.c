@@ -587,6 +587,11 @@ static int16_t source_last_sample[2]; /* last L/R sample for fade-out on underfl
 static int source_frac_num;  /* accumulated fractional numerator */
 static volatile int source_underflow_count;
 static volatile int source_frames_sent;
+/* Diagnostic counters for source mode debugging */
+static volatile int source_frame_gap_count;
+static volatile int source_short_xfer_count;
+static volatile int source_last_frame_num;
+static volatile int source_last_expected;
 static unsigned char tx_send_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 static unsigned char silence_buf[TX_FRAME_SIZE] USB_DEVBSS_ATTR;
 
@@ -1059,6 +1064,10 @@ static void usb_audio_start_source(void)
     source_frac_num = 0;
     source_underflow_count = 0;
     source_frames_sent = 0;
+    source_frame_gap_count = 0;
+    source_short_xfer_count = 0;
+    source_last_frame_num = -1;
+    source_last_expected = 0;
     source_pull_buf = NULL;
     source_pull_size = 0;
     source_pull_cursor = 0;
@@ -1687,6 +1696,16 @@ int usb_audio_get_source_frames_sent(void)
     return source_frames_sent;
 }
 
+int usb_audio_get_source_frame_gap_count(void)
+{
+    return source_frame_gap_count;
+}
+
+int usb_audio_get_source_short_xfer_count(void)
+{
+    return source_short_xfer_count;
+}
+
 /* determine if enough prebuffering has been done to restart audio */
 bool prebuffering_done(void)
 {
@@ -1829,6 +1848,38 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
     /* Source mode: handle ISO IN completion for audio data */
     if(ep == EP_NUM(EP_ISO_SOURCE_IN) && source_streaming)
     {
+        /* --- Diagnostics --- */
+        int diag_frame = usb_drv_get_frame_number();
+
+        /* Frame gap: detect skipped ISO frames */
+        if (source_last_frame_num >= 0)
+        {
+            int gap = (diag_frame - source_last_frame_num) & 0x7FF;
+            if (gap != 1 && gap != 0)
+            {
+                source_frame_gap_count++;
+                logf("SRC GAP: gap=%d f=%d prev=%d",
+                     gap, diag_frame, source_last_frame_num);
+            }
+        }
+        source_last_frame_num = diag_frame;
+
+        /* Previous transfer length check */
+        if (source_last_expected > 0 && length != source_last_expected)
+        {
+            source_short_xfer_count++;
+            logf("SRC SHORT: len=%d exp=%d f=%d",
+                 length, source_last_expected, diag_frame);
+        }
+
+        /* Periodic summary every 500 frames (~500ms) */
+        if (source_frames_sent > 0 && source_frames_sent % 500 == 0)
+        {
+            logf("SRC: f=%d sent=%d gaps=%d short=%d iisoixfr=%d",
+                 diag_frame, source_frames_sent, source_frame_gap_count,
+                 source_short_xfer_count, usb_drv_get_iisoixfr_count());
+        }
+
         int frame_bytes = source_frame_bytes();
 
         /* USB-driven pull mode: get audio directly from PCM mixer.
@@ -1903,6 +1954,7 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
         }
 
         usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_send_buf, frame_bytes);
+        source_last_expected = frame_bytes;
         source_frames_sent++;
         retval = true;
     }

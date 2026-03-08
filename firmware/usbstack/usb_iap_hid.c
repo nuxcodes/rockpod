@@ -35,6 +35,7 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
+#include "usb_audio.h"
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -237,6 +238,9 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
 
+    if (usb_audio_source_streaming())
+        logf("HID TX: f=%d id=%d", usb_drv_get_frame_number(), report_id);
+
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }
 
@@ -270,8 +274,7 @@ static void iap_hid_process_rx(const unsigned char *data, int len)
 
     /* Lazy transport activation: defer iAP transport override and
      * iap_setup() until actual HID data arrives.  This prevents
-     * clobbering serial IAP on docks (like the Onkyo ND-S1) that
-     * use USB only for audio, not for iAP control. */
+     * clobbering serial IAP on docks that use USB only for audio. */
     if (!iap_hid_transport_active)
     {
         saved_transport_send = iap_transport_send;
@@ -401,8 +404,7 @@ void usb_iap_hid_init_connection(void)
     iap_hid_active = true;
     /* Transport override and iap_setup() are deferred until
      * actual iAP data arrives via SET_REPORT.  This prevents
-     * clobbering serial IAP on docks (like the Onkyo ND-S1)
-     * that use USB only for audio, not for iAP control. */
+     * clobbering serial IAP on docks that use USB only for audio. */
 }
 
 void usb_iap_hid_disconnect(void)
@@ -469,6 +471,9 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
             if (reqdata)
             {
                 /* second pass: data received, process iAP payload */
+                if (usb_audio_source_streaming())
+                    logf("HID RX: f=%d len=%d",
+                         usb_drv_get_frame_number(), req->wLength);
                 iap_hid_process_rx(rx_buf, req->wLength);
                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
             }

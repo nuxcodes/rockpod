@@ -2570,6 +2570,10 @@ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
         usb_audio_get_source_underflow_count());
     simplelist_addline("Source frames: %d",
         usb_audio_get_source_frames_sent());
+    simplelist_addline("Source frame gaps: %d",
+        usb_audio_get_source_frame_gap_count());
+    simplelist_addline("Source short xfers: %d",
+        usb_audio_get_source_short_xfer_count());
     if (action == ACTION_NONE)
     {
         action = ACTION_REDRAW;

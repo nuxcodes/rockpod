@@ -276,4 +276,8 @@ int usb_audio_get_source_underflow_count(void);
 
 int usb_audio_get_source_frames_sent(void);
 
+int usb_audio_get_source_frame_gap_count(void);
+
+int usb_audio_get_source_short_xfer_count(void);
+
 #endif
