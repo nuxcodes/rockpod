@@ -1,0 +1,576 @@
+usb_dw_check_hw():
+ HW version: 260a, num EPs: 9
+ FIFO mem=2080 rx=864 nptx=64 ptx=3x384
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=05
+ wValue=0001 wIndex=0 wLength=0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0100 wIndex=0 wLength=18
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0300 wIndex=0 wLength=255
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=8
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0200 wIndex=0 wLength=57
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=00 bRequest=09
+ wValue=0002 wIndex=0 wLength=0
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=8
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=80 bRequest=06
+ wValue=0201 wIndex=0 wLength=149
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=81 bRequest=06
+ wValue=2200 wIndex=2 wLength=96
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0208 wIndex=2 wLength=21
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=01 bRequest=0b
+ wValue=0001 wIndex=1 wLength=0
+IISOIXFR: f=1603
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+IISOIXFR: f=1605
+IISOIXFR: f=1606
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+IISOIXFR: f=1608
+IISOIXFR: f=1609
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+IISOIXFR: f=1610
+IISOIXFR: f=1612
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=22 bRequest=01
+ wValue=0100 wIndex=131 wLength=3
+IISOIXFR: f=1613
+IISOIXFR: f=1614
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0206 wIndex=2 wLength=11
+Codec: calling entrypoint
+Codec: not an encoder
+Codec: entering run state
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0209 wIndex=2 wLength=64
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0205 wIndex=2 wLength=9
+usb_dw_control_received(0xa194) state=setup
+ bRequestType=21 bRequest=09
+ wValue=0207 wIndex=2 wLength=15
