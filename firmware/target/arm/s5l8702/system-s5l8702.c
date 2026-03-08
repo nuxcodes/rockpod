@@ -111,7 +111,7 @@ static const struct clocking_mode clk_modes[] =
    /* cdiv  hdiv  hprat  hsdiv */    /* CClk  HClk  PClk  SM1Clk  FPS */
     { 1,    2,    2,     4 },        /* 216   108   54    27      42  */
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
-    { 4,    2,    4,     4 },        /* 54    108   27    27          */
+    { 4,    2,    2,     4 },        /* 54    108   54    27          */
     { 4,    4,    2,     2 },        /* 54    54    27    27      21  */
 #endif
 };
