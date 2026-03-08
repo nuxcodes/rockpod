@@ -29,6 +29,7 @@ Rockpod is the first open source firmware to support digital audio output over t
 This works with any MFi iPod dock connector accessory — DACs, speakers, docks, car stereos, and other digital audio accessories built for the iPod.
 
 - **Full iAP/IDPS authentication** — certificate exchange, challenge-response, FID token negotiation, Digital Audio Lingo activation
+- **3 MB TX ring buffer** — absorbs codec decode bursts and compensates for I2S/USB clock drift (~44,117 Hz vs 44,100 Hz)
 - **Double-buffered ISO IN** — DMA re-arm decoupled from audio pull for glitch-free streaming on docks with HID polling
 - **Glitch-free transitions** — fade-in on play, fade-out on pause/underflow, buffer flush between tracks
 - **Full DSP chain preserved** — EQ, crossfeed, replaygain, stereo width all apply before the USB stream
@@ -76,7 +77,8 @@ iPod connects via dock USB
     │
     └─ Audio path:
           Codec → DSP (EQ, crossfeed, replaygain)
-            → PCM mixer → double-buffered ISO IN → MFi accessory
+            → PCM mixer → buffer hook → TX ring buffer
+              → double-buffered ISO IN → MFi accessory
 ```
 
 The iAP HID transport handles multi-report fragmentation for large payloads (128-byte RSA signatures span multiple HID reports, reassembled via link control bytes). Transaction IDs are tracked and echoed for all post-IDPS commands.
