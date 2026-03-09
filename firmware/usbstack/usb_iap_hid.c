@@ -512,12 +512,8 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
         case HID_REQ_SET_REPORT:
             if (reqdata)
             {
-                /* During source streaming, ACK but skip iAP processing
-                 * to test if EP0 processing causes the audio pop.
-                 * The control transfer completes normally (no protocol
-                 * violation) but the iAP payload is silently dropped. */
-                if (!usb_audio_source_streaming())
-                    iap_hid_process_rx(rx_buf, req->wLength);
+                /* second pass: data received, process iAP payload */
+                iap_hid_process_rx(rx_buf, req->wLength);
                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
             }
             else

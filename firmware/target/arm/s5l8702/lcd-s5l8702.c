@@ -497,11 +497,6 @@ bool lcd_active(void)
 }
 #endif
 
-bool lcd_dma_busy(void)
-{
-    return dmac_ch_running(&lcd_dma_ch);
-}
-
 #if defined(HAVE_LCD_SHUTDOWN) || defined(HAVE_LCD_SLEEP)
 static void lcd_powersave(void)
 {
