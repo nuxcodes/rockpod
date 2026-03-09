@@ -17082,18 +17082,15 @@
 </phrase>
 <phrase>
   id: LANG_USB_AUDIO_BOOST
-  desc: in settings_menu
+  desc: deprecated
   user: core
   <source>
     *: none
-    usbdac: "USB Audio Boost"
   </source>
   <dest>
     *: none
-    usbdac: "USB Audio Boost"
   </dest>
   <voice>
     *: none
-    usbdac: "USB Audio Boost"
   </voice>
 </phrase>

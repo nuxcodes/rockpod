@@ -185,6 +185,12 @@ static struct semaphore tx_complete_sem;
 static volatile bool hid_tx_deferred;
 static volatile int hid_tx_deferred_len;
 
+/* Deferred RX: during source streaming, SET_REPORT data is buffered
+ * here and processed in iAP thread context to avoid ISR jitter.
+ * Also used to buffer the first packet during iAP init deferral. */
+static unsigned char deferred_rx_buf[64];
+static volatile int deferred_rx_len;
+
 /*
  * USB HID TX transport for iAP.
  *
@@ -244,15 +250,13 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
 
-    /* During USB audio source streaming, defer the actual send to the
-     * ISO XFRC handler.  This serializes HID IN and ISO IN transmissions,
-     * preventing frame-level timing collisions that cause audio pops on
-     * some docks (e.g. Onkyo ND-S1).  The semaphore stays held to
-     * protect tx_buf until the ISR sends and DMA completes. */
+    /* Suppress HID IN responses during USB audio source streaming.
+     * Incoming iAP data is still processed (remote controls work),
+     * but outgoing responses are dropped to prevent HID IN / ISO IN
+     * frame collisions that cause audio pops on docks. */
     if (usb_audio_source_streaming())
     {
-        hid_tx_deferred_len = 1 + report_size;
-        hid_tx_deferred = true;
+        semaphore_release(&tx_complete_sem);
         return;
     }
 
@@ -289,20 +293,22 @@ static void iap_hid_process_rx(const unsigned char *data, int len)
 
     /* Lazy transport activation: defer iAP transport override and
      * iap_setup() until actual HID data arrives.  This prevents
-     * clobbering serial IAP on docks that use USB only for audio. */
+     * clobbering serial IAP on docks that use USB only for audio.
+     *
+     * iap_setup() + iap_malloc() are deferred to the iAP thread
+     * because create_thread() from USB ISR context is unsafe and
+     * causes intermittent handshake failures. */
     if (!iap_hid_transport_active)
     {
         saved_transport_send = iap_transport_send;
         iap_transport_send = iap_hid_tx;
         iap_hid_transport_active = true;
-        iap_setup(0);
-        /* Allocate IAP buffers synchronously so the first packet is
-         * not dropped.  iap_setup() sets iap_running=false; in the
-         * serial path iap_getc() defers allocation via IAP_EV_MALLOC
-         * and the accessory retransmits.  In the USB HID path we feed
-         * an entire packet synchronously, so buffers must be ready
-         * before the first byte hits iap_getc(). */
-        iap_malloc();
+
+        /* Buffer first packet and defer init to thread context */
+        memcpy(deferred_rx_buf, data, len);
+        deferred_rx_len = len;
+        iap_queue_hid_init();
+        return;
     }
 
     uint8_t report_id = data[0];
@@ -427,6 +433,7 @@ void usb_iap_hid_disconnect(void)
     logf("iap_hid: disconnect");
     iap_hid_active = false;
     iap_hid_rx_in_progress = false;
+    deferred_rx_len = 0;
     semaphore_release(&tx_complete_sem);
 
     if (iap_hid_transport_active)
@@ -472,6 +479,20 @@ void usb_iap_hid_flush_deferred(void)
     }
 }
 
+/*
+ * Process deferred RX data in thread context.
+ * Called from iAP thread via IAP_EV_HID_RX or IAP_EV_HID_INIT.
+ */
+void usb_iap_hid_process_deferred_rx(void)
+{
+    if (deferred_rx_len > 0)
+    {
+        int len = deferred_rx_len;
+        deferred_rx_len = 0;
+        iap_hid_process_rx(deferred_rx_buf, len);
+    }
+}
+
 bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
                                   unsigned char *dest)
 {
@@ -512,8 +533,19 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
         case HID_REQ_SET_REPORT:
             if (reqdata)
             {
-                /* second pass: data received, process iAP payload */
-                iap_hid_process_rx(rx_buf, req->wLength);
+                if (usb_audio_source_streaming())
+                {
+                    /* During streaming, defer iAP processing to the
+                     * iAP thread to keep the USB ISR fast. */
+                    int len = MIN(req->wLength, (int)sizeof(deferred_rx_buf));
+                    memcpy(deferred_rx_buf, rx_buf, len);
+                    deferred_rx_len = len;
+                    iap_queue_hid_rx();
+                }
+                else
+                {
+                    iap_hid_process_rx(rx_buf, req->wLength);
+                }
                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
             }
             else

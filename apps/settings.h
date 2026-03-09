@@ -827,7 +827,6 @@ struct user_settings
 
 #ifdef USB_ENABLE_AUDIO
     int usb_audio;
-    int usb_audio_boost;
 #endif
 
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)

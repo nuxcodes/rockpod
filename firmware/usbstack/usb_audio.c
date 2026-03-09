@@ -1125,9 +1125,6 @@ static void usb_audio_start_source(void)
 {
     logf("usbaudio: start source (pull) at %lu Hz ep=0x%02X", hw_freq_sampr[as_source_freq_idx], EP_ISO_SOURCE_IN);
 
-    if (global_settings.usb_audio_boost)
-        set_ahb_boost(true);
-
     source_streaming = true;
     source_pull_mode = true;
     source_fade_pos = 0;       /* fade-in from silence when data arrives */
@@ -1209,8 +1206,6 @@ static void usb_audio_stop_source(void)
     audiohw_set_hp_power(true);
     audiohw_enable_lineout(true);
 #endif
-
-    set_ahb_boost(false);
 
     /* Pause playback so music doesn't continue through the internal
      * DAC/headphones after the dock disconnects or powers off. */

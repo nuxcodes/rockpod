@@ -46,6 +46,10 @@ const unsigned char *iap_get_serbuf(void);
 
 /* Transport abstraction — USB HID driver overrides this for iAP-over-USB */
 extern void (*iap_transport_send)(const unsigned char *buf, int len);
+
+/* Post deferred HID events to iAP thread — callable from USB ISR */
+extern void iap_queue_hid_rx(void);
+extern void iap_queue_hid_init(void);
 #ifdef HAVE_LINE_REC
 extern bool iap_record(bool onoff);
 #endif
