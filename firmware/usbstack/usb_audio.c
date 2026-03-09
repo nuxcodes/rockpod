@@ -41,6 +41,7 @@
 #include "misc.h"
 #include "settings.h"
 #include "core_alloc.h"
+#include "lcd.h"
 #include "usb_iap_hid.h"
 #include "pcm_mixer.h"
 #include "pcm-internal.h"
@@ -49,7 +50,7 @@
 #include "audiohw.h"
 #endif
 
-/* #define LOGF_ENABLE */
+#define LOGF_ENABLE
 #include "logf.h"
 
 /* Fixed-point conversion macros (signed Q16.16) */
@@ -1207,6 +1208,8 @@ static void usb_audio_stop_source(void)
     audiohw_enable_lineout(true);
 #endif
 
+    set_ahb_boost(false);
+
     /* Pause playback so music doesn't continue through the internal
      * DAC/headphones after the dock disconnects or powers off. */
     audio_pause();
@@ -1929,10 +1932,42 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
          * buffer (~1us), then fill the just-completed buffer for the
          * next frame with ~999us of budget. */
         int next = tx_buf_idx ^ 1;
+
+        /* Short transfer: DWC sent fewer bytes than requested */
+        if (source_last_expected > 0 && length != source_last_expected)
+            logf("SRC SHORT: len=%d exp=%d f=%d",
+                 length, source_last_expected, (int)source_frames_sent);
+
+        /* Frame gap: non-consecutive frame numbers */
+        {
+            int diag_frame = usb_drv_get_frame_number();
+            if (source_last_frame_num >= 0)
+            {
+                int gap = (diag_frame - source_last_frame_num) & 0x3FFF;
+                if (gap != 1 && gap != 0)
+                    logf("SRC GAP: gap=%d f=%d", gap, diag_frame);
+            }
+            source_last_frame_num = diag_frame;
+        }
+        source_last_expected = tx_next_bytes;
+
+        uint32_t t0 = USEC_TIMER;
         usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_buf[next], tx_next_bytes);
+        uint32_t t_rearm = USEC_TIMER;
 
         tx_next_bytes = source_frame_bytes();
         source_fill_buffer(tx_buf[tx_buf_idx], tx_next_bytes);
+        uint32_t t_fill = USEC_TIMER;
+
+        /* Log only when timing exceeds thresholds */
+        {
+            uint32_t rearm_us = t_rearm - t0;
+            uint32_t fill_us = t_fill - t_rearm;
+            if (fill_us > 200 || rearm_us > 50)
+                logf("src: re=%lu fi=%lu f=%d",
+                     (unsigned long)rearm_us, (unsigned long)fill_us,
+                     (int)source_frames_sent);
+        }
 
         /* Send any deferred HID IN response — serialized with ISO IN
          * to prevent frame-level collision with audio data. */

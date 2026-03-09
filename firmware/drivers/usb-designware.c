@@ -38,7 +38,7 @@
 #include "usb-designware.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
-/* #define LOGF_ENABLE */
+#define LOGF_ENABLE
 #include "logf.h"
 
 /* Diagnostic counter: incomplete isochronous IN transfers */
@@ -844,10 +844,17 @@ static void usb_dw_epstart(int epnum, enum usb_dw_epdir epdir,
     {
         /* DSTS SOFFN bit 0 gives current frame parity.
          * Schedule for the opposite parity (= next frame). */
-        if ((DWC_DSTS >> 8) & 1)
+        uint32_t soffn_before = (DWC_DSTS >> 8) & 0x3FFF;
+        if (soffn_before & 1)
             DWC_EPCTL(epnum, epdir) |= EPENA | nak | SETD0PIDEF; /* even */
         else
             DWC_EPCTL(epnum, epdir) |= EPENA | nak | SETD1PIDOF; /* odd */
+        /* Detect frame parity race: if SOF advanced between read and write,
+         * we may have scheduled for the wrong frame. */
+        uint32_t soffn_after = (DWC_DSTS >> 8) & 0x3FFF;
+        if (soffn_before != soffn_after)
+            logf("usb: PARITY RACE sof=%lu>%lu",
+                 (unsigned long)soffn_before, (unsigned long)soffn_after);
     }
     else
     {
@@ -1198,6 +1205,7 @@ static void usb_dw_irq(void)
 {
     int ep;
     uint32_t daint;
+    uint32_t isr_start = USEC_TIMER;
 
 #ifdef USB_DW_ARCH_SLAVE
     /* Handle one packet at a time, the IRQ will re-trigger if there's
@@ -1259,6 +1267,9 @@ static void usb_dw_irq(void)
             }
         }
         iisoixfr_count++;
+        if (usb_audio_source_streaming())
+            logf("usb: IISOIXFR #%d sof=%lu",
+                 iisoixfr_count, (unsigned long)((DWC_DSTS >> 8) & 0x3FFF));
         DWC_GINTSTS = IISOIXFR;
     }
 
@@ -1319,6 +1330,8 @@ static void usb_dw_irq(void)
             {
                 if (epints & STUP)
                 {
+                    if (usb_audio_source_streaming())
+                        logf("usb: EP0 STUP during stream");
                     usb_dw_handle_setup_received();
                 }
 
@@ -1367,6 +1380,13 @@ static void usb_dw_irq(void)
         DWC_GINTSTS = ENUMDNE;
         ep0.state = EP0_SETUP;
         usb_dw_ep0_recv();
+    }
+
+    /* Log only when ISR takes unusually long */
+    {
+        uint32_t isr_us = USEC_TIMER - isr_start;
+        if (isr_us > 300)
+            logf("usb: ISR=%lu us", (unsigned long)isr_us);
     }
 }
 

@@ -379,8 +379,8 @@ static int iap_task(struct timeout *tmo)
      * rate from 10 Hz to 1 Hz to save power during idle MFi DAC
      * connections.  100ms is still needed during auth handshake,
      * accessory info polling, button repeat, notification delivery,
-     * and shutdown notification.  Incoming iAP messages use
-     * IAP_EV_MSG_RCVD and are processed independently of the tick. */
+     * shutdown notification, and USB audio streaming (deferred HID
+     * RX is processed on the tick for responsive dock controls). */
     if (device.auth.state == AUST_AUTH
         && device.accinfo != ACCST_INIT
         && device.accinfo != ACCST_SENT
@@ -388,7 +388,11 @@ static int iap_task(struct timeout *tmo)
         && !device.audio_init_pending
         && !device.do_notify
         && !iap_shutdown
-        && iap_timeoutbtn == 0)
+        && iap_timeoutbtn == 0
+#ifdef USB_ENABLE_AUDIO
+        && !usb_audio_source_streaming()
+#endif
+        )
         return MS_TO_TICKS(1000);
 
     return MS_TO_TICKS(100);
@@ -519,7 +523,10 @@ static void iap_track_changed(unsigned short id, void *ignored)
  */
 void iap_setup(const int ratenum)
 {
-    iap_bitrate_set(ratenum);
+    /* Skip UART reconfiguration on USB HID reconnect path
+     * (ratenum=0, iAP already started) to reduce latency. */
+    if (!iap_started || ratenum != 0)
+        iap_bitrate_set(ratenum);
     iap_remotebtn = BUTTON_NONE;
     iap_setupflag = true;
     iap_running = false;
@@ -831,6 +838,13 @@ void iap_periodic(void)
     static int count;
 
     if(!iap_setupflag) return;
+
+    /* Process deferred HID RX — handles dock remote controls
+     * during USB audio streaming.  Runs on the periodic tick
+     * (not from USB ISR) to avoid audio glitches. */
+#ifdef USB_ENABLE_IAP_HID
+    usb_iap_hid_process_deferred_rx();
+#endif
 
     /* Handle pending authentication tasks */
     switch (device.auth.state)

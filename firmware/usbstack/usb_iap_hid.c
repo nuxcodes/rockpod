@@ -205,6 +205,13 @@ static void iap_hid_tx(const unsigned char *buf, int len)
     if (!iap_hid_active || len <= 0)
         return;
 
+    /* Suppress HID IN responses during USB audio source streaming.
+     * Checked before semaphore_wait to avoid any semaphore interaction
+     * (acquiring then immediately releasing would be wasteful and
+     * could drift the count if racing with transfer_complete). */
+    if (usb_audio_source_streaming())
+        return;
+
     /* Wait for previous HID TX to complete before touching tx_buf.
      * A 64-byte full-speed interrupt transfer completes in <2ms.
      * 20ms timeout avoids blocking audio if something goes wrong. */
@@ -249,16 +256,6 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          tx_buf[0], tx_buf[1], tx_buf[2],
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
-
-    /* Suppress HID IN responses during USB audio source streaming.
-     * Incoming iAP data is still processed (remote controls work),
-     * but outgoing responses are dropped to prevent HID IN / ISO IN
-     * frame collisions that cause audio pops on docks. */
-    if (usb_audio_source_streaming())
-    {
-        semaphore_release(&tx_complete_sem);
-        return;
-    }
 
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }
@@ -487,9 +484,14 @@ void usb_iap_hid_process_deferred_rx(void)
 {
     if (deferred_rx_len > 0)
     {
-        int len = deferred_rx_len;
+        unsigned char local_buf[64];
+        int len;
+        int oldlevel = disable_irq_save();
+        len = deferred_rx_len;
+        memcpy(local_buf, deferred_rx_buf, len);
         deferred_rx_len = 0;
-        iap_hid_process_rx(deferred_rx_buf, len);
+        restore_irq(oldlevel);
+        iap_hid_process_rx(local_buf, len);
     }
 }
 
@@ -535,12 +537,13 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
             {
                 if (usb_audio_source_streaming())
                 {
-                    /* During streaming, defer iAP processing to the
-                     * iAP thread to keep the USB ISR fast. */
+                    /* During streaming, buffer data for iap_periodic()
+                     * to pick up on the next tick (~100ms).  Don't call
+                     * iap_queue_hid_rx() — waking the iAP thread from
+                     * the USB ISR causes audio glitches. */
                     int len = MIN(req->wLength, (int)sizeof(deferred_rx_buf));
                     memcpy(deferred_rx_buf, rx_buf, len);
                     deferred_rx_len = len;
-                    iap_queue_hid_rx();
                 }
                 else
                 {
