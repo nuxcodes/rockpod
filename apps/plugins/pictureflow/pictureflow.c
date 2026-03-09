@@ -336,7 +336,7 @@ struct pf_config_t
      int auto_wps;
      int last_album;
 
-     int backlight_mode;
+
      int cache_version;
 
      int show_album_name;
@@ -554,7 +554,6 @@ static struct configdata config[] =
       show_album_name_conf },
     { TYPE_INT, 0, 2, { .int_p = &pf_cfg.auto_wps }, "auto wps", NULL },
     { TYPE_INT, 0, 999999, { .int_p = &pf_cfg.last_album }, "last album", NULL },
-    { TYPE_INT, 0, 1, { .int_p = &pf_cfg.backlight_mode }, "backlight", NULL },
     { TYPE_INT, 0, 999999, { .int_p = &aa_cache.idx }, "art cache pos", NULL },
     { TYPE_INT, 0, 999999, { .int_p = &aa_cache.inspected }, "art cache inspected", NULL },
     { TYPE_ENUM, 0, 4, { .int_p = &pf_cfg.sort_albums_by }, "sort albums by",
@@ -760,7 +759,7 @@ static void config_set_defaults(struct pf_config_t *cfg)
      cfg->show_fps = false;
      cfg->auto_wps = 0;
      cfg->last_album = 0;
-     cfg->backlight_mode = 1;
+
      cfg->resize = true;
      cfg->cache_version = CACHE_REBUILD;
      cfg->show_album_name = (LCD_HEIGHT > 100)
@@ -3740,7 +3739,6 @@ static int display_settings_menu(void)
     int old_val;
 
     MENUITEM_STRINGLIST(display_menu, ID2P(LANG_DISPLAY), NULL,
-                        ID2P(LANG_BACKLIGHT),
                         ID2P(LANG_DISPLAY_FPS),
                         ID2P(LANG_CENTRE_MARGIN),
                         ID2P(LANG_NUMBER_OF_SLIDES),
@@ -3752,54 +3750,42 @@ static int display_settings_menu(void)
                         "Transition Speed %",
                         "Text Crossfade");
 
-    static const struct opt_items backlight_options[] = {
-        { STR(LANG_ALWAYS_ON) },
-        { STR(LANG_NORMAL) }};
-
     do {
         selection=rb->do_menu(&display_menu, &selection, NULL, false);
         switch(selection) {
             case 0:
-                rb->set_option(rb->str(LANG_BACKLIGHT),
-                        &pf_cfg.backlight_mode, RB_INT, backlight_options, 2, NULL);
-                if(pf_cfg.backlight_mode == 0)
-                    backlight_ignore_timeout();
-                else
-                    backlight_use_settings();
-                break;
-            case 1:
                 old_val = pf_cfg.show_fps;
                 rb->set_bool(rb->str(LANG_DISPLAY_FPS), &pf_cfg.show_fps);
                 if (old_val != pf_cfg.show_fps)
                     reset_track_list();
                 break;
-            case 2:
+            case 1:
                 old_val = pf_cfg.center_margin;
                 rb->set_int(rb->str(LANG_CENTRE_MARGIN), "", 1,
                             &pf_cfg.center_margin,
                             NULL, 1, 0, 80, NULL );
                 adjust_album_display_for_setting(old_val, pf_cfg.center_margin);
                 break;
-            case 3:
+            case 2:
                 old_val = pf_cfg.slide_tuck;
                 rb->set_int(rb->str(LANG_NUMBER_OF_SLIDES), "", 1,
                         &pf_cfg.slide_tuck, NULL, 1, 0,
                         DISPLAY_WIDTH / 2, NULL );
                 adjust_album_display_for_setting(old_val, pf_cfg.slide_tuck);
                 break;
-            case 4:
+            case 3:
                 old_val = pf_cfg.zoom;
                 rb->set_int(rb->str(LANG_ZOOM), "", 1, &pf_cfg.zoom,
                             NULL, 1, 10, 300, NULL );
                 adjust_album_display_for_setting(old_val, pf_cfg.zoom);
                 break;
-            case 5:
+            case 4:
                 old_val = pf_cfg.parallel_slides;
                 rb->set_bool(rb->str(LANG_SPACING), &pf_cfg.parallel_slides);
                 adjust_album_display_for_setting(old_val,
                                                  pf_cfg.parallel_slides);
                 break;
-            case 6:
+            case 5:
                 old_val = pf_cfg.resize;
                 rb->set_bool(rb->str(LANG_RESIZE_COVERS), &pf_cfg.resize);
                 if (old_val == pf_cfg.resize) /* changed? */
@@ -3816,7 +3802,7 @@ static int display_settings_menu(void)
                 configfile_save(CONFIG_FILE, config,
                                 CONFIG_NUM_ITEMS, CONFIG_VERSION);
                 return -3; /* re-init */
-            case 7:
+            case 6:
                 old_val = pf_cfg.show_statusbar;
                 rb->set_bool("Show Statusbar", &pf_cfg.show_statusbar);
                 if (old_val != pf_cfg.show_statusbar)
@@ -3826,17 +3812,17 @@ static int display_settings_menu(void)
                     return -3; /* re-init to recompute layout */
                 }
                 break;
-            case 8:
+            case 7:
                 rb->set_int("Scroll Speed %", "", 1,
                             &pf_cfg.scroll_speed,
                             NULL, 25, 100, 400, NULL );
                 break;
-            case 9:
+            case 8:
                 rb->set_int("Transition Speed %", "", 1,
                             &pf_cfg.transition_speed,
                             NULL, 25, 100, 400, NULL );
                 break;
-            case 10:
+            case 9:
                 rb->set_bool("Text Crossfade", &pf_cfg.text_crossfade);
                 break;
             case MENU_ATTACHED_USB:
@@ -4790,8 +4776,6 @@ static bool init(void)
     pf_bg_g  = pf_bg_color & 0x7e0;
 #endif
 
-    if(pf_cfg.backlight_mode == 0)
-        backlight_ignore_timeout(); /* restore in cleanup */
 
 #if PF_PLAYBACK_CAPABLE
     buf = rb->plugin_get_buffer(&buf_size);
