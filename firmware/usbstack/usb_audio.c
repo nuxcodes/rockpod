@@ -1942,7 +1942,7 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
             int diag_frame = usb_drv_get_frame_number();
             if (source_last_frame_num >= 0)
             {
-                int gap = (diag_frame - source_last_frame_num) & 0x7FF;
+                int gap = (diag_frame - source_last_frame_num) & 0x3FFF;
                 if (gap != 1 && gap != 0)
                     logf("SRC GAP: gap=%d f=%d", gap, diag_frame);
             }
@@ -1968,34 +1968,8 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
                      (int)source_frames_sent);
         }
 
-        /* Sample discontinuity check — log only on detection */
-        {
-            static int16_t prev_l, prev_r;
-            int16_t *s = (int16_t *)tx_buf[tx_buf_idx];
-            int n = tx_next_bytes / 4;
-            if (n > 0 && source_frames_sent > 1)
-            {
-                int32_t jl = (int32_t)s[0] - prev_l;
-                int32_t jr = (int32_t)s[1] - prev_r;
-                if (jl > 2048 || jl < -2048 || jr > 2048 || jr < -2048)
-                    logf("src: DISC L=%d>%d R=%d>%d f=%d",
-                         prev_l, s[0], prev_r, s[1],
-                         (int)source_frames_sent);
-            }
-            if (n > 0)
-            {
-                prev_l = s[(n-1)*2];
-                prev_r = s[(n-1)*2+1];
-            }
-        }
-
-        /* LCD DMA collision check */
-        if (lcd_dma_busy())
-            logf("src: LCD_DMA f=%d", (int)source_frames_sent);
-
         /* Send any deferred HID IN response — serialized with ISO IN
-         * to prevent frame-level collision with audio data.  This fixes
-         * the ~1s click/pop on docks that poll iAP status periodically. */
+         * to prevent frame-level collision with audio data. */
         usb_iap_hid_send_deferred();
 
         tx_buf_idx = next;

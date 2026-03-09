@@ -1556,7 +1556,12 @@ static void usb_dw_init(void)
 
 #if !defined(USB_DW_ARCH_SLAVE) && !defined(USB_DW_SHARED_FIFO)
     if (c->ahb_threshold)
-        DWC_DTHRCTL = ARPEN|RXTHRLEN(c->ahb_threshold)|RXTHREN;
+        /* ARPEN removed: DMA arbiter parking lets EP0 starve ISO IN,
+         * causing audio pops when docks poll iAP during streaming.
+         * ISOTHREN+TXTHRLEN: ISO TX thresholding ensures the ISO
+         * packet is fully buffered before transmission starts. */
+        DWC_DTHRCTL = RXTHRLEN(c->ahb_threshold)|RXTHREN
+                     |ISOTHREN|TXTHRLEN(48);
 #endif
 
     /* Set up interrupts */
