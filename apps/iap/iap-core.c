@@ -45,6 +45,8 @@
 #include "usb.h"
 #ifdef USB_ENABLE_AUDIO
 #include "../usbstack/usb_audio.h"
+#define LOGF_ENABLE
+#include "logf.h"
 #endif
 
 #include "tuner.h"
@@ -369,6 +371,11 @@ static int iap_task(struct timeout *tmo)
         return MS_TO_TICKS(1000);
 
     queue_post(&iap_queue, IAP_EV_TICK, 0);
+
+#ifdef USB_ENABLE_AUDIO
+    if (usb_audio_source_streaming())
+        logf("iap: tick during stream");
+#endif
 
     /* After auth completes and no active work remains, reduce tick
      * rate from 10 Hz to 1 Hz to save power during idle MFi DAC

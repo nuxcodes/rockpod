@@ -844,10 +844,17 @@ static void usb_dw_epstart(int epnum, enum usb_dw_epdir epdir,
     {
         /* DSTS SOFFN bit 0 gives current frame parity.
          * Schedule for the opposite parity (= next frame). */
-        if ((DWC_DSTS >> 8) & 1)
+        uint32_t soffn_before = (DWC_DSTS >> 8) & 0x3FFF;
+        if (soffn_before & 1)
             DWC_EPCTL(epnum, epdir) |= EPENA | nak | SETD0PIDEF; /* even */
         else
             DWC_EPCTL(epnum, epdir) |= EPENA | nak | SETD1PIDOF; /* odd */
+        /* Detect frame parity race: if SOF advanced between read and write,
+         * we may have scheduled for the wrong frame. */
+        uint32_t soffn_after = (DWC_DSTS >> 8) & 0x3FFF;
+        if (soffn_before != soffn_after)
+            logf("usb: PARITY RACE sof=%lu>%lu",
+                 (unsigned long)soffn_before, (unsigned long)soffn_after);
     }
     else
     {
@@ -1260,6 +1267,9 @@ static void usb_dw_irq(void)
             }
         }
         iisoixfr_count++;
+        if (usb_audio_source_streaming())
+            logf("usb: IISOIXFR #%d sof=%lu",
+                 iisoixfr_count, (unsigned long)((DWC_DSTS >> 8) & 0x3FFF));
         DWC_GINTSTS = IISOIXFR;
     }
 

@@ -1972,7 +1972,7 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
             {
                 int32_t jl = (int32_t)s[0] - prev_l;
                 int32_t jr = (int32_t)s[1] - prev_r;
-                if (jl > 8192 || jl < -8192 || jr > 8192 || jr < -8192)
+                if (jl > 2048 || jl < -2048 || jr > 2048 || jr < -2048)
                     logf("src: DISC L=%d>%d R=%d>%d f=%d",
                          prev_l, s[0], prev_r, s[1],
                          (int)source_frames_sent);
