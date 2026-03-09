@@ -35,6 +35,7 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
+#include "usb_audio.h"
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -178,6 +179,12 @@ static void (*saved_transport_send)(const unsigned char *buf, int len);
  * back-to-back sends don't corrupt DMA-in-progress data. */
 static struct semaphore tx_complete_sem;
 
+/* Deferred HID TX for source streaming: iap_hid_tx() prepares
+ * tx_buf but defers the actual USB send to the ISO XFRC handler,
+ * ensuring deterministic timing relative to the audio stream. */
+static volatile bool hid_tx_deferred;
+static volatile int hid_tx_deferred_len;
+
 /*
  * USB HID TX transport for iAP.
  *
@@ -236,6 +243,18 @@ static void iap_hid_tx(const unsigned char *buf, int len)
          tx_buf[0], tx_buf[1], tx_buf[2],
          (len > 2) ? tx_buf[3] : 0, (len > 3) ? tx_buf[4] : 0,
          (len > 4) ? tx_buf[5] : 0);
+
+    /* During USB audio source streaming, defer the actual send to the
+     * ISO XFRC handler.  This serializes HID IN and ISO IN transmissions,
+     * preventing frame-level timing collisions that cause audio pops on
+     * some docks (e.g. Onkyo ND-S1).  The semaphore stays held to
+     * protect tx_buf until the ISR sends and DMA completes. */
+    if (usb_audio_source_streaming())
+    {
+        hid_tx_deferred_len = 1 + report_size;
+        hid_tx_deferred = true;
+        return;
+    }
 
     usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, 1 + report_size);
 }
@@ -424,6 +443,33 @@ void usb_iap_hid_transfer_complete(int ep, int dir, int status, int length)
     (void) status;
     (void) length;
     semaphore_release(&tx_complete_sem);
+}
+
+/*
+ * Send a deferred HID IN response.  Called from the ISO XFRC handler
+ * (USB ISR context) to serialize HID and ISO transmissions.
+ */
+bool usb_iap_hid_send_deferred(void)
+{
+    if (!hid_tx_deferred)
+        return false;
+    hid_tx_deferred = false;
+    usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, hid_tx_deferred_len);
+    return true;
+}
+
+/*
+ * Flush any pending deferred HID TX.  Called when source streaming
+ * stops to prevent deadlock (iAP thread waiting on semaphore that
+ * would never be released because ISO XFRC no longer fires).
+ */
+void usb_iap_hid_flush_deferred(void)
+{
+    if (hid_tx_deferred)
+    {
+        hid_tx_deferred = false;
+        usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, hid_tx_deferred_len);
+    }
 }
 
 bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,

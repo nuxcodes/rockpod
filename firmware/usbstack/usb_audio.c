@@ -42,6 +42,7 @@
 #include "settings.h"
 #include "core_alloc.h"
 #include "lcd.h"
+#include "usb_iap_hid.h"
 #include "pcm_mixer.h"
 #include "pcm-internal.h"
 #include "dsp_core.h"
@@ -1182,6 +1183,10 @@ static void usb_audio_stop_source(void)
     logf("usbaudio: stop source");
     source_streaming = false;
 
+    /* Flush any pending deferred HID TX before stopping —
+     * prevents deadlock if iAP thread is waiting on semaphore. */
+    usb_iap_hid_flush_deferred();
+
     if (source_pull_mode)
     {
         source_pull_mode = false;
@@ -1987,6 +1992,11 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
         /* LCD DMA collision check */
         if (lcd_dma_busy())
             logf("src: LCD_DMA f=%d", (int)source_frames_sent);
+
+        /* Send any deferred HID IN response — serialized with ISO IN
+         * to prevent frame-level collision with audio data.  This fixes
+         * the ~1s click/pop on docks that poll iAP status periodically. */
+        usb_iap_hid_send_deferred();
 
         tx_buf_idx = next;
         source_frames_sent++;

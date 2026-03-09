@@ -36,4 +36,8 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
 int usb_iap_hid_set_interface(int intf, int alt);
 int usb_iap_hid_get_interface(int intf);
 
+/* Deferred HID TX for source streaming — see usb_iap_hid.c */
+bool usb_iap_hid_send_deferred(void);
+void usb_iap_hid_flush_deferred(void);
+
 #endif /* USB_IAP_HID_H */
