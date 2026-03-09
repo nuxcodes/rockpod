@@ -180,6 +180,13 @@ void irq_handler(void)
     (void)VIC1ADDRESS;
     uint32_t irqs0 = VIC0IRQSTATUS;
     uint32_t irqs1 = VIC1IRQSTATUS;
+    /* Priority: handle USB (IRQ 19) before timer/DMA to minimize
+     * ISO IN latency when multiple interrupts pend simultaneously. */
+    if (irqs0 & (1 << IRQ_USB_FUNC))
+    {
+        irqvector[IRQ_USB_FUNC]();
+        irqs0 &= ~(1 << IRQ_USB_FUNC);
+    }
     for (current_irq = 0; irqs0; current_irq++, irqs0 >>= 1)
         if (irqs0 & 1)
             irqvector[current_irq]();
