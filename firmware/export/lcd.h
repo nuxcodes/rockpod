@@ -545,6 +545,8 @@ enum {
 extern bool lcd_active(void);
 #endif
 
+extern bool lcd_dma_busy(void);
+
 #ifdef HAVE_LCD_SHUTDOWN
 extern void lcd_shutdown(void);
 #endif

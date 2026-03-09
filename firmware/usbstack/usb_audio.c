@@ -41,6 +41,7 @@
 #include "misc.h"
 #include "settings.h"
 #include "core_alloc.h"
+#include "lcd.h"
 #include "pcm_mixer.h"
 #include "pcm-internal.h"
 #include "dsp_core.h"
@@ -48,7 +49,7 @@
 #include "audiohw.h"
 #endif
 
-/* #define LOGF_ENABLE */
+#define LOGF_ENABLE
 #include "logf.h"
 
 /* Fixed-point conversion macros (signed Q16.16) */
@@ -587,6 +588,10 @@ static int16_t source_last_sample[2]; /* last L/R sample for fade-out on underfl
 static int source_frac_num;  /* accumulated fractional numerator */
 static volatile int source_underflow_count;
 static volatile int source_frames_sent;
+static volatile int source_frame_gap_count;
+static volatile int source_short_xfer_count;
+static int source_last_frame_num;
+static int source_last_expected;
 /* Double buffer for ISO IN: one buffer is being DMA'd while the other
  * is being filled.  This decouples the time-sensitive DMA re-arm
  * (~1us) from the slower audio pull + fade-in (~100us at 54MHz). */
@@ -1131,6 +1136,10 @@ static void usb_audio_start_source(void)
     source_frac_num = 0;
     source_underflow_count = 0;
     source_frames_sent = 0;
+    source_frame_gap_count = 0;
+    source_short_xfer_count = 0;
+    source_last_frame_num = -1;
+    source_last_expected = 0;
     source_pull_buf = NULL;
     source_pull_size = 0;
     source_pull_cursor = 0;
@@ -1917,10 +1926,68 @@ bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int length)
          * buffer (~1us), then fill the just-completed buffer for the
          * next frame with ~999us of budget. */
         int next = tx_buf_idx ^ 1;
+
+        /* Short transfer: DWC sent fewer bytes than requested */
+        if (source_last_expected > 0 && length != source_last_expected)
+            logf("SRC SHORT: len=%d exp=%d f=%d",
+                 length, source_last_expected, (int)source_frames_sent);
+
+        /* Frame gap: non-consecutive frame numbers */
+        {
+            int diag_frame = usb_drv_get_frame_number();
+            if (source_last_frame_num >= 0)
+            {
+                int gap = (diag_frame - source_last_frame_num) & 0x7FF;
+                if (gap != 1 && gap != 0)
+                    logf("SRC GAP: gap=%d f=%d", gap, diag_frame);
+            }
+            source_last_frame_num = diag_frame;
+        }
+        source_last_expected = tx_next_bytes;
+
+        uint32_t t0 = USEC_TIMER;
         usb_drv_send_nonblocking(EP_ISO_SOURCE_IN, tx_buf[next], tx_next_bytes);
+        uint32_t t_rearm = USEC_TIMER;
 
         tx_next_bytes = source_frame_bytes();
         source_fill_buffer(tx_buf[tx_buf_idx], tx_next_bytes);
+        uint32_t t_fill = USEC_TIMER;
+
+        /* Log only when timing exceeds thresholds */
+        {
+            uint32_t rearm_us = t_rearm - t0;
+            uint32_t fill_us = t_fill - t_rearm;
+            if (fill_us > 200 || rearm_us > 50)
+                logf("src: re=%lu fi=%lu f=%d",
+                     (unsigned long)rearm_us, (unsigned long)fill_us,
+                     (int)source_frames_sent);
+        }
+
+        /* Sample discontinuity check — log only on detection */
+        {
+            static int16_t prev_l, prev_r;
+            int16_t *s = (int16_t *)tx_buf[tx_buf_idx];
+            int n = tx_next_bytes / 4;
+            if (n > 0 && source_frames_sent > 1)
+            {
+                int32_t jl = (int32_t)s[0] - prev_l;
+                int32_t jr = (int32_t)s[1] - prev_r;
+                if (jl > 8192 || jl < -8192 || jr > 8192 || jr < -8192)
+                    logf("src: DISC L=%d>%d R=%d>%d f=%d",
+                         prev_l, s[0], prev_r, s[1],
+                         (int)source_frames_sent);
+            }
+            if (n > 0)
+            {
+                prev_l = s[(n-1)*2];
+                prev_r = s[(n-1)*2+1];
+            }
+        }
+
+        /* LCD DMA collision check */
+        if (lcd_dma_busy())
+            logf("src: LCD_DMA f=%d", (int)source_frames_sent);
+
         tx_buf_idx = next;
         source_frames_sent++;
         retval = true;

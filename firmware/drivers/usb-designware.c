@@ -38,7 +38,7 @@
 #include "usb-designware.h"
 
 /* Define LOGF_ENABLE to enable logf output in this file */
-/* #define LOGF_ENABLE */
+#define LOGF_ENABLE
 #include "logf.h"
 
 /* Diagnostic counter: incomplete isochronous IN transfers */
@@ -905,10 +905,6 @@ static void usb_dw_abort_endpoint(int epnum, enum usb_dw_epdir epdir)
 
 static void usb_dw_control_received(struct usb_ctrlrequest* req)
 {
-    logf("%s(%p) state=%s", __func__, req, dw_state_str[ep0.state]);
-    logf(" bRequestType=%02x bRequest=%02x", req->bRequestType, req->bRequest);
-    logf(" wValue=%04x wIndex=%u wLength=%u", req->wValue, req->wIndex, req->wLength);
-
     switch(ep0.state) {
     case EP0_REQ:
     case EP0_REQ_CTRLWRITE:
@@ -1202,6 +1198,7 @@ static void usb_dw_irq(void)
 {
     int ep;
     uint32_t daint;
+    uint32_t isr_start = USEC_TIMER;
 
 #ifdef USB_DW_ARCH_SLAVE
     /* Handle one packet at a time, the IRQ will re-trigger if there's
@@ -1323,6 +1320,8 @@ static void usb_dw_irq(void)
             {
                 if (epints & STUP)
                 {
+                    if (usb_audio_source_streaming())
+                        logf("usb: EP0 STUP during stream");
                     usb_dw_handle_setup_received();
                 }
 
@@ -1371,6 +1370,13 @@ static void usb_dw_irq(void)
         DWC_GINTSTS = ENUMDNE;
         ep0.state = EP0_SETUP;
         usb_dw_ep0_recv();
+    }
+
+    /* Log only when ISR takes unusually long */
+    {
+        uint32_t isr_us = USEC_TIMER - isr_start;
+        if (isr_us > 300)
+            logf("usb: ISR=%lu us", (unsigned long)isr_us);
     }
 }
 
