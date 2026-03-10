@@ -47,9 +47,11 @@ const unsigned char *iap_get_serbuf(void);
 /* Transport abstraction — USB HID driver overrides this for iAP-over-USB */
 extern void (*iap_transport_send)(const unsigned char *buf, int len);
 
-/* Post deferred HID events to iAP thread — callable from USB ISR */
-extern void iap_queue_hid_rx(void);
-extern void iap_queue_hid_init(void);
+/* Button state — set by iAP Simple Remote lingo handlers and by the
+ * lightweight button extractor in usb_iap_hid.c during streaming. */
+extern unsigned long iap_remotebtn;
+extern unsigned int iap_timeoutbtn;
+extern int iap_repeatbtn;
 #ifdef HAVE_LINE_REC
 extern bool iap_record(bool onoff);
 #endif

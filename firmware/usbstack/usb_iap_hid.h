@@ -40,7 +40,4 @@ int usb_iap_hid_get_interface(int intf);
 bool usb_iap_hid_send_deferred(void);
 void usb_iap_hid_flush_deferred(void);
 
-/* Deferred RX processing — called from iAP thread context */
-void usb_iap_hid_process_deferred_rx(void);
-
 #endif /* USB_IAP_HID_H */

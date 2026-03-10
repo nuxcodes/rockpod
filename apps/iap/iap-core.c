@@ -46,9 +46,6 @@
 #ifdef USB_ENABLE_AUDIO
 #include "../usbstack/usb_audio.h"
 #endif
-#ifdef USB_ENABLE_IAP_HID
-#include "../usbstack/usb_iap_hid.h"
-#endif
 
 #include "tuner.h"
 #if CONFIG_TUNER
@@ -87,8 +84,6 @@ void (*iap_transport_send)(const unsigned char *buf, int len) = iap_serial_tx;
 #define IAP_EV_TICK         (1)     /* The regular task timeout */
 #define IAP_EV_MSG_RCVD     (2)     /* A complete message has been received from the device */
 #define IAP_EV_MALLOC       (3)     /* Allocate memory for the RX/TX buffers */
-#define IAP_EV_HID_RX      (4)     /* Deferred HID SET_REPORT processing */
-#define IAP_EV_HID_INIT    (5)     /* Deferred iAP init from USB HID path */
 
 static bool iap_started = false;
 static bool iap_setupflag = false, iap_running = false;
@@ -379,8 +374,7 @@ static int iap_task(struct timeout *tmo)
      * rate from 10 Hz to 1 Hz to save power during idle MFi DAC
      * connections.  100ms is still needed during auth handshake,
      * accessory info polling, button repeat, notification delivery,
-     * shutdown notification, and USB audio streaming (deferred HID
-     * RX is processed on the tick for responsive dock controls). */
+     * and shutdown notification. */
     if (device.auth.state == AUST_AUTH
         && device.accinfo != ACCST_INIT
         && device.accinfo != ACCST_SENT
@@ -389,9 +383,6 @@ static int iap_task(struct timeout *tmo)
         && !device.do_notify
         && !iap_shutdown
         && iap_timeoutbtn == 0
-#ifdef USB_ENABLE_AUDIO
-        && !usb_audio_source_streaming()
-#endif
         )
         return MS_TO_TICKS(1000);
 
@@ -406,18 +397,6 @@ void iap_set_remote_volume(void)
     IAP_TX_PUT(0x00);
     IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
     iap_send_tx();
-}
-
-/* Post deferred HID RX event — callable from USB ISR context. */
-void iap_queue_hid_rx(void)
-{
-    queue_post(&iap_queue, IAP_EV_HID_RX, 0);
-}
-
-/* Post deferred iAP init event — callable from USB ISR context. */
-void iap_queue_hid_init(void)
-{
-    queue_post(&iap_queue, IAP_EV_HID_INIT, 0);
 }
 
 /* This thread is waiting for events posted to iap_queue and calls
@@ -452,28 +431,6 @@ static void iap_thread(void)
             case IAP_EV_MALLOC:
             {
                 iap_malloc();
-                break;
-            }
-
-            /* Deferred HID SET_REPORT processing — data was buffered
-             * in USB ISR to avoid jitter during audio streaming. */
-            case IAP_EV_HID_RX:
-            {
-#ifdef USB_ENABLE_IAP_HID
-                usb_iap_hid_process_deferred_rx();
-#endif
-                break;
-            }
-
-            /* Deferred iAP init from USB HID path — create_thread()
-             * is unsafe from ISR context, so init is deferred here. */
-            case IAP_EV_HID_INIT:
-            {
-                iap_setup(0);
-                iap_malloc();
-#ifdef USB_ENABLE_IAP_HID
-                usb_iap_hid_process_deferred_rx();
-#endif
                 break;
             }
 
@@ -838,13 +795,6 @@ void iap_periodic(void)
     static int count;
 
     if(!iap_setupflag) return;
-
-    /* Process deferred HID RX — handles dock remote controls
-     * during USB audio streaming.  Runs on the periodic tick
-     * (not from USB ISR) to avoid audio glitches. */
-#ifdef USB_ENABLE_IAP_HID
-    usb_iap_hid_process_deferred_rx();
-#endif
 
     /* Handle pending authentication tasks */
     switch (device.auth.state)
