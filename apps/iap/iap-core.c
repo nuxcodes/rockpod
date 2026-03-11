@@ -1446,7 +1446,10 @@ void iap_handlepkt(void)
      * cleanly
      */
     level = disable_irq_save();
-    memmove(iap_rxstart, iap_rxstart+(length+2), (RX_BUFLEN+2)-(length+2));
+    {
+        size_t remaining = (iap_rxnext - iap_rxstart) - (length + 2);
+        memmove(iap_rxstart, iap_rxstart + (length + 2), remaining);
+    }
     iap_rxnext -= (length+2);
     iap_rxpayload -= (length+2);
     iap_rxlen += (length+2);

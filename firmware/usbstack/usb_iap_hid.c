@@ -36,7 +36,6 @@
 #include "usb_ch9.h"
 #include "iap.h"
 #include "usb_audio.h"
-#include "button.h"
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -185,116 +184,6 @@ static struct semaphore tx_complete_sem;
  * ensuring deterministic timing relative to the audio stream. */
 static volatile bool hid_tx_deferred;
 static volatile int hid_tx_deferred_len;
-
-/*
- * Lightweight button extraction from raw HID SET_REPORT data.
- *
- * During USB audio source streaming, the full iAP stack (iap_getc /
- * iap_handlepkt) is too CPU-intensive at 54 MHz unboosted and causes
- * periodic audio glitches.  This function parses the HID report
- * directly to extract Lingo 2 ContextButtonStatus (0x00) and
- * AudioButtonStatus (0x04) button events, setting iap_remotebtn
- * without any iAP stack involvement.
- *
- * Returns true if a button event was extracted, false otherwise.
- */
-static bool iap_hid_extract_buttons(const unsigned char *data, int len)
-{
-    int i;
-
-    if (len < 3)
-        return false;
-
-    /* Only handle single complete reports (no fragmentation).
-     * Button commands are small and never fragmented. */
-    if ((data[1] & 0x03) != 0x00)
-        return false;
-
-    /* Find 0x55 sync marker in iAP payload (starts at data[2]) */
-    const unsigned char *payload = data + 2;
-    int payload_len = len - 2;
-    int sync_off = -1;
-    for (i = 0; i < payload_len; i++)
-    {
-        if (payload[i] == 0x55)
-        {
-            sync_off = i;
-            break;
-        }
-    }
-    if (sync_off < 0 || sync_off + 2 >= payload_len)
-        return false;
-
-    /* iAP frame: [0x55] [length] [lingo] [cmd] [data...] [checksum]
-     * Length includes lingo + cmd + data (not sync, length, or checksum). */
-    unsigned int pkt_len = payload[sync_off + 1];
-    if (pkt_len < 2 || sync_off + 1 + (int)pkt_len + 1 > payload_len)
-        return false;
-
-    unsigned char lingo = payload[sync_off + 2];
-    unsigned char cmd = payload[sync_off + 3];
-
-    /* Only handle Simple Remote lingo (0x02) button commands */
-    if (lingo != 0x02)
-        return false;
-    if (cmd != 0x00 && cmd != 0x04)
-        return false;
-
-    /* Validate checksum: sum of [length .. data .. checksum] == 0 mod 256 */
-    {
-        unsigned int chk = 0;
-        for (i = sync_off + 1; i <= sync_off + 1 + (int)pkt_len; i++)
-            chk += payload[i];
-        if ((chk & 0xFF) != 0)
-            return false;
-    }
-
-    /* Button data starts at payload[sync_off + 4], length = pkt_len - 2 */
-    const unsigned char *btn = &payload[sync_off + 4];
-    int btn_len = (int)pkt_len - 2;
-    unsigned long buttons = BUTTON_NONE;
-
-    if (btn_len >= 1 && btn[0] != 0)
-    {
-        if (btn[0] & 0x01) buttons |= BUTTON_RC_PLAY;
-        if (btn[0] & 0x02) buttons |= BUTTON_RC_VOL_UP;
-        if (btn[0] & 0x04) buttons |= BUTTON_RC_VOL_DOWN;
-        if (btn[0] & 0x08) buttons |= BUTTON_RC_RIGHT;
-        if (btn[0] & 0x10) buttons |= BUTTON_RC_LEFT;
-    }
-    if (btn_len >= 2 && btn[1] != 0)
-    {
-        if (btn[1] & 0x01) buttons |= BUTTON_RC_PLAY;  /* play */
-        if (btn[1] & 0x02) buttons |= BUTTON_RC_PLAY;  /* pause */
-    }
-    if (btn_len >= 3 && btn[2] != 0)
-    {
-        if (btn[2] & 0x04) buttons |= BUTTON_RC_PLAY;  /* power off */
-        if (btn[2] & 0x10) buttons |= BUTTON_RC_RIGHT; /* ffwd */
-        if (btn[2] & 0x20) buttons |= BUTTON_RC_LEFT;  /* frwd */
-        if (btn[2] & 0x40) buttons |= BUTTON_RC_MENU;
-        if (btn[2] & 0x80) buttons |= BUTTON_RC_SELECT;
-    }
-    if (btn_len >= 4 && btn[3] != 0)
-    {
-        if (btn[3] & 0x01) buttons |= BUTTON_RC_UP;
-        if (btn[3] & 0x02) buttons |= BUTTON_RC_DOWN;
-    }
-
-    if (buttons != BUTTON_NONE)
-    {
-        iap_remotebtn = buttons;
-        iap_timeoutbtn = 3;
-        iap_repeatbtn = 2;
-    }
-    else
-    {
-        iap_remotebtn = BUTTON_NONE;
-        iap_timeoutbtn = 0;
-    }
-
-    return true;
-}
 
 /*
  * USB HID TX transport for iAP.
@@ -618,18 +507,7 @@ bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
         case HID_REQ_SET_REPORT:
             if (reqdata)
             {
-                if (usb_audio_source_streaming())
-                {
-                    /* During streaming, extract button events directly
-                     * from the HID report without iAP stack processing.
-                     * The full iAP stack is too CPU-intensive at 54 MHz
-                     * and causes periodic audio glitches. */
-                    iap_hid_extract_buttons(rx_buf, req->wLength);
-                }
-                else
-                {
-                    iap_hid_process_rx(rx_buf, req->wLength);
-                }
+                iap_hid_process_rx(rx_buf, req->wLength);
                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
             }
             else
