@@ -35,7 +35,6 @@
 #include "usb_class_driver.h"
 #include "usb_ch9.h"
 #include "iap.h"
-#include "usb_audio.h"
 
 /* #define LOGF_ENABLE */
 #include "logf.h"
@@ -179,11 +178,6 @@ static void (*saved_transport_send)(const unsigned char *buf, int len);
  * back-to-back sends don't corrupt DMA-in-progress data. */
 static struct semaphore tx_complete_sem;
 
-/* Deferred HID TX for source streaming: iap_hid_tx() prepares
- * tx_buf but defers the actual USB send to the ISO XFRC handler,
- * ensuring deterministic timing relative to the audio stream. */
-static volatile bool hid_tx_deferred;
-static volatile int hid_tx_deferred_len;
 
 /*
  * USB HID TX transport for iAP.
@@ -197,13 +191,6 @@ static void iap_hid_tx(const unsigned char *buf, int len)
     int i;
 
     if (!iap_hid_active || len <= 0)
-        return;
-
-    /* Suppress HID IN responses during USB audio source streaming.
-     * Checked before semaphore_wait to avoid any semaphore interaction
-     * (acquiring then immediately releasing would be wasteful and
-     * could drift the count if racing with transfer_complete). */
-    if (usb_audio_source_streaming())
         return;
 
     /* Wait for previous HID TX to complete before touching tx_buf.
@@ -440,32 +427,6 @@ void usb_iap_hid_transfer_complete(int ep, int dir, int status, int length)
     semaphore_release(&tx_complete_sem);
 }
 
-/*
- * Send a deferred HID IN response.  Called from the ISO XFRC handler
- * (USB ISR context) to serialize HID and ISO transmissions.
- */
-bool usb_iap_hid_send_deferred(void)
-{
-    if (!hid_tx_deferred)
-        return false;
-    hid_tx_deferred = false;
-    usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, hid_tx_deferred_len);
-    return true;
-}
-
-/*
- * Flush any pending deferred HID TX.  Called when source streaming
- * stops to prevent deadlock (iAP thread waiting on semaphore that
- * would never be released because ISO XFRC no longer fires).
- */
-void usb_iap_hid_flush_deferred(void)
-{
-    if (hid_tx_deferred)
-    {
-        hid_tx_deferred = false;
-        usb_drv_send_nonblocking(EP_IAP_HID_IN, tx_buf, hid_tx_deferred_len);
-    }
-}
 
 bool usb_iap_hid_control_request(struct usb_ctrlrequest *req, void *reqdata,
                                   unsigned char *dest)

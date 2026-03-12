@@ -480,10 +480,7 @@ static void iap_track_changed(unsigned short id, void *ignored)
  */
 void iap_setup(const int ratenum)
 {
-    /* Skip UART reconfiguration on USB HID reconnect path
-     * (ratenum=0, iAP already started) to reduce latency. */
-    if (!iap_started || ratenum != 0)
-        iap_bitrate_set(ratenum);
+    iap_bitrate_set(ratenum);
     iap_remotebtn = BUTTON_NONE;
     iap_setupflag = true;
     iap_running = false;
