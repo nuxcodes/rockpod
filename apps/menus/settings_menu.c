@@ -407,6 +407,8 @@ MAKE_MENU(sel_softlock, ID2P(LANG_SOFTLOCK_SELECTIVE),
           NULL, Icon_Menu_setting, &bt_selective_actions, &sel_softlock_mask);
 #endif /* !HAS_BUTTON_HOLD */
 
+MENUITEM_SETTING(wps_select_action, &global_settings.wps_select_action, NULL);
+
 #if defined(DX50) || defined(DX90)
 MENUITEM_SETTING(governor, &global_settings.governor, NULL);
 #endif
@@ -478,6 +480,7 @@ MAKE_MENU(system_menu, ID2P(LANG_SYSTEM),
 #if defined(HAVE_GENERAL_PURPOSE_LED)
             &use_led_indicators,
 #endif
+            &wps_select_action,
          );
 
 /*    SYSTEM MENU                  */

@@ -557,6 +557,7 @@ struct user_settings
     bool car_adapter_mode; /* 0=off 1=on */
     int car_adapter_mode_delay; /* delay before resume,  in seconds*/
     int start_in_screen;
+    int wps_select_action;
 #if defined(HAVE_RTC_ALARM) && \
     (defined(HAVE_RECORDING) || CONFIG_TUNER)
     int alarm_wake_up_screen;

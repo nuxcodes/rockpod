@@ -2159,6 +2159,13 @@ const struct settings_list settings[] = {
                    ID2P(LANG_BOOKMARK_MENU_RECENT_BOOKMARKS),
                    ID2P(LANG_OPEN_PLUGIN)
                   ),
+    CHOICE_SETTING(0, wps_select_action, LANG_WPS_SELECT_ACTION, 0,
+                   "wps select action", "default,database,coverflow,files",
+                   NULL, 4,
+                   ID2P(LANG_PREVIOUS_SCREEN),
+                   ID2P(LANG_TAGCACHE),
+                   ID2P(LANG_COVERFLOW),
+                   ID2P(LANG_DIR_BROWSER)),
 #if defined(HAVE_RTC_ALARM) && \
     (defined(HAVE_RECORDING) || CONFIG_TUNER)
     {F_T_INT|F_HAS_CFGVALS, &global_settings.alarm_wake_up_screen, LANG_ALARM_WAKEUP_SCREEN,

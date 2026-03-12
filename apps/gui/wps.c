@@ -844,8 +844,17 @@ long gui_wps_show(void)
             }
             break;
 
-            /* iPod Classic 6G custom: open PictureFlow instead of browser */
             case ACTION_WPS_BROWSE:
+            {
+                int sel_action = global_settings.wps_select_action;
+                if (sel_action == 1) /* database */
+                {
+#ifdef HAVE_TAGCACHE
+                    gwps_leave_wps(true);
+                    return GO_TO_DBBROWSER;
+#endif
+                }
+                else if (sel_action == 2) /* coverflow */
                 {
                     theme_enabled = false;
                     gwps_leave_wps(false);
@@ -857,13 +866,18 @@ long gui_wps_show(void)
                     }
                     restore = true;
                 }
+                else if (sel_action == 3) /* files */
+                {
+                    gwps_leave_wps(true);
+                    return GO_TO_FILEBROWSER;
+                }
+                else /* default — previous browser */
+                {
+                    gwps_leave_wps(true);
+                    return GO_TO_PREVIOUS_BROWSER;
+                }
                 break;
-#if 0 /* original browse behavior */
-            case ACTION_WPS_BROWSE:
-                gwps_leave_wps(true);
-                return GO_TO_PREVIOUS_BROWSER;
-                break;
-#endif
+            }
 
                 /* play/pause */
             case ACTION_WPS_PLAY:

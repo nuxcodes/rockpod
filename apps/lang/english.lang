@@ -17094,3 +17094,31 @@
     *: none
   </voice>
 </phrase>
+<phrase>
+  id: LANG_WPS_SELECT_ACTION
+  desc: in settings_menu
+  user: core
+  <source>
+    *: "WPS Select Action"
+  </source>
+  <dest>
+    *: "WPS Select Action"
+  </dest>
+  <voice>
+    *: "WPS Select Action"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_COVERFLOW
+  desc: in settings_menu
+  user: core
+  <source>
+    *: "Coverflow"
+  </source>
+  <dest>
+    *: "Coverflow"
+  </dest>
+  <voice>
+    *: "Coverflow"
+  </voice>
+</phrase>
