@@ -14,7 +14,7 @@
 
 ---
 
-Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic. It adds digital audio output support to iPod MFi accessories (DACs, speakers, docks, car stereos), a rewritten PictureFlow modeled on Apple's Cover Flow, and SSD-aware power management.
+Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic (6th and 7th generation, 2007–2014). It adds digital audio output support to iPod MFi accessories (DACs, speakers, docks, car stereos), a rewritten PictureFlow modeled on Apple's Cover Flow, and SSD-aware power management.
 
 Rockpod supports both HDD and iFlash-modded iPod Classic units. It's a drop-in replacement for the official Rockbox firmware, with no reformatting or data loss.
 
@@ -248,6 +248,8 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 ---
 
 ## Roadmap
+
+**iPod Video 5/5.5G support.** Rockpod is currently limited to supporting iPod Classic 6G/7G (S5L8702 SoC) - support for the 5/5.5G iPod Video is on the to-do list. They use different SoCs and USB controllers, so extending the support is not trivial.
 
 **Generic USB audio support via host mode.** The current support uses USB device mode — the accessory is the host and the iPod authenticates as an Apple audio source. This only works with iPod MFi accessories. The next step is USB host mode, where the iPod becomes the host and sends audio to any class-compliant UAC device — standard USB-C DAC dongles via a dock-to-OTG adapter. The S5L8702's DWC OTG controller supports host mode in hardware; the work is in the host stack and UAC class driver.
 
