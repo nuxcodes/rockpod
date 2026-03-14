@@ -237,6 +237,7 @@
 
 #define IPOD_ACCESSORY_PROTOCOL
 #define HAVE_SERIAL
+#define USB_ENABLE_IAP_HID
 
 /* DMA is used only for reading on PP502x because although reads are ~8x faster
  * writes appear to be ~25% slower.

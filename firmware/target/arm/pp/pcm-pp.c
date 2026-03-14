@@ -472,8 +472,13 @@ static void play_stop_pcm(void)
     dma_play_data.state = 0;
 }
 
+volatile bool pcm_dma_start_inhibit = false;
+
 void pcm_play_dma_start(const void *addr, size_t size)
 {
+    if (pcm_dma_start_inhibit)
+        return;
+
     pcm_play_dma_stop();
 
 #if NUM_CORES > 1

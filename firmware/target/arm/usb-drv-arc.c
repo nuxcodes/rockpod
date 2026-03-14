@@ -936,6 +936,11 @@ static void transfer_completed(void)
     }
 }
 
+int usb_drv_get_iisoixfr_count(void)
+{
+    return 0;
+}
+
 /* manual: 32.14.2.1 Bus Reset */
 static void bus_reset(void)
 {
