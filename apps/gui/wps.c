@@ -529,11 +529,12 @@ static void gwps_leave_wps(bool theme_enabled)
 #ifdef HAVE_BACKDROP_IMAGE
             skin_backdrop_show(sb_get_backdrop(i));
 
-            /* The following is supposed to erase any traces of %VB
-               viewports drawn by the WPS. May need further thought... */
-            struct wps_data *sbs = skin_get_gwps(CUSTOM_STATUSBAR, i)->data;
-            if (gwps->data->use_extra_framebuffer && sbs->use_extra_framebuffer)
-                skin_update(CUSTOM_STATUSBAR, i, SKIN_REFRESH_ALL);
+            /* Re-render SBS to update the backdrop buffer (including
+               dynamic colors) before toggle_theme() clears dead space
+               from the backdrop and flushes it to the LCD. */
+            skin_render_inhibit_flush(true);
+            skin_update(CUSTOM_STATUSBAR, i, SKIN_REFRESH_ALL);
+            skin_render_inhibit_flush(false);
 #endif
             viewportmanager_theme_undo(i, skin_has_sbs(gwps));
         }

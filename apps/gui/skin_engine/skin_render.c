@@ -902,20 +902,6 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
                 display->clear_viewport();
 #endif
         }
-#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-        else
-        {
-            unsigned resolved_bg =
-                dynamic_colors_resolve(first_vp->bg_pattern);
-            if (resolved_bg != first_vp->bg_pattern)
-            {
-                unsigned saved_bg = first_vp->bg_pattern;
-                first_vp->bg_pattern = resolved_bg;
-                display->clear_viewport();
-                first_vp->bg_pattern = saved_bg;
-            }
-        }
-#endif
     }
 
     viewport = SKINOFFSETTOPTR(skin_buffer, data->tree);
