@@ -225,8 +225,8 @@ void list_draw(struct screen *display, struct gui_synclist *list)
     dynamic_colors_check_extraction(-1);
     unsigned int dc_saved_list_fg = parent->fg_pattern;
     unsigned int dc_saved_list_bg = parent->bg_pattern;
-    parent->fg_pattern = dynamic_colors_resolve(dc_saved_list_fg);
-    parent->bg_pattern = dynamic_colors_resolve(dc_saved_list_bg);
+    parent->fg_pattern = dynamic_colors_resolve(global_settings.fg_color);
+    parent->bg_pattern = dynamic_colors_resolve(global_settings.bg_color);
     if (parent->fg_pattern != dc_saved_list_fg ||
         parent->bg_pattern != dc_saved_list_bg)
     {

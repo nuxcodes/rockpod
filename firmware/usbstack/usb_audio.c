@@ -448,6 +448,19 @@ static int usb_as_source_intf_alt; /* source streaming interface alternate setti
 static int as_playback_freq_idx; /* audio playback streaming frequency index (in hw_freq_sampr) */
 static int as_source_freq_idx; /* audio source streaming frequency index (in hw_freq_sampr) */
 
+#if USB_NUM_ENDPOINTS <= 3
+/* Source-only: no sink endpoints on limited-EP targets (iPod 5G).
+ * With only EP1+EP2 available, we need one for ISO IN (source audio)
+ * and one for INT IN (iAP HID).  Sink endpoints are not used in
+ * Config 2 anyway — 6G also runs source-only there. */
+struct usb_class_driver_ep_allocation usb_audio_ep_allocs[1] = {
+    /* input isochronous endpoint (source: iPod -> host) */
+    {.type = USB_ENDPOINT_XFER_ISOC, .dir = DIR_IN, .optional = false},
+};
+#define EP_ISO_OUT 0
+#define EP_ISO_FEEDBACK_IN 0
+#define EP_ISO_SOURCE_IN (usb_audio_ep_allocs[0].ep)
+#else
 struct usb_class_driver_ep_allocation usb_audio_ep_allocs[3] = {
     /* output isochronous endpoint (sink: host -> iPod) — optional in source-only config 2 */
     {.type = USB_ENDPOINT_XFER_ISOC, .dir = DIR_OUT, .optional = true},
@@ -456,10 +469,10 @@ struct usb_class_driver_ep_allocation usb_audio_ep_allocs[3] = {
     /* input isochronous endpoint (source: iPod -> host) */
     {.type = USB_ENDPOINT_XFER_ISOC, .dir = DIR_IN, .optional = false},
 };
-
 #define EP_ISO_OUT (usb_audio_ep_allocs[0].ep)
 #define EP_ISO_FEEDBACK_IN (usb_audio_ep_allocs[1].ep)
 #define EP_ISO_SOURCE_IN (usb_audio_ep_allocs[2].ep)
+#endif
 
 /* small buffer used for control transfers */
 static unsigned char usb_buffer[128] USB_DEVBSS_ATTR;
@@ -1195,7 +1208,9 @@ static void usb_audio_stop_source(void)
     audiohw_enable_lineout(true);
 #endif
 
+#if CONFIG_CPU == S5L8702
     set_ahb_boost(false);
+#endif
 
     /* Pause playback so music doesn't continue through the internal
      * DAC/headphones after the dock disconnects or powers off. */

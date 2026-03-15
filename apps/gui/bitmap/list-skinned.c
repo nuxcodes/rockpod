@@ -206,8 +206,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 
     display->set_viewport(parent);
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-    parent->fg_pattern = dynamic_colors_resolve(parent->fg_pattern);
-    parent->bg_pattern = dynamic_colors_resolve(parent->bg_pattern);
+    unsigned int dc_saved_fg = parent->fg_pattern;
+    unsigned int dc_saved_bg = parent->bg_pattern;
+    parent->fg_pattern = dynamic_colors_resolve(dc_saved_fg);
+    parent->bg_pattern = dynamic_colors_resolve(dc_saved_bg);
     display->set_foreground(parent->fg_pattern);
     display->set_background(parent->bg_pattern);
 #endif
@@ -300,6 +302,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
     }
     current_column = -1;
     current_row = -1;
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+    parent->fg_pattern = dc_saved_fg;
+    parent->bg_pattern = dc_saved_bg;
+#endif
     display->set_viewport(parent);
     if (list_need_full_update() | skin_render_pending_update())
     {

@@ -49,6 +49,7 @@
 #include "core_keymap.h"
 #include "language.h"
 #include "statusbar-skinned.h"
+#include "skin_engine/skin_albumart_color.h"
 
 #if CONFIG_CHARGING
 #include "power.h"
@@ -877,6 +878,9 @@ static const struct plugin_api rockbox_api = {
 
     /* new stuff at the end, sort into place next time
        the API gets incompatible */
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+    dynamic_colors_resolve,
+#endif
 };
 
 static int plugin_buffer_handle;

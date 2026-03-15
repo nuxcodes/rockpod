@@ -2189,7 +2189,7 @@ const struct settings_list settings[] = {
     TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, colors_file, "filetype colours", "-",
                      THEME_DIR "/", ".colours"),
 #ifdef HAVE_ALBUMART
-    OFFON_SETTING(0, dynamic_colors, LANG_DYNAMIC_COLORS, false,
+    OFFON_SETTING(0, dynamic_colors, LANG_DYNAMIC_COLORS, true,
                   "dynamic colors", NULL),
 #endif
 #endif

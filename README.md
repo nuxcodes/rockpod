@@ -190,6 +190,23 @@ All standard Rockbox menu items are available.
 
 ---
 
+### Dynamic Colors
+
+The UI automatically extracts dominant and accent colors from the currently playing album art and applies them across all skinnable screens — menus, status bar, and now playing. Colors fade smoothly over 500 ms when the track changes.
+
+|                                                          |                                                          |
+| :------------------------------------------------------: | :------------------------------------------------------: |
+| <img src="screenshots/themify2-1.png" width="280">       | <img src="screenshots/themify2-2.png" width="280">       |
+| <img src="screenshots/themify2-4.png" width="280">       | <img src="screenshots/themify2-3.png" width="280">       |
+
+- **Album art color extraction** — dominant and accent colors pulled from the current track's artwork
+- **Full theme color coverage** — foreground, background, selector bar, selector text, selector gradient, and list separators all adapt
+- **Smooth transitions** — 500 ms fade between color palettes on track change
+- **Contrast enforcement** — accent colors are pushed brighter or darker if insufficient contrast against the dominant color
+- **On by default** — can be toggled off under Theme Settings
+
+---
+
 ### Improved UI Rendering
 
 - **Scroll-to-start flash eliminated** — custom themes with scrolling text in the main menu would flash or flicker when the scroll position reset to the start. Rockpod fixes the viewport rendering order to prevent this, making themed menus render cleanly without visual artifacts.
@@ -211,6 +228,7 @@ The repo includes third-party themes under `themes/`:
 |                         | Stock Rockbox                           | Rockpod                                        |
 | ----------------------- | --------------------------------------- | ---------------------------------------------- |
 | **External audio**      | Not supported                           | iPod MFi digital audio (DACs, speakers, docks) |
+| **Dynamic colors**      | Not supported                           | Album art color extraction with smooth fades   |
 | **Cover Flow**          | 3 slides, no status bar, 70-degree tilt | 7 slides, status bar, parallel projection      |
 | **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake (HDD mode preserved)    |
 | **Codec power**         | Always on                               | Auto power-down on idle                        |

@@ -30,7 +30,11 @@
  * Relevant specifications are USB 2.0 and USB Audio Class 1.0.
  */
 
+#if USB_NUM_ENDPOINTS <= 3
+extern struct usb_class_driver_ep_allocation usb_audio_ep_allocs[1];
+#else
 extern struct usb_class_driver_ep_allocation usb_audio_ep_allocs[3];
+#endif
 
 /*
  * usb_audio_set_first_interface():

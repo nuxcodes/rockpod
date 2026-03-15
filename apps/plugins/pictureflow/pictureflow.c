@@ -241,6 +241,19 @@ static pix_t pf_lst_color;    /* selector text color */
 static unsigned int pf_bg_rb;  /* pf_bg_color & 0xf81f */
 static unsigned int pf_bg_g;   /* pf_bg_color & 0x7e0 */
 
+#ifdef HAVE_ALBUMART
+static void pf_update_dynamic_colors(void)
+{
+    pf_bg_color = (pix_t)rb->dynamic_colors_resolve(rb->global_settings->bg_color);
+    pf_fg_color = (pix_t)rb->dynamic_colors_resolve(rb->global_settings->fg_color);
+    pf_lss_color = (pix_t)rb->dynamic_colors_resolve(rb->global_settings->lss_color);
+    pf_lse_color = (pix_t)rb->dynamic_colors_resolve(rb->global_settings->lse_color);
+    pf_lst_color = (pix_t)rb->dynamic_colors_resolve(rb->global_settings->lst_color);
+    pf_bg_rb = pf_bg_color & 0xf81f;
+    pf_bg_g  = pf_bg_color & 0x7e0;
+}
+#endif
+
 /* Interpolate between pf_bg_color (brightness=0) and pf_fg_color (brightness=255) */
 static inline pix_t pf_color_mix(int brightness)
 {
@@ -4765,6 +4778,13 @@ static bool init(void)
     pf_lss_color = (pix_t)rb->global_settings->lss_color;
     pf_lse_color = (pix_t)rb->global_settings->lse_color;
     pf_lst_color = (pix_t)rb->global_settings->lst_color;
+#ifdef HAVE_ALBUMART
+    pf_bg_color = (pix_t)rb->dynamic_colors_resolve(pf_bg_color);
+    pf_fg_color = (pix_t)rb->dynamic_colors_resolve(pf_fg_color);
+    pf_lss_color = (pix_t)rb->dynamic_colors_resolve(pf_lss_color);
+    pf_lse_color = (pix_t)rb->dynamic_colors_resolve(pf_lse_color);
+    pf_lst_color = (pix_t)rb->dynamic_colors_resolve(pf_lst_color);
+#endif
     pf_bg_rb = pf_bg_color & 0xf81f;
     pf_bg_g  = pf_bg_color & 0x7e0;
 #endif
@@ -5010,6 +5030,9 @@ static int pictureflow_main(void)
         current_update = *rb->current_tick;
         frames++;
 
+#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
+        pf_update_dynamic_colors();
+#endif
         update_scroll_lines();
 
         /* Handle states */

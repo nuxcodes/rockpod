@@ -511,7 +511,10 @@ unsigned int dynamic_colors_resolve(unsigned int original)
     {
         int p = fade_progress();
         if (p >= 256)
+        {
             cache.fading = false;
+            cache.needs_full_update = true;
+        }
         else
             return resolve_mapped(original,
                 lerp_color(cache.prev_accent, cache.accent, p),
@@ -534,6 +537,11 @@ bool dynamic_colors_needs_full_update(void)
         return true;
     }
     return false;
+}
+
+bool dynamic_colors_pending(void)
+{
+    return needs_extraction && global_settings.dynamic_colors;
 }
 
 #endif /* HAVE_ALBUMART && HAVE_LCD_COLOR */

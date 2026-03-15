@@ -1,5 +1,7 @@
 # /
-/build*
+/build-hw-*/
+/build-hw/
+/build-sim/
 /sim*
 /output
 *.elf

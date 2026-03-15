@@ -750,8 +750,9 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
     }
 
     bool fading = dynamic_colors_fading();
+    bool pending = dynamic_colors_pending();
 
-    if (pm || fading) {
+    if (pm || fading || pending) {
         long next_pm_refresh = current_tick;
         long next_fade_refresh = current_tick;
         long next_big_refresh = current_tick + timeout;
@@ -773,11 +774,13 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
                 }
                 next_pm_refresh += HZ / PEAK_METER_FPS;
             }
-            if (fading && TIME_AFTER(current_tick, next_fade_refresh)) {
+            if ((fading || pending) && TIME_AFTER(current_tick, next_fade_refresh)) {
+                unsigned int refresh = SKIN_REFRESH_ALL;
                 FOR_NB_SCREENS(i)
-                    skin_update(skin, i, SKIN_REFRESH_NON_STATIC);
+                    skin_update(skin, i, refresh);
                 next_fade_refresh += HZ / 20;
                 fading = dynamic_colors_fading();
+                pending = dynamic_colors_pending();
             }
         }
 
