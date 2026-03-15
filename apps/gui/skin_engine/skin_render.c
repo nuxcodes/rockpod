@@ -150,9 +150,9 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
             struct gradient_config *cfg = SKINOFFSETTOPTR(skin_buffer, token->value.data);
             struct line_desc *linedes = &info->line_desc;
             if (!cfg || !linedes) return false;
-            linedes->text_color     = cfg->text;
-            linedes->line_color     = cfg->start;
-            linedes->line_end_color = cfg->end;
+            linedes->text_color     = dynamic_colors_resolve(cfg->text);
+            linedes->line_color     = dynamic_colors_resolve(cfg->start);
+            linedes->line_end_color = dynamic_colors_resolve(cfg->end);
         }
         break;
 #endif
@@ -202,18 +202,24 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
                         SKINOFFSETTOPTR(skin_buffer, token->value.data);
                 if (!rect) break;
 #ifdef HAVE_LCD_COLOR
-                if (rect->start_colour != rect->end_colour &&
+                unsigned dr_start = dynamic_colors_resolve(rect->start_colour);
+                unsigned dr_end = dynamic_colors_resolve(rect->end_colour);
+                if (dr_start != dr_end &&
                     gwps->display->screen_type == SCREEN_MAIN)
                 {
                     gwps->display->gradient_fillrect(rect->x, rect->y, rect->width,
-                        rect->height, rect->start_colour, rect->end_colour);
+                        rect->height, dr_start, dr_end);
                 }
                 else
 #endif
                 {
 #if LCD_DEPTH > 1
                     unsigned backup = skin_vp->vp.fg_pattern;
+#ifdef HAVE_LCD_COLOR
+                    skin_vp->vp.fg_pattern = dr_start;
+#else
                     skin_vp->vp.fg_pattern = rect->start_colour;
+#endif
 #endif
                     gwps->display->fillrect(rect->x, rect->y, rect->width,
                         rect->height);
@@ -951,17 +957,15 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         display->set_viewport_ex(&skin_viewport->vp, VP_FLAG_VP_SET_CLEAN);
 
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-        /* Dynamic colors: override default-colored viewports */
-        unsigned int dc_saved_fg = skin_viewport->vp.fg_pattern;
-        unsigned int dc_saved_bg = skin_viewport->vp.bg_pattern;
-        skin_viewport->vp.fg_pattern = dynamic_colors_resolve(dc_saved_fg);
-        skin_viewport->vp.bg_pattern = dynamic_colors_resolve(dc_saved_bg);
-        if (skin_viewport->vp.fg_pattern != dc_saved_fg ||
-            skin_viewport->vp.bg_pattern != dc_saved_bg)
-        {
-            display->set_foreground(skin_viewport->vp.fg_pattern);
-            display->set_background(skin_viewport->vp.bg_pattern);
-        }
+        /* Dynamic colors: resolve from stored originals (not current vp values).
+         * Colors stay in the viewport permanently so the scroll engine
+         * reads the correct resolved colors (no save/restore). */
+        skin_viewport->vp.fg_pattern =
+            dynamic_colors_resolve(skin_viewport->dc_orig_fg);
+        skin_viewport->vp.bg_pattern =
+            dynamic_colors_resolve(skin_viewport->dc_orig_bg);
+        display->set_foreground(skin_viewport->vp.fg_pattern);
+        display->set_background(skin_viewport->vp.bg_pattern);
 #endif
 
         if ((vp_refresh_mode&SKIN_REFRESH_ALL) == SKIN_REFRESH_ALL)
@@ -972,12 +976,6 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         if (viewport->children_count)
             skin_render_viewport(get_child(viewport->children, 0), gwps,
                                  skin_viewport, vp_refresh_mode);
-
-#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-        /* Restore original parsed colors */
-        skin_viewport->vp.fg_pattern = dc_saved_fg;
-        skin_viewport->vp.bg_pattern = dc_saved_bg;
-#endif
 
         refresh_mode = old_refresh_mode;
     }

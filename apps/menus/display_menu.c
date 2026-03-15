@@ -191,10 +191,6 @@ MENUITEM_SETTING(invert, &global_settings.invert, NULL);
 #ifdef HAVE_LCD_FLIP
 MENUITEM_SETTING(flip_display, &global_settings.flip_display, flipdisplay_callback);
 #endif
-#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
-MENUITEM_SETTING(dynamic_colors, &global_settings.dynamic_colors, NULL);
-#endif
-
 /* now the actual menu */
 MAKE_MENU(lcd_settings,ID2P(LANG_LCD_MENU),
             NULL, Icon_Display_menu
@@ -227,9 +223,6 @@ MAKE_MENU(lcd_settings,ID2P(LANG_LCD_MENU),
 # ifdef HAVE_LCD_FLIP
             ,&flip_display
 # endif
-#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
-            ,&dynamic_colors
-#endif
          );
 /*    LCD MENU                    */
 /***********************************/

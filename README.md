@@ -197,9 +197,12 @@ All standard Rockbox menu items are available.
 
 ---
 
-### Bundled Theme
+### Bundled Themes
 
-The repo includes a modified version of **adwaitapod_dark_simplified** with swapped play/pause button icons to reduce confusion. The theme zip is available in the [v2.0 release](https://github.com/nuxcodes/rockpod/releases/tag/v2.0). Original theme by [D00k](https://github.com/D0-0K/adwaitapod) (CC-BY-SA).
+The repo includes third-party themes under `themes/`:
+
+- **adwaitapod_dark_simplified** — modified with swapped play/pause button icons. Original by [Dook](https://github.com/D0-0K/adwaitapod) (CC-BY-SA). Theme zip available in the [v2.0 release](https://github.com/nuxcodes/rockpod/releases/tag/v2.0).
+- **Themify 2** — modified with corrected menu text centering. Original by [Dook](https://github.com/D0-0K/themify).
 
 ---
 
@@ -269,7 +272,7 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 
 Built on the work of the [Rockbox](https://www.rockbox.org/) project and its contributors.
 
-- **Theme:** adwaitapod_dark_simplified by [Dook](https://github.com/D0-0K/adwaitapod) (CC-BY-SA)
+- **Themes:** adwaitapod_dark_simplified and Themify 2 by [Dook](https://github.com/D0-0K) (CC-BY-SA)
 - **MFi reference:** [ipod-gadget](https://github.com/oandrew/ipod-gadget) descriptor layout, Apple MFi Accessory Firmware Specification
 
 ## License

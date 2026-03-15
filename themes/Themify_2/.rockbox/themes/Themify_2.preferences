@@ -1,0 +1,40 @@
+# ===== =    = ===== ==   == ===== ===== =   =
+#   =   ====== ===   = === =   =   ===   =====
+#   =   =    = ===== =  =  = ===== =       =
+# 
+#	     Themify 2 - aquamarine
+#		   Dook  2025
+#
+#-----------------------------------------------#
+#
+#-- Animations --#
+# Toggle all animations.
+# Possible Values: on, off
+animations: on
+#
+#-- Sub Line Customisation --#
+# Switch up the sub line in the music player.
+#
+# ! volume_meter disables the second subline
+# Possible Values: artist, album, genre, playlist_name, song_playtime, bitrate,  volume_meter, off
+sub-line mode: artist
+#
+# ! Rating requires "Gather Runtime Data" to be enabled in Database Settings.
+# Possible Values: artist, album, genre, playlist_name, song_playtime, bitrate,  file_format, rating, year, off
+extra sub-line mode: off
+#
+#-- Minimal Mode --#
+# Just the bare minimum. This turns off the playlist position counter as well as the shuffle, repeat and HQ audio icons.
+# Possible Values: on, off
+minimal player mode: off
+#
+#
+#
+#
+#
+#
+#
+# !!! DO NOT TOUCH !!! Automatic song title splitting cannot work without this !!! #
+space: 
+#
+version: aquamarine

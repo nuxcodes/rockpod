@@ -32,6 +32,9 @@
 #include "settings.h"
 #include "debug.h"
 #include "viewport.h"
+#ifdef HAVE_LCD_COLOR
+#include "skin_engine/skin_albumart_color.h"
+#endif
 #include "debug.h"
 
 #ifdef HAVE_REMOTE_LCD
@@ -313,12 +316,14 @@ static void style_line(struct screen *display,
         int sep_height = MIN(line->separator_height, height);
         display->set_drawmode(DRMODE_FG);
 #ifdef HAVE_LCD_COLOR
-        display->set_foreground(global_settings.list_separator_color);
+        unsigned saved_sep_fg = display->get_foreground();
+        display->set_foreground(dynamic_colors_resolve(
+            global_settings.list_separator_color));
 #endif
         display->fillrect(x, y + height - sep_height, width, sep_height);
         bar_height -= sep_height;
 #ifdef HAVE_LCD_COLOR
-        display->set_foreground(global_settings.fg_color);
+        display->set_foreground(saved_sep_fg);
 #endif
     }
 

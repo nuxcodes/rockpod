@@ -385,6 +385,9 @@ MENUITEM_SETTING(cursor_style, &global_settings.cursor_style, NULL);
 #if LCD_DEPTH > 1
 MENUITEM_SETTING(sep_menu, &global_settings.list_separator_height, NULL);
 #endif
+#if defined(HAVE_LCD_COLOR) && defined(HAVE_ALBUMART)
+MENUITEM_SETTING(dynamic_colors, &global_settings.dynamic_colors, NULL);
+#endif
 
 MAKE_MENU(theme_menu, ID2P(LANG_THEME_MENU),
             NULL, Icon_Wps,
@@ -415,5 +418,8 @@ MAKE_MENU(theme_menu, ID2P(LANG_THEME_MENU),
 #endif
 #ifdef HAVE_LCD_COLOR
             &colors_settings,
+#ifdef HAVE_ALBUMART
+            &dynamic_colors,
+#endif
 #endif
 );

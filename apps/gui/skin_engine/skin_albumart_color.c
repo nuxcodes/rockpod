@@ -35,8 +35,15 @@
 #define AA_FADE_DURATION  (HZ / 2)   /* 500ms */
 #define HISTOGRAM_BUCKETS 4096
 #define SAMPLE_STRIDE     4          /* sample every 4th pixel */
-#define MIN_CONTRAST      64         /* minimum luminance contrast 0-255 */
+#define MIN_CONTRAST      100        /* minimum luminance contrast 0-255 */
 #define NO_ART_TIMEOUT    HZ         /* 1s timeout before concluding no art */
+
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
 
 struct dynamic_colors_cache {
     unsigned int dominant;       /* target bg color */
@@ -45,12 +52,17 @@ struct dynamic_colors_cache {
     unsigned int prev_accent;    /* fade-start fg */
     unsigned int theme_fg;       /* saved original theme fg */
     unsigned int theme_bg;       /* saved original theme bg */
+    unsigned int theme_lss;      /* saved selector start color */
+    unsigned int theme_lse;      /* saved selector end color */
+    unsigned int theme_lst;      /* saved selector text color */
+    unsigned int theme_sep;      /* saved list separator color */
     long fade_start_tick;
     long track_change_tick;      /* when TRACK_CHANGE fired */
     bool valid;                  /* have valid AA colors */
     bool fading;                 /* fade in progress */
     bool fading_out;             /* fading to defaults after disable/stop */
     bool was_enabled;            /* track setting state for toggle detection */
+    bool needs_full_update;      /* set when fade completes for full redraw */
 };
 
 static struct dynamic_colors_cache cache;
@@ -249,6 +261,7 @@ static void extract_colors(const struct bitmap *bmp)
         }
     }
 
+    int acc_r, acc_g, acc_b;
     unsigned int accent;
     if (accent_bucket >= 0)
     {
@@ -271,15 +284,55 @@ static void extract_colors(const struct bitmap *bmp)
                 count++;
             }
         }
-        int acc_r = count ? (int)(sum_r / count) : 0;
-        int acc_g = count ? (int)(sum_g / count) : 0;
-        int acc_b = count ? (int)(sum_b / count) : 0;
+        acc_r = count ? (int)(sum_r / count) : 0;
+        acc_g = count ? (int)(sum_g / count) : 0;
+        acc_b = count ? (int)(sum_b / count) : 0;
         accent = LCD_RGBPACK(acc_r, acc_g, acc_b);
     }
     else
     {
         /* Hard fallback: dark dominant -> white text, light -> black */
-        accent = (dom_lum < 128) ? LCD_WHITE : LCD_BLACK;
+        if (dom_lum < 128)
+        {
+            acc_r = 255; acc_g = 255; acc_b = 255;
+        }
+        else
+        {
+            acc_r = 0; acc_g = 0; acc_b = 0;
+        }
+        accent = LCD_RGBPACK(acc_r, acc_g, acc_b);
+    }
+
+    /* Readability enforcement: push accent toward white/black if needed */
+    int acc_lum = compute_luminance(acc_r, acc_g, acc_b);
+    int contrast = dom_lum > acc_lum ? dom_lum - acc_lum : acc_lum - dom_lum;
+    if (contrast < MIN_CONTRAST)
+    {
+        if (dom_lum < 128)
+        {
+            /* Dark bg: push accent brighter */
+            while (contrast < MIN_CONTRAST && acc_lum < 255)
+            {
+                acc_r = MIN(acc_r + 8, 255);
+                acc_g = MIN(acc_g + 8, 255);
+                acc_b = MIN(acc_b + 8, 255);
+                acc_lum = compute_luminance(acc_r, acc_g, acc_b);
+                contrast = acc_lum - dom_lum;
+            }
+        }
+        else
+        {
+            /* Light bg: push accent darker */
+            while (contrast < MIN_CONTRAST && acc_lum > 0)
+            {
+                acc_r = MAX(acc_r - 8, 0);
+                acc_g = MAX(acc_g - 8, 0);
+                acc_b = MAX(acc_b - 8, 0);
+                acc_lum = compute_luminance(acc_r, acc_g, acc_b);
+                contrast = dom_lum - acc_lum;
+            }
+        }
+        accent = LCD_RGBPACK(acc_r, acc_g, acc_b);
     }
 
     start_fade(accent, dominant, false);
@@ -293,13 +346,22 @@ static void track_change_cb(unsigned short id, void *param)
         cache.track_change_tick = current_tick;
 }
 
+static void save_all_theme_colors(void)
+{
+    cache.theme_fg  = global_settings.fg_color;
+    cache.theme_bg  = global_settings.bg_color;
+    cache.theme_lss = global_settings.lss_color;
+    cache.theme_lse = global_settings.lse_color;
+    cache.theme_lst = global_settings.lst_color;
+    cache.theme_sep = global_settings.list_separator_color;
+}
+
 void dynamic_colors_init(void)
 {
     static bool events_registered = false;
 
     memset(&cache, 0, sizeof(cache));
-    cache.theme_fg = global_settings.fg_color;
-    cache.theme_bg = global_settings.bg_color;
+    save_all_theme_colors();
     cache.was_enabled = global_settings.dynamic_colors;
     needs_extraction = false;
 
@@ -313,8 +375,7 @@ void dynamic_colors_init(void)
 
 void dynamic_colors_save_theme(void)
 {
-    cache.theme_fg = global_settings.fg_color;
-    cache.theme_bg = global_settings.bg_color;
+    save_all_theme_colors();
     /* Invalidate cached colors — they were for the old theme */
     cache.valid = false;
     cache.fading = false;
@@ -324,6 +385,14 @@ void dynamic_colors_save_theme(void)
 
 void dynamic_colors_check_extraction(int aa_slot)
 {
+    /* Remember valid AA slots from skin_render calls so list_draw
+     * can trigger extraction with aa_slot = -1 (use last known) */
+    static int last_aa_slot = -1;
+    if (aa_slot >= 0)
+        last_aa_slot = aa_slot;
+    else
+        aa_slot = last_aa_slot;
+
     /* Detect setting toggle */
     bool enabled = global_settings.dynamic_colors;
     if (!enabled && cache.was_enabled && cache.valid && !cache.fading_out)
@@ -347,7 +416,7 @@ void dynamic_colors_check_extraction(int aa_slot)
     }
     if (aa_slot < 0)
     {
-        needs_extraction = false;
+        /* No known AA slot yet — can't extract */
         return;
     }
 
@@ -374,6 +443,41 @@ void dynamic_colors_check_extraction(int aa_slot)
     }
 }
 
+/* Map a color to its dynamic equivalent using pre-computed effective colors.
+ * Matches against all 6 saved theme colors with role-based fallbacks. */
+static unsigned int resolve_mapped(unsigned int original,
+                                   unsigned int eff_accent,
+                                   unsigned int eff_dominant)
+{
+    /* Primary colors: always mapped */
+    if (original == cache.theme_fg)
+        return eff_accent;
+    if (original == cache.theme_bg)
+        return eff_dominant;
+
+    /* Selector bar: default to accent (eye-catching highlight) */
+    if (original == cache.theme_lss)
+        return (cache.theme_lss == cache.theme_fg) ? eff_accent :
+               (cache.theme_lss == cache.theme_bg) ? eff_dominant : eff_accent;
+
+    /* Selector text: should contrast with bar, default to dominant */
+    if (original == cache.theme_lst)
+        return (cache.theme_lst == cache.theme_bg) ? eff_dominant :
+               (cache.theme_lst == cache.theme_fg) ? eff_accent : eff_dominant;
+
+    /* Selector gradient end: blend accent toward dominant */
+    if (original == cache.theme_lse)
+        return (cache.theme_lse == cache.theme_fg) ? eff_accent :
+               (cache.theme_lse == cache.theme_bg) ? eff_dominant :
+               lerp_color(eff_accent, eff_dominant, 64);
+
+    /* List separator: subtle line, blend dominant toward accent */
+    if (original == cache.theme_sep)
+        return lerp_color(eff_dominant, eff_accent, 64);
+
+    return original;
+}
+
 unsigned int dynamic_colors_resolve(unsigned int original)
 {
     /* Check for playback stop — initiate fade to defaults */
@@ -392,13 +496,12 @@ unsigned int dynamic_colors_resolve(unsigned int original)
         {
             cache.fading_out = false;
             cache.valid = false;
+            cache.needs_full_update = true;
             return original;
         }
-        if (original == cache.theme_fg)
-            return lerp_color(cache.prev_accent, cache.theme_fg, p);
-        if (original == cache.theme_bg)
-            return lerp_color(cache.prev_dominant, cache.theme_bg, p);
-        return original;
+        return resolve_mapped(original,
+            lerp_color(cache.prev_accent, cache.theme_fg, p),
+            lerp_color(cache.prev_dominant, cache.theme_bg, p));
     }
 
     if (!global_settings.dynamic_colors || !cache.valid)
@@ -410,25 +513,27 @@ unsigned int dynamic_colors_resolve(unsigned int original)
         if (p >= 256)
             cache.fading = false;
         else
-        {
-            if (original == cache.theme_fg)
-                return lerp_color(cache.prev_accent, cache.accent, p);
-            if (original == cache.theme_bg)
-                return lerp_color(cache.prev_dominant, cache.dominant, p);
-            return original;
-        }
+            return resolve_mapped(original,
+                lerp_color(cache.prev_accent, cache.accent, p),
+                lerp_color(cache.prev_dominant, cache.dominant, p));
     }
 
-    if (original == cache.theme_fg)
-        return cache.accent;
-    if (original == cache.theme_bg)
-        return cache.dominant;
-    return original;
+    return resolve_mapped(original, cache.accent, cache.dominant);
 }
 
 bool dynamic_colors_fading(void)
 {
     return cache.fading || cache.fading_out;
+}
+
+bool dynamic_colors_needs_full_update(void)
+{
+    if (cache.needs_full_update)
+    {
+        cache.needs_full_update = false;
+        return true;
+    }
+    return false;
 }
 
 #endif /* HAVE_ALBUMART && HAVE_LCD_COLOR */

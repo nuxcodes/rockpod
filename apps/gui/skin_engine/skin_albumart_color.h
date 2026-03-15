@@ -40,6 +40,9 @@ void dynamic_colors_check_extraction(int aa_slot);
 /* Re-save theme default colors (call after theme .cfg is applied) */
 void dynamic_colors_save_theme(void);
 
+/* Returns true once after a fade completes, to request a full screen redraw */
+bool dynamic_colors_needs_full_update(void);
+
 #else /* !HAVE_ALBUMART || !HAVE_LCD_COLOR */
 
 #define dynamic_colors_init()                do {} while(0)
@@ -47,6 +50,7 @@ void dynamic_colors_save_theme(void);
 #define dynamic_colors_fading()              false
 #define dynamic_colors_check_extraction(s)   do {} while(0)
 #define dynamic_colors_save_theme()          do {} while(0)
+#define dynamic_colors_needs_full_update()   false
 
 #endif /* HAVE_ALBUMART && HAVE_LCD_COLOR */
 

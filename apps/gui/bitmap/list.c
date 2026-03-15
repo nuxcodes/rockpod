@@ -218,6 +218,22 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         callback_draw_item = _default_listdraw_fn;
 
     struct viewport * last_vp = display->set_viewport(parent);
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+    /* Trigger extraction if pending — uses last known AA slot from SBS.
+     * This ensures colors are ready before list draws, even on first frame
+     * (list_draw runs before SBS skin_render in the rendering order). */
+    dynamic_colors_check_extraction(-1);
+    unsigned int dc_saved_list_fg = parent->fg_pattern;
+    unsigned int dc_saved_list_bg = parent->bg_pattern;
+    parent->fg_pattern = dynamic_colors_resolve(dc_saved_list_fg);
+    parent->bg_pattern = dynamic_colors_resolve(dc_saved_list_bg);
+    if (parent->fg_pattern != dc_saved_list_fg ||
+        parent->bg_pattern != dc_saved_list_bg)
+    {
+        display->set_foreground(parent->fg_pattern);
+        display->set_background(parent->bg_pattern);
+    }
+#endif
     display->clear_viewport();
     if (!list->scroll_all)
         display->scroll_stop_viewport(list_text_vp);
@@ -380,9 +396,12 @@ void list_draw(struct screen *display, struct gui_synclist *list)
             {
                 /* Display gradient line selector */
                 style = STYLE_GRADIENT;
-                linedes.text_color = list->selection_color->text_color;
-                linedes.line_color = list->selection_color->line_color;
-                linedes.line_end_color = list->selection_color->line_end_color;
+                linedes.text_color = dynamic_colors_resolve(
+                    list->selection_color->text_color);
+                linedes.line_color = dynamic_colors_resolve(
+                    list->selection_color->line_color);
+                linedes.line_end_color = dynamic_colors_resolve(
+                    list->selection_color->line_end_color);
             }
             else
 #endif
@@ -447,6 +466,10 @@ void list_draw(struct screen *display, struct gui_synclist *list)
 
         callback_draw_item(&list_info);
     }
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+    parent->fg_pattern = dc_saved_list_fg;
+    parent->bg_pattern = dc_saved_list_bg;
+#endif
     display->set_viewport(parent);
     if (list_need_full_update() | skin_render_pending_update())
     {

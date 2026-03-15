@@ -781,6 +781,10 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
             }
         }
 
+        if (dynamic_colors_needs_full_update()) {
+            FOR_NB_SCREENS(i)
+                skin_update(skin, i, SKIN_REFRESH_ALL);
+        }
     }
 
     /* No peak meter or fading

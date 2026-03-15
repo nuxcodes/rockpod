@@ -200,6 +200,10 @@ struct skin_viewport {
     bool fgbg_changed;
 #ifdef HAVE_LCD_COLOR
     struct gradient_config start_gradient;
+#ifdef HAVE_ALBUMART
+    unsigned int dc_orig_fg; /* original parsed fg for dynamic colors */
+    unsigned int dc_orig_bg; /* original parsed bg for dynamic colors */
+#endif
 #endif
 #endif
 };

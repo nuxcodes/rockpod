@@ -1,0 +1,522 @@
+# ===== =    = ===== ==   == ===== ===== =   =
+#   =   ====== ===   = === =   =   ===   =====
+#   =   =    = ===== =  =  = ===== =       =
+# 
+#	     Themify 2 - aquamarine
+#		   Dook  2025
+#
+#-----------------------------------------------#
+#	Search Index
+#	----------------------
+#	$FL - Font-loading
+#	$VD - Viewport Declarations
+#	$SB - Status Bar Logic
+#	$ME - Menu Engine
+#	$SE - Scroll Engine
+#	$WE - Widget Engine
+#	$US - USB Screen Logic
+#	$SD - System Dialog Box
+#	$QS - Quickscreen Engine
+#	----------------------
+#
+# need to flush the background and foreground, or the previous screen's background remains.
+%V(0,0,-,-,-)%VB
+%V(0,0,-,-,-)
+#
+#--- Font Pre-loading ---# $FL
+#
+%Fl(3,22-LeagueSpartan-Bold.fnt) # used for time and large Text
+%Fl(4,18-LeagueSpartan-Medium.fnt) # subtext font
+%Fl(5,../wps/Themify_2/16-LeagueSpartan-SemiBold.fnt)# battery icon font
+%Fl(6,../wps/Themify_2/UI_Vectors.fnt) # ui drawing cectors
+%Fl(7,../wps/Themify_2/Blank_Font.fnt,5) # blank font for default quickscreen supression
+%Fl(8,../wps/Themify_2/14x13_Compacticons.fnt,120) # vector icons for menus, status bar etc.
+%Fl(9,../wps/Themify_2/Graphics_Font.fnt) # vector icons 
+#
+#--- END ---#
+#
+#
+#--- Viewport Declarations ---# $VD
+# these need to be here to prevent rendering issues.
+#
+%?mh<%Vd(Hold_Icon_On)|%Vd(Hold_Icon_Off)>%?if(%cs, =, 10)<%Vd(Quickscreen)%VI(Default_Menu_Supression)%?or(%if(%Ql,=,0),%if(%Ql,=,%Sx(No)),%if(%Ql,=,%Sx(Off)),%if(%Ql,=,ERR))<%Vd(Quickitem_Left_Flush)|%Vd(Quickitem_Left)>%?or(%if(%Qt,=,0),%if(%Qt,=,%Sx(No)),%if(%Qt,=,%Sx(Off)),%if(%Qt,=,ERR))<%Vd(Quickitem_Top_Flush)|%Vd(Quickitem_Top)>%?or(%if(%Qb,=,0),%if(%Qb,=,%Sx(No)),%if(%Qb,=,%Sx(Off)),%if(%Qb,=,ERR))<%Vd(Quickitem_Bottom_Flush)|%Vd(Quickitem_Bottom)>%?or(%if(%Qr,=,0),%if(%Qr,=,%Sx(No)),%if(%Qr,=,%Sx(Off)),%if(%Qr,=,ERR))<%Vd(Quickitem_Right_Flush)|%Vd(Quickitem_Right)>>%?St(battery display)<%Vd(Battery_Graphical)|%Vd(Battery_Numeric)>%?lh<%Vd(Loading_Notification)|%?bs<%Vd(Sleep)|%Vd(Loading_Notification_Flush)>>
+#
+%?if(%cs, =, 1)<%Vd(Widgets_Backdrop)%?mp<%Vd(Widgets)|%Vd(Miniplayer_Widget)%?C<%Vd(Miniplayer_Album_Art)|%Vd(Miniplayer_Album_Fallback_Art)>>>
+#
+#- Home Menu Initialisation -#
+%?if(%cs, =, 1)<%?and(%if(%ss(0,2,%St(font)),!=,22),%if(%ss(0,2,%St(font)),!=,24))<%VI(Home_Menu_Viewport_Full)|%Vd(Home_Corners)%?St(scrollbar)<%VI(Home_Menu_Viewport_Full)|%VI(Home_Menu_Viewport_Right)%Vd(Scrollbar_Tall_Left)|%VI(Home_Menu_Viewport_Left)%Vd(Scrollbar_Tall_Right)>%?St(scrollbar)<%?St(show icons)<%Lb(No_Scroll_Home_Menu_With_Icons,182,30)|%Lb(No_Scroll_Home_Menu_No_Icons,182,30)>|%?St(show icons)<%Lb(Home_Menu_With_Icons,182,30)|%Lb(Home_Menu_No_Icons,182,30)>>>>
+#
+#- Sub Menu Initialisation -#
+%?and(%if(%cs,!=,1),%if(%cs,!=,10),%if(%cs,!=,16),%if(%cs,!=,21))<%Vd(Sub_Menu_Header)%?or(%if(%cs,=,7),%if(%Li, =, 4),%if(%Li, =, 11),%if(%Li, =, 26),%if(%Li, =, 27),%if(%Li, =, 32),%and(%if(%cs, =, 15),%if(%Lt, !=, %Sx(Context Menu))),%if(%cs, =, 17),%if(%cs, =, 19),%if(%cs, =, 20),%if(%Lt,=,%Sx(Album Artist)),%if(%Lt,=,%Sx([All tracks])),%if(%Lt,=,%Sx([Untagged])),%if(%Lt,=,%Sx([By album])),%if(%Lt,=,%Sx(Artist)),%if(%Lt,=,%Sx(Album)),%if(%Lt,=,%Sx(Genre)),%if(%Lt,=,%Sx(Year)),%if(%Lt,=,%Sx(Composer)),%if(%Lt,=,%Sx(Tracks by)),%if(%Lt,=,%Sx(Search by...)),%if(%Lt,=,%Sx(User Rating)),%if(%Lt,=,%Sx(Recently Added)),%if(%Lt,=,%Sx(User Rating)),%if(%Lt,=,%Sx(Settings)),%if(%Lt,=,%Sx(Sound Settings)),%if(%Lt,=,%Sx(Playback Settings)),%if(%Lt,=,%Sx(General Settings)),%if(%Lt,=,%Sx(Database)),%if(%Lt,=,%Sx(Theme Settings)),%if(%Lt,=,%Sx(Recording Settings)),%if(%Lt,=,%Sx(Manage Settings)),%if(%Lt,=,%Sx(Display)),%if(%Lt,=,%Sx(Language)),%if(%Lt,=,%Sx(Voice)),%if(%Lt,=,%Sx(Main Menu)),%if(%Lt,=,%Sx(Brightness)))<%?St(show icons)<%Vd(Header_with_Icon)|%Vd(Header_without_Icon)>|%Vd(Header_without_Icon)>%?and(%if(%ss(0,2,%St(font)),!=,22),%if(%ss(0,2,%St(font)),!=,24))<%VI(Sub_Menu_Viewport_Full)|%Vd(Sub_Menu_Corners)%?St(scrollbar)<%VI(Sub_Menu_Viewport_Full)|%VI(Sub_Menu_Viewport_Right)%Vd(Scrollbar_Short_Left)|%VI(Sub_Menu_Viewport_Left)%Vd(Scrollbar_Short_Right)>%?St(scrollbar)<%?or(%and(%if(%Lt,=,%Sx(Database)),%if(%Li,=,3)),%if(%Lt,=,%Sx(Settings)))<%?St(show icons)<%Lb(No_Scroll_Menu_With_Icons,182,30)|%Lb(No_Scroll_Menu_No_Icons,182,30)>|%Lb(No_Scroll_Menu_No_Icons,182,30)>|%?or(%and(%if(%Lt,=,%Sx(Database)),%if(%Li,=,3)),%if(%Lt,=,%Sx(Settings)))<%?St(show icons)<%Lb(Menu_With_Icons,182,30)|%Lb(Menu_No_Icons,182,30)>|%Lb(Menu_No_Icons,182,30)>>>>
+#
+#- USB Screen Logic -#
+%?if(%cs, =, 21)<%VI(USB_Screen_Supression)%Vd(USB_Screen)>
+#
+#- System Menu -#
+%?if(%cs, =, 16)<%Vd(Sub_Menu_Header)%?St(show icons)<%Vd(Header_with_Icon)|%Vd(Header_without_Icon)>%?and(%if(%ss(0,2,%St(font)),!=,22),%if(%ss(0,2,%St(font)),!=,24))<%VI(Sub_Menu_Viewport_Full)|%Vd(Sub_Menu_Corners)%?St(scrollbar)<%VI(System_Menu_Viewport_Full)%Vd(System_Dialog_Box)|%VI(System_Menu_Viewport_Right)%Vd(Scrollbar_Short_Left)%Vd(System_Dialog_Box_Right)|%VI(System_Menu_Viewport_Left)%Vd(Scrollbar_Short_Right)%Vd(System_Dialog_Box)>%?St(scrollbar)<%Lb(No_Scroll_Menu_No_Icons,182,30)|%Lb(Menu_No_Icons,182,30)>>>
+#
+#--- END ---#
+#
+#
+#--- Status Bar Logic ---# $SB
+#
+#-- Status Bar Background Drawing --#
+# Drawn on background and foreground as there is a delay drawing the foreground layer, causing visual flashing of the UI.
+#
+%V(0,0,-,25,-)%VB%dr(0,0,-,-)
+%V(0,0,-,25,-)%dr(0,0,-,-)
+#
+#Manually sets the number for %cl hour on 12-hour time. The %cl tag puts a space at the start and throws off the positioning of the time.
+%V(13,5,75,17,3)%VB%t(0.1)%Vs(invert)%?cf<%cH:%cM|%?cl<1|2|3|4|5|6|7|8|9|10|11|12>:%cM%cp>;%t(3600)
+%V(13,5,75,17,3)%Vs(invert)%?cf<%cH:%cM|%?cl<1|2|3|4|5|6|7|8|9|10|11|12>:%cM%cp>
+#
+#-- Battery Indicators --#
+# Draw on the backdrop so it loads instantly prevently visual lag, but dont draw a copy on the foreground as this will make deeper aliasing and mess with the rounded corners
+#
+#- Numeric Battery -#
+%Vl(Battery_Numeric,282,6,30,14,8)%VB%Vs(invert)EFG
+%Vl(Battery_Numeric,282,6,30,14,7)
+#
+# battery level numbers
+%Vl(Battery_Numeric,284,8,24,9,5)%VB%?bc<%t(3)%ac%bl;%t(2)|%?if(%bl,<=,15)<%t(2)%ac%bl;%t(.5)|%ac%bl>>
+%Vl(Battery_Numeric,284,8,24,9,5)%?bc<%t(3)%ac%bl;%t(2)|%?if(%bl,<=,15)<%t(2)%ac%bl;%t(.5)|%ac%bl>>
+#
+# charging icon
+%Vl(Battery_Numeric,290,6,12,13,8)%?bc<%t(3);%t(2)%Vs(invert)K|>
+#
+#- Graphical Battery -#
+#%?bl<unknown|...|100%>
+%Vl(Battery_Graphical,282,6,30,14,8)%VB%Vs(invert)%?bc<%?bl<|îö|ïö|ðö|ñö|òö|óö|ôö|õö|õö|õö|õö|õö|õö|õö|õö|õö|õø|õù|õú|õû|õü|õý>G|%?bl<|Öâ|×â|Øâ|Ùâ|Úâ|Ûâ|Üâ|Ýâ|Þâ|ßâ|àâ|áã|áä|áå|áæ|áç|áè|áé|áê|áë|áì|áí>>G
+%Vl(Battery_Graphical,282,6,30,14,8)%Vs(invert)%?bc<%?bl<|îö|ïö|ðö|ñö|òö|óö|ôö|õö|õö|õö|õö|õö|õö|õö|õö|õö|õø|õù|õú|õû|õü|õý>G|%?bl<|Öâ|×â|Øâ|Ùâ|Úâ|Ûâ|Üâ|Ýâ|Þâ|ßâ|àâ|áã|áä|áå|áæ|áç|áè|áé|áê|áë|áì|áí>>G
+#
+#-- Hold Icon and backup Sleep Icon --#
+%V(262,6,14,14,8)%VB%Vs(invert)%ac%?lh<%?bs<q|%?mh<o|%dr(0,0,-,-)>>|%?mh<o|%dr(0,0,-,-)>>
+%V(262,6,14,14,8)%Vs(invert)%ac%?lh<%?bs<q|%?mh<o|%dr(0,0,-,-)>>|%?mh<o|%dr(0,0,-,-)>>
+%V(243,6,14,14,8)%VB%Vs(invert)%ac%?lh<%?bs<%?mh<o|%dr(0,0,-,-)>|%dr(0,0,-,-)>|%dr(0,0,-,-)>
+%V(243,6,14,14,8)%Vs(invert)%ac%?lh<%?bs<%?mh<o|%dr(0,0,-,-)>|%dr(0,0,-,-)>|%dr(0,0,-,-)>
+#
+#-- Loading Notification --#
+#
+%Vl(Loading_Notification_Flush,110,2,94,21,7)%VB%dr(0,0,-,-)
+%Vl(Loading_Notification_Flush,110,2,94,21,7)
+#
+%Vl(Loading_Notification,110,2,94,21,7)%VB%dr(0,0,-,-)
+%Vl(Loading_Notification,110,2,94,21,7)
+%Vl(Loading_Notification,118,5,13,13,8)%VB%?or(%if(%ft(themes/Themify_2.preferences,animations: ),=,off),%if(%ft(themes/Themify_2.preferences,animations:),=,off))<%Vs(invert)t|%t(0.1)Â;%t(0.1)Ã;%t(0.1)Ä;%t(0.1)Å;%t(0.1)Æ;%t(0.1)Ç;%t(0.1)È;%t(0.1)É;%t(0.1)Ê;%t(0.1)Ë;%t(0.1)Ì>
+%Vl(Loading_Notification,118,5,13,13,8)
+%?or(%if(%ft(themes/Themify_2.preferences,animations: ),=,off),%if(%ft(themes/Themify_2.preferences,animations:),=,off))<%Vs(invert)t|%t(0.1)Á;%t(0.1)Á>
+#
+%Vl(Loading_Notification,135,5,69,15,4)%VB%Vs(invert)Loading..
+%Vl(Loading_Notification,135,5,69,15,4)%Vs(invert)Loading..
+#
+#
+#-- Sleep Notification --#
+# Single font, A and B are the ends.
+%Vl(Sleep,110,2,94,21,9)%VB%Vs(invert)%t(0.1)%acA%bsB;%t(655)
+%Vl(Sleep,110,2,94,21,9)%Vs(invert)%acA%bsB
+#
+#
+#-- Sub Menu Header --#
+#
+%Vl(Header_with_Icon,0,25,-,27,-)%VB%dr(0,0,-,-)
+%Vl(Header_with_Icon,0,25,-,27,-)
+#
+%Vl(Header_without_Icon,0,25,-,27,-)%VB%dr(0,0,-,-)
+%Vl(Header_without_Icon,0,25,-,27,-)
+#
+#Background is drawn here for .1 of a second and then immediately removed. This is to prevent UI flashes, but it has to be removed as if it scrolls the device will crash.
+%Vl(Header_with_Icon,29,29,284,18,3)%VB%t(0.1)%Vs(invert)%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%cs,=,3)<%Sx(Recording)|%?if(%Lt,=,%Sx([By album]))<By Album|%Lt>>>>;%t(3600)
+%Vl(Header_with_Icon,29,29,284,18,3)%t(0.1)%Vs(invert)%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%Lt,=,%Sx([By album]))<By Album|%?if(%cs,=,3)<%Sx(Recording)|%Lt>>>>;%t(3600)%Vs(invert)%?if(%St(scroll speed),=,1)<|%s>%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%Lt,=,%Sx([By album]))<By Album|%?if(%cs,=,3)<%Sx(Recording)|%Lt>>>>
+#
+%Vl(Header_without_Icon,13,29,300,18,3)%VB%t(0.1)%Vs(invert)%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%Lt,=,%Sx([By album]))<By Album|%?if(%cs,=,3)<%Sx(Recording)|%Lt>>>>;%t(3600)
+%Vl(Header_without_Icon,13,29,300,18,3)%t(0.1)%Vs(invert)%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%Lt,=,%Sx([By album]))<By Album|%?if(%cs,=,3)<%Sx(Recording)|%Lt>>>>;%t(3600)%Vs(invert)%?if(%St(scroll speed),=,1)<|%s>%?if(%Lt,=,%Sx([All tracks]))<All Tracks|%?if(%Lt,=,%Sx([Untagged]))<Untagged|%?if(%Lt,=,%Sx([By album]))<By Album|%?if(%cs,=,3)<%Sx(Recording)|%Lt>>>>
+#
+#- Icons for Sub menu Header -#
+#!!! Maybe change out to prevent too deep logic
+%Vl(Header_with_Icon,10,30,14,14,8)%VB%Vs(invert)%?if(%Lt,=,%Sx(Same as currently played track))<Ô|%?if(%Lt,=,%Sx(Playback History))<Ó|%?if(%Lt,=,%Sx(Recently Added))<Ò|%?if(%Lt,=,%Sx(User Rating))<Õ|%?if(%Lt,=,%Sx(Tracks by))<b|%?if(%Lt,=,%Sx(By First Letter...))<Ñ|%?if(%Lt,=,%Sx(Year))<Ð|%?if(%Lt,=,%Sx(Genre))<Ï|%?if(%Lt,=,%Sx(Album))<Î|%?if(%Lt,=,%Sx(Album Artist))<Í|%?if(%Lt,=,%Sx(Search by...))<y|%?if(%Lt,=,themes)<i|%?or(%if(%Lt,=,%Sx(Artist)),%if(%Lt,=,%Sx(Composer)))<s|%?if(%Lt,=,%Sx([All tracks]))<b|%?if(%Lt,=,%Sx([Untagged]))<e|%?if(%Lt,=,%Sx([By album]))<Î|%?if(%Lt,=,%Sx(Database))<0|%?if(%cs,=,3)<7|%?if(%Lt,=,%Sx(Playlist Catalogue))<2|%?Li<3|8|1|2|5|i|7|8|5|4|5|%?if(%Lt,=,%Sx(Shortcuts))<z|6>|13|14|15|16|17|%?if(%Lt,=,%Sx(Brightness))<l|f>|19|20|21|%?if(%cs, =, 17)<c|4>|7|f|4|k|3|h|29|9|1|g|x>>>>>>>>>>>>>>>>>>>>
+%Vl(Header_with_Icon,10,30,14,14,8)
+#
+#
+#--- END ---#
+#
+#
+#--- Menu Engine ---# $ME
+#
+%Vi(-,3,28,302,-,-)
+%Vi(Default_Menu_Supression,-100,0,30,30,7)
+%Vi(USB_Screen_Supression,-1,-1,1,1,7)
+# No Scrollbar
+%Vi(Sub_Menu_Viewport_Full,3,55,-3,-,-)
+%Vi(Home_Menu_Viewport_Full,3,28,194,-,-)
+%Vi(System_Menu_Viewport_Full,3,55,-3,137,-)
+# Left Scrollbar
+%Vi(Sub_Menu_Viewport_Left,3,55,302,-,-)
+%Vi(Home_Menu_Viewport_Left,3,28,182,-,-)
+%Vi(System_Menu_Viewport_Left,3,55,302,137,-)
+# Right Scrollbar
+%Vi(Sub_Menu_Viewport_Right,15,55,302,-,-)
+%Vi(Home_Menu_Viewport_Right,15,28,182,-,-)
+%Vi(System_Menu_Viewport_Right,15,55,302,137,-)
+#
+#-- Menu Drawing with Scrollbar --#
+#- Menus with Icons -#
+#always place text last in these as it will not scroll otherwise
+# Menu With Scrollbar
+#
+%Vl(Menu_With_Icons,0,0,302,30,6)%?Lc<%Vs(invert)A%aRB>
+%Vl(Menu_With_Icons,9,9,14,14,8)%?Lc<%Vs(invert)>%?if(%LT,=,%Sx(Sound Settings))<8>%?if(%LT,=,%Sx(Playback Settings))<3>%?if(%LT,=,%Sx(General Settings))<4>%?if(%LT,=,%Sx(Theme Settings))<i>%?if(%LT,=,%Sx(Recording Settings))<7>%?if(%LT,=,%Sx(Time & Date))<c>%?if(%LT,=,%Sx(Manage Settings))<4>%?or(%if(%LT,=,%Sx(Main Menu)),%if(%LT,=,%Sx(Custom menu)))<x>%?if(%LT,=,%Sx(Search))<y>%?if(%LT,=,%Sx(Album Artist))<Í>%?or(%if(%LT,=,%Sx(Artist)),%if(%LT,=,%Sx(Composer)))<s>%?if(%LT,=,%Sx(Album))<Î>%?if(%LT,=,%Sx(Genre))<Ï>%?if(%LT,=,%Sx(Year))<Ð>%?if(%LT,=,%Sx(First Letter))<Ñ>%?if(%LT,=,%Sx(Tracks by))<b>%?if(%LT,=,%Sx(Shuffle Songs))<m>%?if(%LT,=,%Sx(User Rating))<Õ>%?if(%LT,=,%Sx(Recently Added))<Ò>%?if(%LT,=,%Sx(Playback History))<Ó>%?if(%LT,=,%Sx(Same as currently played track))<Ô>
+%Vl(Menu_With_Icons,29,4,265,22,-)%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT
+#
+# Home Menu with Scrollbar
+#
+%Vl(Home_Menu_With_Icons,0,0,182,30,6)%?Lc<%Vs(invert)A%aRB>
+# icon display
+%Vl(Home_Menu_With_Icons,9,9,14,14,8)%?Lc<%Vs(invert)>%?LI<1|2|3|4|5|6|7|8|5_|%?if(%LT,=,%Sx(Shortcuts))<z|6>|11|12|13|14|15|16|16|18|19|4_|7_|22|23|k_|%?if(%LT,=,%Sx(Resume Playback))<r|3>|26|27|9_|1_|30|31|32|0>
+#
+%Vl(Home_Menu_With_Icons,29,4,145,22,-)%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%?if(%LT,=,%Sx(Now Playing))<%Sx(Now Playing): %?it<%it|%fn>|%LT>
+#
+#
+#- Menus with no Icons -#
+#
+# Home Menu with no icons
+%Vl(Home_Menu_No_Icons,0,0,182,30,6)%?Lc<%Vs(invert)A%aRB>
+%Vl(Home_Menu_No_Icons,9,4,163,22,-)%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT
+#
+# Menu with no icons
+#is by album? is all tracks in no.1 slot or no.2? Is random around? Is untagged around? If not any of the above, go to default.
+%Vl(Menu_No_Icons,0,0,302,30,6)
+%?if(%LT,=,%Sx([By album]))<%?Lc<CMMMMMMMMMMD|%Vs(invert)I%aRJ>>%?and(%if(%LT,=,%Sx([All tracks])),%if(%LN,=,1))<%?Lc<CMMMMMMMMMMD|%Vs(invert)I%aRJ>|%?if(%LT,=,%Sx([All tracks]))<%?Lc<EMMMMMMMMMMF|%Vs(invert)>>>%?if(%LT,=,%Sx([Random]))<%?Lc<%?if(%LT(1,nowrap),=,%Sx([Untagged]))<E|G>MMMMMMMMMM%?if(%LT(1,nowrap),!=,%Sx([Untagged]))<H|F>|%?if(%LT(1,nowrap),!=,%Sx([Untagged]))<%Vs(invert)KQQQQQQQQQQL|%Vs(invert)>>>%?if(%LT,=,%Sx([Untagged]))<%?Lc<GMMMMMMMMMMH|%Vs(invert)KQQQQQQQQQQL>>%?if(%LT,!=,%Sx([By album]))<%?if(%LT,!=,%Sx([All tracks]))<%?if(%LT,!=,%Sx([Random]))<%?if(%LT,!=,%Sx([Untagged]))<%?Lc<%Vs(invert)A%aRB>>>>>
+#
+%Vl(Menu_No_Icons,9,8,14,14,8)%?if(%LT,=,%Sx([All tracks]))<%?Lc<|%Vs(invert)>b>%?if(%LT,=,%Sx([Random]))<%?Lc<|%Vs(invert)>a>%?if(%LT,=,%Sx([Untagged]))<%?Lc<|%Vs(invert)>e>%?if(%LT,=,%Sx([By album]))<%?Lc<|%Vs(invert)>Î>
+#
+%Vl(Menu_No_Icons,28,4,264,22,-)%?Lc<|%Vs(invert)>%?if(%Sx([Random]),=,[Random])<%?if(%LT,=,[All tracks])<All Tracks>%?if(%LT,=,[Random])<Random>%?if(%LT,=,[Untagged])<Untagged>%?if(%LT,=,[By album])<By album>|%LT>
+#
+%Vl(Menu_No_Icons,9,4,283,22,-)%?and(%if(%LT,!=,%Sx([All tracks])),%if(%LT,!=,%Sx([Random])),%if(%LT,!=,%Sx([Untagged])),%if(%LT,!=,%Sx([By album])))<%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT>
+#
+#
+#-- Menu Drawing without Scrollbar --#
+#- Menus with Icons -#
+# No Scroll Menu
+#
+%Vl(No_Scroll_Menu_With_Icons,0,0,314,30,6)%?Lc<%Vs(invert)A%aRB>
+%Vl(No_Scroll_Menu_With_Icons,9,9,14,14,8)%?Lc<%Vs(invert)>%?if(%LT,=,%Sx(Sound Settings))<8>%?if(%LT,=,%Sx(Playback Settings))<3>%?if(%LT,=,%Sx(General Settings))<4>%?if(%LT,=,%Sx(Theme Settings))<i>%?if(%LT,=,%Sx(Recording Settings))<7>%?if(%LT,=,%Sx(Time & Date))<c>%?if(%LT,=,%Sx(Manage Settings))<4>%?or(%if(%LT,=,%Sx(Main Menu)),%if(%LT,=,%Sx(Custom menu)))<x>%?if(%LT,=,%Sx(Search))<y>%?if(%LT,=,%Sx(Album Artist))<Í>%?or(%if(%LT,=,%Sx(Artist)),%if(%LT,=,%Sx(Composer)))<s>%?if(%LT,=,%Sx(Album))<Î>%?if(%LT,=,%Sx(Genre))<Ï>%?if(%LT,=,%Sx(Year))<Ð>%?if(%LT,=,%Sx(First Letter))<Ñ>%?if(%LT,=,%Sx(Tracks by))<b>%?if(%LT,=,%Sx(Shuffle Songs))<m>%?if(%LT,=,%Sx(User Rating))<Õ>%?if(%LT,=,%Sx(Recently Added))<Ò>%?if(%LT,=,%Sx(Playback History))<Ó>%?if(%LT,=,%Sx(Same as currently played track))<Ô>
+%Vl(No_Scroll_Menu_With_Icons,27,4,277,22,-)%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT
+#
+#
+# No Scroll Home Menu
+%Vl(No_Scroll_Home_Menu_With_Icons,0,0,194,30,6)%?Lc<%Vs(invert)A%aRB>
+# icon display
+%Vl(No_Scroll_Home_Menu_With_Icons,9,9,14,14,8)%?Lc<%Vs(invert)>%?LI<1|2|3|4|5|6|7|8|5_|%?if(%LT,=,%Sx(Shortcuts))<z|6>|11|12|13|14|15|16|16|18|19|4_|7_|22|23|k_|%?if(%LT,=,%Sx(Resume Playback))<r|3>|26|27|9_|1_|30|31|32|0>
+%Vl(No_Scroll_Home_Menu_With_Icons,30,4,157,22,-)%?Lc<%Vs(invert)%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT
+#
+#
+#- Menus with no Icons -#
+#
+# no scroll home menu
+%Vl(No_Scroll_Home_Menu_No_Icons,0,0,194,30,6)%?Lc<%Vs(invert)A%aRB>
+%Vl(No_Scroll_Home_Menu_No_Icons,9,4,175,22,-)%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT
+#
+#
+# no scroll menu
+#is 'by album'? is 'all tracks' in no.1 slot or no.2? Is 'random' around? Is 'untagged' around? If not any of the above, go to default.
+%Vl(No_Scroll_Menu_No_Icons,0,0,314,30,6)%?if(%LT,=,%Sx([By album]))<%?Lc<CMMMMMMMMMMND|%Vs(invert)I%aRJ>>%?and(%if(%LT,=,%Sx([All tracks])),%if(%LN,=,1))<%?Lc<CMMMMMMMMMMND|%Vs(invert)I%aRJ>|%?if(%LT,=,%Sx([All tracks]))<%?Lc<EMMMMMMMMMMNF|%Vs(invert)>>>%?if(%LT,=,%Sx([Random]))<%?Lc<%?if(%LT(1,nowrap),=,%Sx([Untagged]))<E|G>MMMMMMMMMMN%?if(%LT(1,nowrap),!=,%Sx([Untagged]))<H|F>|%?if(%LT(1,nowrap),!=,%Sx([Untagged]))<%Vs(invert)KQQQQQQQQQQRL|%Vs(invert)>>>%?if(%LT,=,%Sx([Untagged]))<%?Lc<GMMMMMMMMMMNH|%Vs(invert)KQQQQQQQQQQRL>>%?if(%LT,!=,%Sx([By album]))<%?if(%LT,!=,%Sx([All tracks]))<%?if(%LT,!=,%Sx([Random]))<%?if(%LT,!=,%Sx([Untagged]))<%?Lc<%Vs(invert)A%aRB>>>>>
+#
+%Vl(No_Scroll_Menu_No_Icons,9,8,14,14,8)%?if(%LT,=,%Sx([All tracks]))<%?Lc<|%Vs(invert)>b>%?if(%LT,=,%Sx([Random]))<%?Lc<|%Vs(invert)>a>%?if(%LT,=,%Sx([Untagged]))<%?Lc<|%Vs(invert)>e>%?if(%LT,=,%Sx([By album]))<%?Lc<|%Vs(invert)>Î>
+#
+%Vl(No_Scroll_Menu_No_Icons,28,4,264,22,-)%?Lc<|%Vs(invert)>%?if(%Sx([Random]),=,[Random])<%?if(%LT,=,[All tracks])<All Tracks>%?if(%LT,=,[Random])<Random>%?if(%LT,=,[Untagged])<Untagged>%?if(%LT,=,[By album])<By album>|%LT>
+#
+%Vl(No_Scroll_Menu_No_Icons,9,4,295,22,-)%?and(%if(%LT,!=,%Sx([All tracks])),%if(%LT,!=,%Sx([Random])),%if(%LT,!=,%Sx([Untagged])),%if(%LT,!=,%Sx([By album])))<%?Lc<%Vs(invert)>%?if(%St(scroll speed),=,1)<|%s>%LT>
+#
+#
+#-- Rounded Corners on menus --#
+#Draw rounded corners on the menus. Draw on foreground and background to prevent some minor clipping from the menu items.
+# %?St(scrollbar)<Off|Left|Right>
+#
+%Vl(Home_Corners,0,25,200,12,6)%VB%?St(scrollbar)<S%aRV|U%aRV|S%aRT>
+%Vl(Home_Corners,0,25,200,12,6)
+#
+%Vl(Sub_Menu_Corners,0,52,-,12,6)%VB%?St(scrollbar)<S%aRV|U%aRV|S%aRT>
+%Vl(Sub_Menu_Corners,0,52,-,12,6)
+#
+#--- END ---#
+#
+#
+#--- Scrollbar Engine ---# $SE
+# Logic controlling the scrollbars. "Flush" images are used to wipe the graphics rendering the scrollbars when turned off.
+#- Image Preloads -#
+%xl(Scrollbar_Flush,Scrollbar_Flush.bmp)
+%xl(Thumb,Scrollbar_Thumb.bmp)
+#
+# Use the %?LB in these viewports. If you do it while calling the viewport instead, it bugs drawing out for some reason.
+#
+#- Right side Tall Scrollbar -#
+%Vl(Scrollbar_Tall_Right,190,30,5,205,9)%VB
+%?LB<C|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<E|>
+%Vl(Scrollbar_Tall_Right,190,30,5,205,-)%?LB<%LB(0,0,5,205,invert,noborder,nobar,slider,Thumb)|%xd(Scrollbar_Flush)>
+#
+#- Left side Tall Scrollbar -#
+%Vl(Scrollbar_Tall_Left,5,30,5,205,9)%VB
+%?LB<C|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<E|>
+#
+%Vl(Scrollbar_Tall_Left,5,30,5,205,-)%?LB<%LB(0,0,5,205,invert,noborder,nobar,slider,Thumb)|%xd(Scrollbar_Flush)>
+#
+#- Right side Short Scrollbar -#
+%Vl(Scrollbar_Short_Right,310,57,5,173,9)%VB
+%?LB<C|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%Vl(Scrollbar_Short_Right,310,230,5,5,9)%VB%?LB<E|>
+#
+%Vl(Scrollbar_Short_Right,310,57,5,178,-)%?LB<%LB(0,0,5,178,invert,noborder,nobar,slider,Thumb)|%xd(Scrollbar_Flush)>
+#
+#- Left side Short Scrollbar -#
+%Vl(Scrollbar_Short_Left,5,57,5,173,9)%VB
+%?LB<C|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%?LB<D|>
+%Vl(Scrollbar_Short_Left,5,230,5,5,9)%VB%?LB<E|>
+%Vl(Scrollbar_Short_Left,5,57,5,178,-)%?LB<%LB(0,0,5,178,invert,noborder,nobar,slider,Thumb)|%xd(Scrollbar_Flush)>
+#
+#--- END ---#
+#
+#
+#--- Widget Engine ---# $WE
+#
+%Vl(Widgets_Backdrop,200,25,-,-,-)%VB%dr(0,0,-,-)
+%Vl(Widgets_Backdrop,200,25,-,-,-)
+#
+%Vl(Miniplayer_Album_Art,205,25,111,211,9)%VB%Cl(-51,0,211,211,c,c)%Cdvvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+vvvvv
+%Vl(Miniplayer_Album_Art,205,25,111,211,-)
+#
+%Vl(Miniplayer_Album_Fallback_Art,205,25,111,211,-)%VB
+%Vl(Miniplayer_Album_Fallback_Art,205,25,111,67,9)%VB
+uuuuu
+uuuuu
+uuuuu
+%Vl(Miniplayer_Album_Fallback_Art,205,92,111,144,9)%VB
+bcdeu
+ghiju
+lmnop
+uqrst
+uuuuu
+uuuuu
+%Vl(Miniplayer_Album_Fallback_Art,205,25,111,211,-)
+%Vl(Miniplayer_Widget,205,25,111,10,6)W%aRX
+%Vl(Miniplayer_Widget,205,226,111,10,6)Y%aRZ
+#
+#- Playstatus Widget -#
+%Vl(Widgets,205,37,47,29,6)%VB%?ps<õö|ïð>
+%Vl(Widgets,205,66,47,29,6)%VB%?if(%mm, >, 1)<øù|ñò>
+%Vl(Widgets,205,95,47,4,6)%VBóô
+#Flush the drawing system in the foreground layer to show the background layer.
+%Vl(Widgets,205,37,47,62,-)
+#
+#- Calendar Widget -#
+%Vl(Widgets,257,35,58,29,6)%VBàá
+%Vl(Widgets,257,64,58,29,6)%VBâã
+%Vl(Widgets,257,93,58,6,6)%VBäå
+#
+%Vl(Widgets,257,35,58,64,-)
+%Vl(Widgets,263,43,46,14,4)%ac%cb
+%Vl(Widgets,263,63,46,25,6)%ac%?if(%ss(0,1,%cd),=,0)<%ss(1,1,%ce)|%ce>
+#
+#- Volume Widget -#
+%Vl(Widgets,206,105,110,29,6)%VBúûûü
+%Vl(Widgets,206,134,110,15,6)%VBýþþÿ
+%Vl(Widgets,206,105,110,44,-)
+%Vl(Widgets,213,114,8,24,6)%?pv<|Ā|Ā|Ā>
+%Vl(Widgets,220,114,15,24,-)%?pv<|%dr(0,0,-,-)|%dr(0,0,-,-)|%dr(0,0,-,-)>
+%Vl(Widgets,220,120,15,13,8)%?pv<|%Vs(invert)|%Vs(invert)|%Vs(invert)>N%?pv<O|P|P|Q|Q|R|R|R|R>
+%Vl(Widgets,235,114,76,24,6)%?pv<|ā|āā|āāā|āāāā|āāāāā|āāāāāā|āāāāāāā|āāāāāāāā|āāāāāāāāā|āāāāāāāāāā|āāāāāāāāāāā|āāāāāāāāāāāā|āāāāāāāāāāāāā|āāāāāāāāāāāāāā|āāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāāāāāā|āāāāāāāāāāāāāāāāāāāāāā>%?pv<|Ă|Ă|Ă>
+#
+#- Colour Widget -#
+%Vl(Widgets,205,155,110,29,6)%VBæççè
+%Vl(Widgets,205,184,110,29,6)%VBéêêë
+%Vl(Widgets,205,213,110,16,6)%VBìííî
+%Vl(Widgets,220,169,82,14,3)%VB%Vs(invert)%St(foreground color)
+%Vl(Widgets,220,200,80,14,3)%VB%aR%St(background color)
+%Vl(Widgets,205,155,110,74,-)
+#
+#--- END ---#
+#
+#
+#--- USB Screen ---# $US
+%Vl(USB_Screen,0,25,-,-,-)%dr(0,0,-,-)
+%Vl(USB_Screen,30,177,260,29,6)%VB%Vs(invert)ĞğğğğğğğğĤĠ
+%Vl(USB_Screen,30,206,260,11,6)%VB%Vs(invert)ġĢĢĢĢĢĢĢĢĥģ
+%Vl(USB_Screen,30,177,260,40,-)
+#
+%Vl(USB_Screen,41,187,238,18,-)%VB%acEject before Disconnecting
+%Vl(USB_Screen,41,187,238,18,-)
+#
+%Vl(USB_Screen,85,27,150,150,9)%Vs(invert)%alÀÁÂÃ
+ÄÅÆÇÈÉ
+ÊËÌÍÎÏ
+ÐÑÒÓÔÕ
+Ö×ØÙÚÛ
+  ÜÝÞß
+#
+#--- END ---#
+#
+#
+#--- System Dialog Box ---# $SD
+#
+#-- Default Left side Dialog Box --#
+# when scrollbar right or off
+%Vl(System_Dialog_Box,5,195,298,29,6)%VBĞğğğğğğğğğğĠ
+%Vl(System_Dialog_Box,5,224,298,11,6)%VBġĢĢĢĢĢĢĢĢĢĢģ
+%Vl(System_Dialog_Box,122,200,1,27,6)%VBĈ
+%Vl(System_Dialog_Box,5,195,298,40,7)
+#
+%Vl(System_Dialog_Box,133,205,65,13,3)%VB%Vs(invert)version:
+%Vl(System_Dialog_Box,133,205,65,13,3)
+# pull the system version from a single source
+%Vl(System_Dialog_Box,203,207,85,14,4)%VB%Vs(invert)%ft(themes/Themify_2.preferences,version: )
+%Vl(System_Dialog_Box,203,207,85,14,4)
+%Vl(System_Dialog_Box,22,204,85,19,6)%VB%Vs(invert)mnopq
+%Vl(System_Dialog_Box,22,204,85,19,6)
+#
+#-- Right side Dialog Box --#
+# when scrollbar left
+%Vl(System_Dialog_Box_Right,17,195,298,29,6)%VBĞğğğğğğğğğğĠ
+%Vl(System_Dialog_Box_Right,17,224,298,11,6)%VBġĢĢĢĢĢĢĢĢĢĢģ
+%Vl(System_Dialog_Box_Right,134,200,1,27,6)%VBĈ
+%Vl(System_Dialog_Box_Right,17,195,298,40,7)
+#
+%Vl(System_Dialog_Box_Right,145,205,65,13,3)%VB%Vs(invert)version:
+%Vl(System_Dialog_Box_Right,145,205,65,13,3)%Vs(invert)version:
+# pull the system version from a single source
+%Vl(System_Dialog_Box_Right,215,207,85,14,4)%VB%Vs(invert)%ft(themes/Themify_2.preferences,version: )
+%Vl(System_Dialog_Box_Right,215,207,85,14,4)%Vs(invert)%ft(themes/Themify_2.preferences,version: )
+# themify 2 logo
+%Vl(System_Dialog_Box_Right,34,204,85,19,6)%VB%Vs(invert)mnopq
+%Vl(System_Dialog_Box_Right,34,204,85,19,6)%Vs(invert)mnopq
+#
+#--- END ---#
+#
+#
+#--- Quickscreen ---# $QS
+#
+#-- Rounded Top corners --#
+%Vl(Quickscreen,0,25,24,24,6)%VBO
+%Vl(Quickscreen,0,25,24,24,7)
+%Vl(Quickscreen,-24,25,24,24,6)%VBP
+%Vl(Quickscreen,-24,25,24,24,7)
+#
+#-- Volume Slider --#
+%Vl(Quickscreen,9,34,302,28,6)%VB%?pv<Ą|Ć|Ć|ą|ą|Ć|Ć|Ć|Ć>ĈĈĈĈĈĈĈĈĈĉ
+%Vl(Quickscreen,9,34,302,28,-)
+%Vl(Quickscreen,9,34,14,28,6)%?pv<|Ċ|Ċ|Ċ>
+%Vl(Quickscreen,23,34,8,8,6)%?pv<|ċċċ|ċċċ|ċċċ>
+%Vl(Quickscreen,23,54,8,8,6)%?pv<|ċċċ|ċċċ|ċċċ>
+#- Custom Slider -#
+# ċ = 3
+# č = 12
+# Ď = 24
+%Vl(Quickscreen,31,34,281,28,6)%?pv<|ċ|ċċ|ċċċ|č|čċċċ|Ď|Ďċċċ|Ďč|Ďčċ|Ďčċċ|Ďčċċċ|ĎĎ|ĎĎċ|ĎĎċċ|ĎĎċċċ|ĎĎč|ĎĎčċ|ĎĎčċċ|ĎĎčċċċ|ĎĎĎċ|ĎĎĎċċ|ĎĎĎċċċ|ĎĎĎč|ĎĎĎčċ|ĎĎĎčċċċ|ĎĎĎĎ|ĎĎĎĎċ|ĎĎĎĎċċ|ĎĎĎĎċċċ|ĎĎĎĎč|ĎĎĎĎčċ|ĎĎĎĎčċċ|ĎĎĎĎčċċċ|ĎĎĎĎĎ|ĎĎĎĎĎċ|ĎĎĎĎĎċċ|ĎĎĎĎĎċċċ|ĎĎĎĎĎč|ĎĎĎĎĎčċ|ĎĎĎĎĎčċċ|ĎĎĎĎĎčċċċ|ĎĎĎĎĎĎ|ĎĎĎĎĎĎċ|ĎĎĎĎĎĎċċ|ĎĎĎĎĎĎċċċ|ĎĎĎĎĎĎč|ĎĎĎĎĎĎčċ|ĎĎĎĎĎĎčċċ|ĎĎĎĎĎĎčċċċ|ĎĎĎĎĎĎĎ|ĎĎĎĎĎĎĎċ|ĎĎĎĎĎĎĎċċ|ĎĎĎĎĎĎĎċċċ|ĎĎĎĎĎĎĎč|ĎĎĎĎĎĎĎčċ|ĎĎĎĎĎĎĎčċċ|ĎĎĎĎĎĎĎčċċċ|ĎĎĎĎĎĎĎĎ|ĎĎĎĎĎĎĎĎċ|ĎĎĎĎĎĎĎĎċċ|ĎĎĎĎĎĎĎĎċċċ|ĎĎĎĎĎĎĎĎč|ĎĎĎĎĎĎĎĎčċ|ĎĎĎĎĎĎĎĎčċċ|ĎĎĎĎĎĎĎĎčċċċ|ĎĎĎĎĎĎĎĎĎ|ĎĎĎĎĎĎĎĎĎċ|ĎĎĎĎĎĎĎĎĎċċ|ĎĎĎĎĎĎĎĎĎċċċ|ĎĎĎĎĎĎĎĎĎč|ĎĎĎĎĎĎĎĎĎčċ|ĎĎĎĎĎĎĎĎĎčċċ|ĎĎĎĎĎĎĎĎĎčċċċ|ĎĎĎĎĎĎĎĎĎĎ|ĎĎĎĎĎĎĎĎĎĎċ|ĎĎĎĎĎĎĎĎĎĎċċ|ĎĎĎĎĎĎĎĎĎĎċċċ|ĎĎĎĎĎĎĎĎĎĎč|ĎĎĎĎĎĎĎĎĎĎčċ|ĎĎĎĎĎĎĎĎĎĎčċċ|ĎĎĎĎĎĎĎĎĎĎčċċċ|ĎĎĎĎĎĎĎĎĎĎĎ|ĎĎĎĎĎĎĎĎĎĎĎċ>%?pv<|Č|Č|Č>
+#
+%Vl(Quickscreen,17,42,14,12,8)%?pv<|%Vs(invert)|%Vs(invert)|%Vs(invert)>N%?pv<O|P|P|Q|Q|R|R|R|R>
+#
+#-- Brightness Slider --#
+%Vl(Quickscreen,9,70,302,28,6)%VBćĈĈĈĈĈĈĈĈĈĉ
+%Vl(Quickscreen,9,70,302,28,-)
+%Vl(Quickscreen,9,70,14,28,6)Ċ
+%Vl(Quickscreen,23,70,8,28,-)%dr(0,0,-,-)
+# default slider tech as using conditional with %St(brightness) does not automatically adjust values to use full bar width
+%xl(slider,Brightness_Slider_Front.bmp)
+%Vl(Quickscreen,31,70,280,28,6)%St(0,0,-,28,noborder,slider,slider,setting,brightness)
+# brightness icon
+%Vl(Quickscreen,17,78,14,13,8)%Vs(invert)M
+#
+#-- Left Button --#
+%Vl(Quickscreen,8,107,148,29,6)%VB%?or(%if(%Ql,=,0),%if(%Ql,=,%Sx(No)),%if(%Ql,=,%Sx(Off)))<ĒēĔĔĕĖ|%?if(%Ql,=,ERR)<ĦħĨĩĪī|ĜĔĔĔĕĖ>>
+%Vl(Quickscreen,8,136,148,29,6)%VB%?or(%if(%Ql,=,0),%if(%Ql,=,%Sx(No)),%if(%Ql,=,%Sx(Off)))<ėĘęęĚě|%?if(%Ql,=,ERR)<ĬĭĮįİı|ĝęęęĚě>>
+%Vl(Quickscreen,8,107,148,58,-)
+#
+%Vl(Quickitem_Left,10,109,144,14,6)ef%aRg
+%Vl(Quickitem_Left,10,147,144,14,6)hi%aRj
+5%Vl(Quickitem_Left,10,123,144,24,-)%dr(0,0,5,-)%dr(130,0,-,-)
+%Vl(Quickitem_Left,38,109,102,52,-)%dr(0,0,-,-)
+%Vl(Quickitem_Left_Flush,8,107,148,58,-)#
+%Vl(Quickscreen,19,121,14,13,8)%?if(%Ql,=,ERR)<|%t(0.1)D;%t(0.1)D>
+%Vl(Quickscreen,45,118,100,18,3)%?or(%if(%Ql,=,0),%if(%Ql,=,%Sx(No)),%if(%Ql,=,%Sx(Off)),%if(%Ql,=,ERR))<|%Vs(invert)>%?if(%QL,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%QL>
+%Vl(Quickscreen,46,139,100,15,4)%?or(%if(%Ql,=,0),%if(%Ql,=,%Sx(No)),%if(%Ql,=,%Sx(Off)),%if(%Ql,=,ERR))<|%Vs(invert)>%?if(%Ql,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%Ql>
+#
+#-- Top Button --#
+%Vl(Quickscreen,164,107,148,29,6)%VB%?or(%if(%Qt,=,0),%if(%Qt,=,%Sx(No)),%if(%Qt,=,%Sx(Off)))<ĒēĔĔĕĖ|%?if(%Qt,=,ERR)<ĦħĨĩĪī|ĜĔĔĔĕĖ>>
+%Vl(Quickscreen,164,136,148,29,6)%VB%?or(%if(%Qt,=,0),%if(%Qt,=,%Sx(No)),%if(%Qt,=,%Sx(Off)))<ėĘęęĚě|%?if(%Qt,=,ERR)<ĬĭĮįİı|ĝęęęĚě>>
+%Vl(Quickscreen,164,107,148,58,-)
+#
+%Vl(Quickitem_Top,166,109,144,14,6)ef%aRg
+%Vl(Quickitem_Top,166,147,144,14,6)hi%aRj
+%Vl(Quickitem_Top,166,123,144,24,-)%dr(0,0,5,-)%dr(130,0,-,-)
+%Vl(Quickitem_Top,194,109,102,52,-)%dr(0,0,-,-)
+%Vl(Quickitem_Top_Flush,164,107,148,58,-)
+%Vl(Quickscreen,175,121,14,13,8)%?if(%Qt,=,ERR)<|%t(0.1)A;%t(0.1)A>
+%Vl(Quickscreen,200,118,100,18,3)%?or(%if(%Qt,=,0),%if(%Qt,=,%Sx(No)),%if(%Qt,=,%Sx(Off)),%if(%Qt,=,ERR))<|%Vs(invert)>%?if(%QT,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%QT>
+%Vl(Quickscreen,201,139,100,15,4)%?or(%if(%Qt,=,0),%if(%Qt,=,%Sx(No)),%if(%Qt,=,%Sx(Off)),%if(%Qt,=,ERR))<|%Vs(invert)>%?if(%Qt,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%Qt>
+#
+#-- Right Button --#
+%Vl(Quickscreen,8,173,148,29,6)%VB%aR%?or(%if(%Qr,=,0),%if(%Qr,=,%Sx(No)),%if(%Qr,=,%Sx(Off)))<ĒēĔĔĕĖ|%?if(%Qr,=,ERR)<ĦħĨĩĪī|ĜĔĔĔĕĖ>>
+%Vl(Quickscreen,8,202,148,29,6)%VB%aR%?or(%if(%Qr,=,0),%if(%Qr,=,%Sx(No)),%if(%Qr,=,%Sx(Off)))<ėĘęęĚě|%?if(%Qr,=,ERR)<ĬĭĮįİı|ĝęęęĚě>>
+%Vl(Quickscreen,8,173,148,58,-)
+#
+%Vl(Quickitem_Right,10,175,144,14,6)ef%aRg
+%Vl(Quickitem_Right,10,213,144,14,6)hi%aRj
+%Vl(Quickitem_Right,10,189,144,24,-)%dr(0,0,5,-)%dr(130,0,-,-)
+%Vl(Quickitem_Right,38,175,102,52,-)%dr(0,0,-,-)
+%Vl(Quickitem_Right_Flush,8,173,148,58,-)
+%Vl(Quickscreen,19,187,14,13,8)%?if(%Qr,=,ERR)<|%t(0.1)B;%t(0.1)B>
+%Vl(Quickscreen,45,184,100,18,3)%?or(%if(%Qr,=,0),%if(%Qr,=,%Sx(No)),%if(%Qr,=,%Sx(Off)),%if(%Qr,=,ERR))<|%Vs(invert)>%?if(%QR,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%QR>
+%Vl(Quickscreen,46,205,100,15,4)%?or(%if(%Qr,=,0),%if(%Qr,=,%Sx(No)),%if(%Qr,=,%Sx(Off)),%if(%Qr,=,ERR))<|%Vs(invert)>%?if(%Qr,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%Qr>
+#
+#-- Bottom Button --#
+%Vl(Quickscreen,164,173,148,29,6)%VB%?or(%if(%Qb,=,0),%if(%Qb,=,%Sx(No)),%if(%Qb,=,%Sx(Off)))<ĒēĔĔĕĖ|%?if(%Qb,=,ERR)<ĦħĨĩĪī|ĜĔĔĔĕĖ>>
+%Vl(Quickscreen,164,202,148,29,6)%VB%?or(%if(%Qb,=,0),%if(%Qb,=,%Sx(No)),%if(%Qb,=,%Sx(Off)))<ėĘęęĚě|%?if(%Qb,=,ERR)<ĬĭĮįİı|ĝęęęĚě>>
+%Vl(Quickscreen,164,173,148,58,-)
+#
+%Vl(Quickitem_Bottom,166,175,144,14,6)ef%aRg
+%Vl(Quickitem_Bottom,166,213,144,14,6)hi%aRj
+%Vl(Quickitem_Bottom,166,189,144,24,-)%dr(0,0,5,-)%dr(130,0,-,-)
+%Vl(Quickitem_Bottom,194,175,102,52,-)%dr(0,0,-,-)
+%Vl(Quickitem_Bottom_Flush,164,173,148,58,-)
+%Vl(Quickscreen,175,187,14,13,8)%?if(%Qb,=,ERR)<|%t(0.1)C;%t(0.1)C>
+%Vl(Quickscreen,200,184,100,18,3)%?or(%if(%Qb,=,0),%if(%Qb,=,%Sx(No)),%if(%Qb,=,%Sx(Off)),%if(%Qb,=,ERR))<|%Vs(invert)>%?if(%QB,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%QB>
+%Vl(Quickscreen,201,205,100,15,4)%?or(%if(%Qb,=,0),%if(%Qb,=,%Sx(No)),%if(%Qb,=,%Sx(Off)),%if(%Qb,=,ERR))<|%Vs(invert)>%?if(%Qb,=,ERR)<|%?if(%St(scroll speed),=,1)<|%s>%Qb>
+#
+#--- END ---#
+#
+#
