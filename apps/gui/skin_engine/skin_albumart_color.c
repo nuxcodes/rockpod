@@ -63,6 +63,7 @@ struct dynamic_colors_cache {
     bool fading_out;             /* fading to defaults after disable/stop */
     bool was_enabled;            /* track setting state for toggle detection */
     bool needs_full_update;      /* set when fade completes for full redraw */
+    bool needs_screen_clear;     /* set when fade completes to clear bg gaps */
 };
 
 static struct dynamic_colors_cache cache;
@@ -380,6 +381,7 @@ void dynamic_colors_save_theme(void)
     cache.valid = false;
     cache.fading = false;
     cache.fading_out = false;
+    cache.needs_screen_clear = false;
     needs_extraction = true;
 }
 
@@ -392,6 +394,14 @@ void dynamic_colors_check_extraction(int aa_slot)
         last_aa_slot = aa_slot;
     else
         aa_slot = last_aa_slot;
+
+    /* Detect playback stop — initiate fade to defaults */
+    if (cache.valid && !cache.fading_out &&
+        global_settings.dynamic_colors &&
+        !(audio_status() & AUDIO_STATUS_PLAY))
+    {
+        start_fade(cache.theme_fg, cache.theme_bg, true);
+    }
 
     /* Detect setting toggle */
     bool enabled = global_settings.dynamic_colors;
@@ -480,14 +490,6 @@ static unsigned int resolve_mapped(unsigned int original,
 
 unsigned int dynamic_colors_resolve(unsigned int original)
 {
-    /* Check for playback stop — initiate fade to defaults */
-    if (cache.valid && !cache.fading_out &&
-        global_settings.dynamic_colors &&
-        !(audio_status() & AUDIO_STATUS_PLAY))
-    {
-        start_fade(cache.theme_fg, cache.theme_bg, true);
-    }
-
     /* Fade-out continues even after setting is toggled off */
     if (cache.fading_out)
     {
@@ -497,6 +499,7 @@ unsigned int dynamic_colors_resolve(unsigned int original)
             cache.fading_out = false;
             cache.valid = false;
             cache.needs_full_update = true;
+            cache.needs_screen_clear = true;
             return original;
         }
         return resolve_mapped(original,
@@ -514,6 +517,7 @@ unsigned int dynamic_colors_resolve(unsigned int original)
         {
             cache.fading = false;
             cache.needs_full_update = true;
+            cache.needs_screen_clear = true;
         }
         else
             return resolve_mapped(original,
@@ -534,6 +538,16 @@ bool dynamic_colors_needs_full_update(void)
     if (cache.needs_full_update)
     {
         cache.needs_full_update = false;
+        return true;
+    }
+    return false;
+}
+
+bool dynamic_colors_screen_clear_needed(void)
+{
+    if (cache.needs_screen_clear)
+    {
+        cache.needs_screen_clear = false;
         return true;
     }
     return false;

@@ -43,6 +43,9 @@ void dynamic_colors_save_theme(void);
 /* Returns true once after a fade completes, to request a full screen redraw */
 bool dynamic_colors_needs_full_update(void);
 
+/* Returns true once after a fade completes, to clear full-screen bg gaps */
+bool dynamic_colors_screen_clear_needed(void);
+
 /* Returns true when color extraction is queued but not yet performed */
 bool dynamic_colors_pending(void);
 
@@ -54,6 +57,7 @@ bool dynamic_colors_pending(void);
 #define dynamic_colors_check_extraction(s)   do {} while(0)
 #define dynamic_colors_save_theme()          do {} while(0)
 #define dynamic_colors_needs_full_update()   false
+#define dynamic_colors_screen_clear_needed() false
 #define dynamic_colors_pending()             false
 
 #endif /* HAVE_ALBUMART && HAVE_LCD_COLOR */

@@ -111,9 +111,7 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
         {
             struct viewport_colour *col = SKINOFFSETTOPTR(skin_buffer, token->value.data);
             if (!col) return false;
-            unsigned colour = col->colour;
-            if (col->is_default)
-                colour = dynamic_colors_resolve(colour);
+            unsigned colour = dynamic_colors_resolve(col->colour);
             if (token->type == SKIN_TOKEN_VIEWPORT_FGCOLOUR)
                 skin_vp->vp.fg_pattern = colour;
             else
@@ -884,11 +882,40 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
     {
         /* should already be the default buffer */
         struct viewport * first_vp = display->set_viewport_ex(NULL, 0);
-        if ((first_vp->flags & VP_FLAG_VP_SET_CLEAN) == VP_FLAG_VP_DIRTY &&
-            get_current_activity() == ACTIVITY_WPS) /* only clear if in WPS */
+        if (get_current_activity() == ACTIVITY_WPS)
         {
-            display->clear_viewport();
+            bool dirty = (first_vp->flags & VP_FLAG_VP_SET_CLEAN)
+                          == VP_FLAG_VP_DIRTY;
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+            unsigned resolved_bg =
+                dynamic_colors_resolve(first_vp->bg_pattern);
+            if (dirty || resolved_bg != first_vp->bg_pattern
+                || dynamic_colors_screen_clear_needed())
+            {
+                unsigned saved_bg = first_vp->bg_pattern;
+                first_vp->bg_pattern = resolved_bg;
+                display->clear_viewport();
+                first_vp->bg_pattern = saved_bg;
+            }
+#else
+            if (dirty)
+                display->clear_viewport();
+#endif
         }
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+        else
+        {
+            unsigned resolved_bg =
+                dynamic_colors_resolve(first_vp->bg_pattern);
+            if (resolved_bg != first_vp->bg_pattern)
+            {
+                unsigned saved_bg = first_vp->bg_pattern;
+                first_vp->bg_pattern = resolved_bg;
+                display->clear_viewport();
+                first_vp->bg_pattern = saved_bg;
+            }
+        }
+#endif
     }
 
     viewport = SKINOFFSETTOPTR(skin_buffer, data->tree);
