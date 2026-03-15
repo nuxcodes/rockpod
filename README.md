@@ -2,11 +2,11 @@
   <img src="screenshots/hero-image.jpeg" alt="Rockpod Hero Image" width="600">
   <h1 align="center">Rockpod</h1>
   <p align="center">
-    Custom Rockbox firmware for iPod Classic.<br>
-    MFi digital audio, SSD optimization, Cover Flow.
+    Custom Rockbox firmware for iPod Classic and iPod Video.<br>
+    MFi digital audio, Cover Flow, dynamic colors.
   </p>
   <p align="center">
-    <a href="https://github.com/nuxcodes/rockpod/releases/latest"><img src="https://img.shields.io/github/v/release/nuxcodes/rockbox?style=flat-square&color=blue" alt="Latest Release"></a>
+    <a href="https://github.com/nuxcodes/rockpod/releases/latest"><img src="https://img.shields.io/github/v/release/nuxcodes/rockpod?style=flat-square&color=blue" alt="Latest Release"></a>
     <br/>
     <a href='https://ko-fi.com/B0B61UR8ZH' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
   </p>
@@ -14,15 +14,16 @@
 
 ---
 
-Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic (6th and 7th generation, 2007–2014). It adds digital audio output support to iPod MFi accessories (DACs, speakers, docks, car stereos), a rewritten PictureFlow modeled on Apple's Cover Flow, and SSD-aware power management.
+Rockpod is a [Rockbox](https://www.rockbox.org) fork for iPod Classic (6th/7th gen, 2007–2014) and iPod Video (5th/5.5th gen, 2005–2006). It adds MFi digital audio output, a rewritten Cover Flow, dynamic album art colors, and SSD-aware power management.
 
-Rockpod supports both HDD and iFlash-modded iPod Classic units. It's a drop-in replacement for the official Rockbox firmware, with no reformatting or data loss.
+Rockpod supports both HDD and iFlash-modded units. Both iPod models share the same 320x240 display and get the same UI features — Cover Flow, dynamic colors, themes, and rendering improvements. Hardware-specific features like SSD power management and MFi digital audio are iPod Classic only for now. It's a drop-in replacement for the official Rockbox firmware, with no reformatting or data loss.
 
 ---
 
 ## Features
 
 ### Digital Audio Output
+> Supported on iPod Classic 6G/7G
 
 Rockpod is the first open source firmware to support digital audio output over the iPod's dock connector. It handles the full Apple iAP authentication handshake, negotiates sample rate with the accessory, and sends bit-perfect PCM over USB, bypassing the iPod's internal DAC. The entire Rockbox DSP chain (EQ, crossfeed, replaygain) is preserved in the output path.
 
@@ -120,7 +121,25 @@ Stock PictureFlow shows 3 slides, uses hardcoded colors, and is buried in the pl
 
 ---
 
+### Dynamic Colors
+
+The UI automatically extracts dominant and accent colors from the currently playing album art and applies them across all skinnable screens — menus, status bar, and now playing. Colors fade smoothly over 500 ms when the track changes.
+
+|                                                          |                                                          |
+| :------------------------------------------------------: | :------------------------------------------------------: |
+| <img src="screenshots/themify2-1.png" width="280">       | <img src="screenshots/themify2-2.png" width="280">       |
+| <img src="screenshots/themify2-4.png" width="280">       | <img src="screenshots/themify2-3.png" width="280">       |
+
+- **Album art color extraction** — dominant and accent colors pulled from the current track's artwork
+- **Full theme color coverage** — foreground, background, selector bar, selector text, selector gradient, and list separators all adapt
+- **Smooth transitions** — 500 ms fade between color palettes on track change
+- **Contrast enforcement** — accent colors are pushed brighter or darker if insufficient contrast against the dominant color
+- **On by default** — can be toggled off under Theme Settings
+
+---
+
 ### Storage Mode
+> Supported on iPod Classic 6G/7G
 
 Rockpod works with both stock HDDs and iFlash SSD mods. HDD behavior is unchanged from stock Rockbox. When an SSD is detected, Rockpod switches to a lighter sleep strategy — faster wake times, lower idle power draw, and no unnecessary spin-up delays.
 
@@ -154,6 +173,7 @@ Key file: `firmware/target/arm/s5l8702/ipod6g/storage_ata-6g.c`
 ---
 
 ### Power Management
+> Supported on iPod Classic 6G/7G
 
 - **I2S clock gating** — bus clock gated when no audio is playing
 - **Codec idle power-down** — CS42L55 enters PDN_CODEC on idle, pop-free resume (master mute → power-down → 200 us settle → unmute)
@@ -190,23 +210,6 @@ All standard Rockbox menu items are available.
 
 ---
 
-### Dynamic Colors
-
-The UI automatically extracts dominant and accent colors from the currently playing album art and applies them across all skinnable screens — menus, status bar, and now playing. Colors fade smoothly over 500 ms when the track changes.
-
-|                                                          |                                                          |
-| :------------------------------------------------------: | :------------------------------------------------------: |
-| <img src="screenshots/themify2-1.png" width="280">       | <img src="screenshots/themify2-2.png" width="280">       |
-| <img src="screenshots/themify2-4.png" width="280">       | <img src="screenshots/themify2-3.png" width="280">       |
-
-- **Album art color extraction** — dominant and accent colors pulled from the current track's artwork
-- **Full theme color coverage** — foreground, background, selector bar, selector text, selector gradient, and list separators all adapt
-- **Smooth transitions** — 500 ms fade between color palettes on track change
-- **Contrast enforcement** — accent colors are pushed brighter or darker if insufficient contrast against the dominant color
-- **On by default** — can be toggled off under Theme Settings
-
----
-
 ### Improved UI Rendering
 
 - **Scroll-to-start flash eliminated** — custom themes with scrolling text in the main menu would flash or flicker when the scroll position reset to the start. Rockpod fixes the viewport rendering order to prevent this, making themed menus render cleanly without visual artifacts.
@@ -223,25 +226,39 @@ The repo includes third-party themes under `themes/`:
 
 ---
 
+## Supported Models
+
+| Feature                   | iPod Classic (6G/7G)  | iPod Video (5G/5.5G) |
+| ------------------------- | --------------------- | -------------------- |
+| **MFi digital audio**     | Yes                   | Planned              |
+| **Cover Flow**            | Yes                   | Yes                  |
+| **Dynamic Colors**        | Yes                   | Yes                  |
+| **UI improvements**       | Yes                   | Yes                  |
+| **Themes**                | Yes (320x240)         | Yes (320x240)        |
+| **SSD power management**  | Yes                   | No                   |
+| **Advanced power mgmt**   | Yes                   | No                   |
+
 ## At a Glance
 
 |                         | Stock Rockbox                           | Rockpod                                        |
 | ----------------------- | --------------------------------------- | ---------------------------------------------- |
-| **External audio**      | Not supported                           | iPod MFi digital audio (DACs, speakers, docks) |
+| **MFi digital audio**   | Not supported                           | DACs, speakers, docks — Classic only           |
 | **Dynamic colors**      | Not supported                           | Album art color extraction with smooth fades   |
 | **Cover Flow**          | 3 slides, no status bar, 70-degree tilt | 7 slides, status bar, parallel projection      |
-| **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake (HDD mode preserved)    |
-| **Codec power**         | Always on                               | Auto power-down on idle                        |
-| **USB power**           | Charges from any USB source             | Smart charge gating for low-power accessories  |
-| **Auto-poweroff + USB** | Blocked indefinitely                    | Works for non-charging accessories             |
+| **SSD idle**            | Full power-down, ~530 ms wake           | Clock-gate, <5 ms wake — Classic only          |
+| **Codec power**         | Always on                               | Auto power-down on idle — Classic only         |
+| **USB power**           | Charges from any USB source             | Smart charge gating — Classic only             |
+| **Auto-poweroff + USB** | Blocked indefinitely                    | Works for non-charging accessories — Classic only |
 
 ---
 
 ## Installation
 
-> **Prerequisite:** Your iPod Classic must already have the Rockbox bootloader installed. See the [Rockbox installation guide](https://www.rockbox.org/wiki/RockboxUtility) if needed.
+> **Prerequisite:** Your iPod must already have the Rockbox bootloader installed. See the [Rockbox installation guide](https://www.rockbox.org/wiki/RockboxUtility) if needed.
 
-1. Download `rockbox.zip` from [Releases](https://github.com/nuxcodes/rockpod/releases/latest)
+1. Download the correct zip from [Releases](https://github.com/nuxcodes/rockpod/releases/latest):
+   - `rockbox-ipod6g.zip` for iPod Classic (6G/7G)
+   - `rockbox-ipodvideo-5g.zip` for iPod Video (5G/5.5G)
 2. Connect your iPod in disk mode
 3. Extract the zip to the root of the iPod (creates/updates `.rockbox`)
 4. Eject and reboot
@@ -253,24 +270,28 @@ PictureFlow rebuilds its album art cache on first launch after upgrade. This is 
 ## Building from Source
 
 ```bash
-# Hardware build (clean)
+# iPod Classic 6G (default, clean build)
 ./build-hw.sh
 
-# Incremental
-cd build-hw && make -j$(sysctl -n hw.ncpu) && make zip
+# iPod Video 5G (clean build)
+./build-hw.sh 5g
 
-# Simulator
+# Incremental rebuild
+cd build-hw-ipod6g && make -j$(sysctl -n hw.ncpu) && make zip
+cd build-hw-ipodvideo && make -j$(sysctl -n hw.ncpu) && make zip
+
+# Simulator (6G)
 ./build-sim.sh
 cd build-sim && ./rockboxui
 ```
 
-Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools/configure --target=ipod6g --type=n` (hardware) or `--type=s` (simulator).
+`build-hw.sh` accepts `ipod6g` / `6g` (default) or `ipodvideo` / `5g`. Output goes to `build-hw-<target>/`. Cross-compiler toolchains: `tools/rockboxdev.sh`.
 
 ---
 
 ## Roadmap
 
-**iPod Video 5/5.5G support.** Rockpod is currently limited to supporting iPod Classic 6G/7G (S5L8702 SoC) - support for the 5/5.5G iPod Video is on the to-do list. They use different SoCs and USB controllers, so extending the support is not trivial.
+**iPod Video 5G/5.5G MFi digital audio.** iPod Video builds are available with all UI features (Cover Flow, dynamic colors, themes). MFi digital audio has been ported to the PP5022/ARC USB controller but is untested on hardware. Alpha builds are available for testing.
 
 **Generic USB audio support via host mode.** The current support uses USB device mode — the accessory is the host and the iPod authenticates as an Apple audio source. This only works with iPod MFi accessories. The next step is USB host mode, where the iPod becomes the host and sends audio to any class-compliant UAC device — standard USB-C DAC dongles via a dock-to-OTG adapter. The S5L8702's DWC OTG controller supports host mode in hardware; the work is in the host stack and UAC class driver.
 
@@ -280,7 +301,7 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 
 - **iPod MFi accessories only** — generic UAC sinks not yet supported (see Roadmap)
 - **16-bit PCM, 44.1 / 48 kHz** — USB Audio Class 1.0 ceiling
-- **iPod Classic only** — untested on other Rockbox targets
+- **iPod Classic and iPod Video only** — untested on other Rockbox targets
 - **No USB DAC (sink) mode** — USB audio config is repurposed for digital audio output
 - **Rockbox bootloader required** — needs an existing Rockbox installation
 
@@ -291,7 +312,7 @@ Cross-compiler toolchains: `tools/rockboxdev.sh`. Configure reference: `../tools
 Built on the work of the [Rockbox](https://www.rockbox.org/) project and its contributors.
 
 - **Themes:** adwaitapod_dark_simplified and Themify 2 by [Dook](https://github.com/D0-0K) (CC-BY-SA)
-- **MFi reference:** [ipod-gadget](https://github.com/oandrew/ipod-gadget) descriptor layout, Apple MFi Accessory Firmware Specification
+- **MFi reference:** [ipod-gadget](https://github.com/oandrew/ipod-gadget) descriptor layout, [rockbox-mojyack](https://github.com/mojyack/rockbox) iPod 5G iAP implementation, Apple MFi Accessory Firmware Specification
 
 ## License
 
