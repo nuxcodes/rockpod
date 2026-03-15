@@ -70,6 +70,7 @@
 #include "skin_engine.h"
 #include "statusbar-skinned.h"
 #include "skin_display.h"
+#include "skin_albumart_color.h"
 
 void skin_render(struct gui_wps *gwps, unsigned refresh_mode);
 
@@ -748,8 +749,11 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
            pm = true;
     }
 
-    if (pm) {
-        long next_refresh = current_tick;
+    bool fading = dynamic_colors_fading();
+
+    if (pm || fading) {
+        long next_pm_refresh = current_tick;
+        long next_fade_refresh = current_tick;
         long next_big_refresh = current_tick + timeout;
         button = BUTTON_NONE;
         while (TIME_BEFORE(current_tick, next_big_refresh)) {
@@ -757,22 +761,29 @@ int skin_wait_for_action(enum skinnable_screens skin, int context, int timeout)
             if (button != ACTION_NONE) {
                 break;
             }
-            peak_meter_peek();
+            if (pm)
+                peak_meter_peek();
             sleep(0);   /* Sleep until end of current tick. */
 
-            if (TIME_AFTER(current_tick, next_refresh)) {
+            if (pm && TIME_AFTER(current_tick, next_pm_refresh)) {
                 FOR_NB_SCREENS(i)
                 {
                     if(skin_get_gwps(skin, i)->data->peak_meter_enabled)
                         skin_update(skin, i, SKIN_REFRESH_PEAK_METER);
-                    next_refresh += HZ / PEAK_METER_FPS;
                 }
+                next_pm_refresh += HZ / PEAK_METER_FPS;
+            }
+            if (fading && TIME_AFTER(current_tick, next_fade_refresh)) {
+                FOR_NB_SCREENS(i)
+                    skin_update(skin, i, SKIN_REFRESH_NON_STATIC);
+                next_fade_refresh += HZ / 20;
+                fading = dynamic_colors_fading();
             }
         }
 
     }
 
-    /* The peak meter is disabled
+    /* No peak meter or fading
        -> no additional screen updates needed */
     else
     {

@@ -375,9 +375,20 @@ static inline bool action_poll_button(action_last_t *last, action_cur_t *cur)
         {
             last->button = *button;
             last->action = ACTION_NONE;
+            *button = ACTION_NONE;
         }
-
-        *button = ACTION_NONE; /* "safest" return value */
+#ifdef HAVE_SCROLLWHEEL
+        else if ((*button & (BUTTON_SCROLL_BACK | BUTTON_SCROLL_FWD)) != 0)
+        {
+            /* Scrollwheel has no release events so it can never satisfy the
+             * context-change gate.  Let it through and update the context. */
+            ret = false;
+        }
+#endif
+        else
+        {
+            *button = ACTION_NONE;
+        }
     }
    /* ****************************
     * regular button press,

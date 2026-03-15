@@ -51,6 +51,7 @@
 #include "list.h"
 #include "wps.h"
 #include "strmemccpy.h"
+#include "skin_albumart_color.h"
 
 #define MAX_LINE 1024
 
@@ -110,10 +111,13 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
         {
             struct viewport_colour *col = SKINOFFSETTOPTR(skin_buffer, token->value.data);
             if (!col) return false;
+            unsigned colour = col->colour;
+            if (col->is_default)
+                colour = dynamic_colors_resolve(colour);
             if (token->type == SKIN_TOKEN_VIEWPORT_FGCOLOUR)
-                skin_vp->vp.fg_pattern = col->colour;
+                skin_vp->vp.fg_pattern = colour;
             else
-                skin_vp->vp.bg_pattern = col->colour;
+                skin_vp->vp.bg_pattern = colour;
             skin_vp->fgbg_changed = true;
         }
         break;
@@ -892,6 +896,10 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         !strcmp(label,VP_DEFAULT_LABEL_STRING))
         refresh_mode = 0;
 
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+    bool dc_extraction_done = false;
+#endif
+
     for (viewport = SKINOFFSETTOPTR(skin_buffer, data->tree);
          viewport;
          viewport = SKINOFFSETTOPTR(skin_buffer, viewport->next))
@@ -900,6 +908,16 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         /* SETUP */
         skin_viewport = SKINOFFSETTOPTR(skin_buffer, viewport->data);
         if (!skin_viewport) continue;
+
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+        /* Check for pending color extraction once per render pass */
+        if (!dc_extraction_done)
+        {
+            dynamic_colors_check_extraction(data->playback_aa_slot);
+            dc_extraction_done = true;
+        }
+#endif
+
         unsigned vp_refresh_mode = refresh_mode;
 #if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && LCD_REMOTE_DEPTH > 1)
         if (skin_viewport->output_to_backdrop_buffer)
@@ -932,6 +950,20 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
 
         display->set_viewport_ex(&skin_viewport->vp, VP_FLAG_VP_SET_CLEAN);
 
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+        /* Dynamic colors: override default-colored viewports */
+        unsigned int dc_saved_fg = skin_viewport->vp.fg_pattern;
+        unsigned int dc_saved_bg = skin_viewport->vp.bg_pattern;
+        skin_viewport->vp.fg_pattern = dynamic_colors_resolve(dc_saved_fg);
+        skin_viewport->vp.bg_pattern = dynamic_colors_resolve(dc_saved_bg);
+        if (skin_viewport->vp.fg_pattern != dc_saved_fg ||
+            skin_viewport->vp.bg_pattern != dc_saved_bg)
+        {
+            display->set_foreground(skin_viewport->vp.fg_pattern);
+            display->set_background(skin_viewport->vp.bg_pattern);
+        }
+#endif
+
         if ((vp_refresh_mode&SKIN_REFRESH_ALL) == SKIN_REFRESH_ALL)
         {
             display->clear_viewport();
@@ -940,6 +972,13 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         if (viewport->children_count)
             skin_render_viewport(get_child(viewport->children, 0), gwps,
                                  skin_viewport, vp_refresh_mode);
+
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+        /* Restore original parsed colors */
+        skin_viewport->vp.fg_pattern = dc_saved_fg;
+        skin_viewport->vp.bg_pattern = dc_saved_bg;
+#endif
+
         refresh_mode = old_refresh_mode;
     }
 #if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))

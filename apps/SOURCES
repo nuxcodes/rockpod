@@ -142,6 +142,9 @@ recorder/albumart.c
 #endif
 #ifdef HAVE_LCD_COLOR
 gui/color_picker.c
+#ifdef HAVE_ALBUMART
+gui/skin_engine/skin_albumart_color.c
+#endif
 #endif
 
 #ifdef HAVE_RECORDING

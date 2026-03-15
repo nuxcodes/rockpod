@@ -740,12 +740,18 @@ static int parse_viewportcolour(struct skin_element *element,
             colour->colour = fg_color;
         else
             colour->colour = bg_color;
+#if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))
+        colour->is_default = true;
+#endif
     }
     else
     {
         if (!parse_color(curr_screen, SKINOFFSETTOPTR(skin_buffer, param->data.text),
                     &colour->colour))
             return -1;
+#if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))
+        colour->is_default = false;
+#endif
     }
     token->value.data = PTRTOSKINOFFSET(skin_buffer, colour);
     if (element->line == curr_viewport_element->line)

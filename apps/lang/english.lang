@@ -17122,3 +17122,20 @@
     *: "Coverflow"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_DYNAMIC_COLORS
+  desc: in display settings
+  user: core
+  <source>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </source>
+  <dest>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </dest>
+  <voice>
+    *: none
+    lcd_color: "Dynamic Colors"
+  </voice>
+</phrase>

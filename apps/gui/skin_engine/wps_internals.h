@@ -205,6 +205,9 @@ struct skin_viewport {
 };
 struct viewport_colour {
     unsigned colour;
+#if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))
+    bool is_default; /* true if parsed from `-` (theme default) */
+#endif
 };
 
 #ifdef HAVE_TOUCHSCREEN

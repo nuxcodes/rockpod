@@ -2188,6 +2188,10 @@ const struct settings_list settings[] = {
 #ifdef HAVE_LCD_COLOR
     TEXT_SETTING(F_THEMESETTING|F_NEEDAPPLY, colors_file, "filetype colours", "-",
                      THEME_DIR "/", ".colours"),
+#ifdef HAVE_ALBUMART
+    OFFON_SETTING(0, dynamic_colors, LANG_DYNAMIC_COLORS, false,
+                  "dynamic colors", NULL),
+#endif
 #endif
 #ifdef HAVE_BUTTON_LIGHT
     TABLE_SETTING_LIST(F_TIME_SETTING | F_ALLOW_ARBITRARY_VALS,

@@ -647,6 +647,9 @@ struct user_settings
     int lse_color; /* end color for the selector gradient */
     int lst_color; /* color of the text for the selector */
     unsigned char colors_file[MAX_FILENAME+1];
+#ifdef HAVE_ALBUMART
+    bool dynamic_colors; /* auto-color from album art */
+#endif
 #endif
 
     int browser_default;        /* Default browser when accessed from WPS */
