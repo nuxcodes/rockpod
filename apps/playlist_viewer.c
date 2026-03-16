@@ -537,7 +537,6 @@ static void format_line(struct playlist_entry* track, char* str,
             PLAYLIST_VIEWER_ENTRY_SHOW_ID3_CD_AND_TRACKNUM_AND_TITLE_AND_ALBUM
     ))
     {
-        /* iPod Classic 6G custom: always retrieve title from tags/db */
         track->attr |= PLAYLIST_ATTR_RETRIEVE_ID3_ATTEMPTED;
         bool retrieve_success = retrieve_id3_tags(track->index, track->name,
                                                   viewer.id3,

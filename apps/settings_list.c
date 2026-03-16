@@ -1533,7 +1533,7 @@ const struct settings_list settings[] = {
                   "playlist viewer icons",NULL),
     OFFON_SETTING(0,playlist_viewer_indices,LANG_SHOW_INDICES,true,
                   "playlist viewer indices",NULL),
-    CHOICE_SETTING(0, playlist_viewer_track_display, LANG_TRACK_DISPLAY, 0,
+    CHOICE_SETTING(0, playlist_viewer_track_display, LANG_TRACK_DISPLAY, 3,
                    "playlist viewer track display",
                    "track name,full path,title and album from tags,title from tags,"\
                    "cd and track num and title and album from tags",
