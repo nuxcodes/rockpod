@@ -1,17 +1,19 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder - PoC v26
+ * S5L8702 H.264 Hardware Video Decoder - PoC v30b
  *
  * HYBRID PATH TEST: SW coefficients → HW IDCT/deblock/MC
  *
- * v26 fix: Phase 2 was using MPEG-4 path config (FUN_000692e0) which
- * put DEBLK in wrong mode causing hang. Now uses H.264 path init from
- * Apple's FUN_0007e9e0 (MAIN+04=0x40, DEBLK+10=0x10, etc.).
+ * v30b: Per-MB addressing + 3-sub-call architecture.
+ * v30a proved NO auto-stride (only 1/64 MB positions had data).
+ * Now: update SUB+2C/3C per sub-call with computed offset.
+ * 3 sub-calls per MB: Y-top, Y-bottom, chroma.
+ * De-tiling readback for LCD display.
  *
  * Based on decompilation of Apple's FUN_0009144c (per-MB writeback):
  *   - SUB+18/1C = coefficient buffer address (512 bytes per MB)
- *   - XFORM+800 = IDCT command (0x00020341 | has_data << 19)
+ *   - XFORM+800 = IDCT command (0x00020341 | is_chroma << 19)
  *   - XFORM+808 = IDCT status (poll bit 1 for ready)
- *   - DMA+10C   = DMA control (has_data << 3 | 0x31)
+ *   - DMA+10C   = DMA control (is_chroma << 3 | 0x31)
  *   - DEBLK+0C  = deblock trigger (frame_toggle << 30 | 0x80)
  ****************************************************************************/
 
@@ -48,6 +50,7 @@
 #define DMA_WORK_SIZE     0x400       /* 1 KB */
 #define WORK_BUF_SIZE     0x20000     /* 128 KB each */
 #define COEFF_BUF_SIZE    0x200       /* 512 bytes per MB */
+#define HW_STRIDE         (TEST_WIDTH_MBS * 32)  /* 256: HW output row stride */
 
 /* Cache-line alignment */
 #define ALIGN32(x)   (((uintptr_t)(x) + 31) & ~31)
@@ -168,17 +171,22 @@ static void vdec_h264_init(uint32_t dma_addr, uint32_t work1_addr)
     REG32(VDEC_SUB)          = 0xFFFFFFFF;
     REG32(VDEC_MAIN)         = 0xFFFFFFFF;
 
-    /* H.264 config — from FUN_0007e9e0 via DAT_0007f470 array.
-     * v25 used MPEG-4 values (MAIN+04=0x142, DEBLK+10=0x0C06, etc.)
-     * which put DEBLK in wrong mode causing the hang. */
-    REG32(VDEC_MAIN + 0x04) = 0x40;
-    REG32(VDEC_SUB  + 0x04) = 2;
-    REG32(VDEC_SUB  + 0x10) = 0x182;
-    REG32(VDEC_MAIN + 0x10) = 0x10100;
-    REG32(VDEC_DMA + 0x110) = 0x800;
-    REG32(VDEC_XFORM+ 0x804)= 0x40;
-    REG32(VDEC_DEBLK+ 0x10) = 0x10;
-    REG32(VDEC_SUB  + 0x6C) = 0x10001;
+    /* H.264 config — from FUN_0007e9e0 via puVar8 = DAT_0007f470 (MAIN base).
+     * MAIN+04 = 0x40 (SUB block only, no DMA output — H.264 uses SW readback).
+     * SUB+10 = 0x182 (H.264 per-MB double buffer output mode, NOT 0x200 MPEG-4).
+     * MAIN+10 = (mb_h << 16) | (mb_w << 8), SUB+6C = MAIN+10 - 0xFF. */
+    {
+        uint32_t main10 = ((uint32_t)TEST_HEIGHT_MBS << 16)
+                        | ((uint32_t)TEST_WIDTH_MBS << 8);
+        REG32(VDEC_MAIN + 0x04) = 0x40;
+        REG32(VDEC_SUB  + 0x04) = 2;
+        REG32(VDEC_SUB  + 0x10) = 0x182;
+        REG32(VDEC_MAIN + 0x10) = main10;
+        REG32(VDEC_DMA + 0x110) = 0x800;
+        REG32(VDEC_XFORM+ 0x804)= 0x40;
+        REG32(VDEC_DEBLK+ 0x10) = 0x10;
+        REG32(VDEC_SUB  + 0x6C) = main10 - 0xFF;
+    }
 
     poc_log("  MAIN+04=%08lx DEBLK+10=%08lx XFORM+804=%08lx",
             (unsigned long)REG32(VDEC_MAIN + 0x04),
@@ -200,49 +208,19 @@ static void vdec_h264_init(uint32_t dma_addr, uint32_t work1_addr)
     poc_log("  scaling matrices written");
 }
 
-/* ===================== PHASE 3: Output Config ===================== */
-static void vdec_output_config(int w_mbs, int h_mbs)
-{
-    poc_log("Phase 3: output_config (%dx%d MBs)", w_mbs, h_mbs);
-
-    REG32(VDEC_SUB + 0x6C) = (w_mbs << 16) | h_mbs;
-    REG32(VDEC_MAIN + 0x10) = ((w_mbs - 1) << 16) | ((h_mbs - 1) << 8);
-    REG32(VDEC_SUB + 0x10) = 0x200;
-
-    poc_log("  SUB+6C=%08lx MAIN+10=%08lx SUB+10=%08lx",
-            (unsigned long)REG32(VDEC_SUB + 0x6C),
-            (unsigned long)REG32(VDEC_MAIN + 0x10),
-            (unsigned long)REG32(VDEC_SUB + 0x10));
-}
-
-/* ===================== PHASE 4: Reference Frame Setup ===================== */
-static void vdec_refframe_set(uint32_t ref_y, uint32_t ref_cbcr,
-                               uint32_t out_y, uint32_t out_cbcr)
-{
-    poc_log("Phase 4: ref Y=%08lx C=%08lx, out Y=%08lx C=%08lx",
-            (unsigned long)ref_y, (unsigned long)ref_cbcr,
-            (unsigned long)out_y, (unsigned long)out_cbcr);
-
-    /* Reference frame (slot A) */
-    REG32(VDEC_SUB + 0x2C) = ref_y;
-    REG32(VDEC_SUB + 0x30) = 0;
-    REG32(VDEC_SUB + 0x34) = ref_cbcr;
-    REG32(VDEC_SUB + 0x38) = 0;
-
-    /* Output frame (slot B) */
-    REG32(VDEC_SUB + 0x3C) = out_y;
-    REG32(VDEC_SUB + 0x40) = 0;
-    REG32(VDEC_SUB + 0x44) = out_cbcr;
-    REG32(VDEC_SUB + 0x48) = 0;
-}
+/* Phase 3 (vdec_output_config) REMOVED in v29 — it was overwriting H.264
+ * register values with MPEG-4 values (SUB+10=0x200, wrong MAIN+10/SUB+6C).
+ * Phase 2 now sets all dimension/mode registers correctly. */
 
 /* ===================== PER-MB HARDWARE IDCT ===================== */
 /* Implements Apple's FUN_0009144c register sequence.
  * Feeds 512-byte coefficient buffer to HW IDCT/deblock pipeline.
+ * XFORM bit 19 is luma(0)/chroma(1) mode selector (confirmed from
+ * FUN_0009144c reading plane index from ring entry field 0).
  * Returns 0 on success, -1 on timeout. */
 static int hw_mb_submit(uint32_t coeff_buf_phys,
                         uint32_t ref_y, uint32_t out_y,
-                        int frame_toggle, int has_data)
+                        int frame_toggle, int is_chroma)
 {
     int timeout;
 
@@ -251,7 +229,7 @@ static int hw_mb_submit(uint32_t coeff_buf_phys,
     REG32(VDEC_SUB + 0x1C) = coeff_buf_phys + COEFF_BUF_SIZE;
     REG32(VDEC_SUB + 0x0C) = 3;
 
-    /* 2. Set frame addresses */
+    /* 2. Set frame addresses (both always written, toggle selects active) */
     REG32(VDEC_SUB + 0x2C) = ref_y;
     REG32(VDEC_SUB + 0x3C) = out_y;
 
@@ -265,11 +243,12 @@ static int hw_mb_submit(uint32_t coeff_buf_phys,
     }
     REG32(VDEC_DEBLK + 0x0C) = ((uint32_t)frame_toggle << 30) | 0x80;
 
-    /* 4. XFORM IDCT command — 2 partitions (luma then chroma) */
+    /* 4. XFORM IDCT command — 2 blocks, both same type.
+     *    Apple's FUN_0009144c reads plane index from ring entries:
+     *    luma blocks → both bit19=0, chroma blocks → both bit19=1 */
     {
         int p;
         for (p = 0; p < 2; p++) {
-            int d = has_data;
             timeout = 100000;
             while ((XFORM_808 & 2) && --timeout > 0) {}
             if (timeout == 0) {
@@ -277,38 +256,33 @@ static int hw_mb_submit(uint32_t coeff_buf_phys,
                         (unsigned long)XFORM_808, p);
                 return -1;
             }
-            XFORM_800 = XFORM_CMD_BASE | ((uint32_t)d << 19);
-            DMA_10C = ((uint32_t)d << 3) | 0x31;
+            XFORM_800 = XFORM_CMD_BASE | ((uint32_t)is_chroma << 19);
+            DMA_10C = ((uint32_t)is_chroma << 3) | 0x31;
         }
     }
     return 0;
 }
 
-/* Fill a 512-byte coefficient buffer for one MB.
- * Format: 256 bytes luma (64 uint32, byte-swapped) +
- *         256 bytes chroma (64 uint32, byte-swapped).
- * Exact coefficient layout within each section is TBD —
- * start with DC-only test to see if output changes at all. */
-static void fill_test_coefficients(uint32_t *coeff_buf, int mb_idx)
+/* Fill 512-byte coefficient buffer with DC values for two 8×8 blocks.
+ * Each block: 64 uint32 coefficients. Block 0 at [0], Block 1 at [64].
+ * HW expects big-endian, so byte-swap DC values. */
+static void fill_coeff_pair(uint32_t *buf, uint32_t dc0, uint32_t dc1)
 {
     int i;
-
-    /* Zero all 128 words (512 bytes) */
     for (i = 0; i < 128; i++)
-        coeff_buf[i] = 0;
+        buf[i] = 0;
+    buf[0]  = __builtin_bswap32(dc0);
+    buf[64] = __builtin_bswap32(dc1);
+}
 
-    /* Put recognizable non-zero values in DC positions.
-     * Byte-swap: ARM host is little-endian, HW wants big-endian.
-     * Use __builtin_bswap32 (GCC built-in, available on ARM). */
-    {
-        /* Luma DC: varies per MB for easy identification */
-        uint32_t luma_dc = (uint32_t)((mb_idx + 1) * 4);
-        coeff_buf[0] = __builtin_bswap32(luma_dc);
-
-        /* Chroma DC: neutral value */
-        uint32_t chroma_dc = 0x80;
-        coeff_buf[64] = __builtin_bswap32(chroma_dc);
-    }
+/* Wait for HW completion + clear status (replaces inline wait code) */
+static int wait_and_clear(void)
+{
+    int wait = 50000;
+    while (!(REG32(VDEC_SUB) & 0x7F) && --wait > 0) {}
+    REG32(VDEC_SUB)  = 0xFFFFFFFF;
+    REG32(VDEC_MAIN) = 0xFFFFFFFF;
+    return (wait > 0) ? 0 : -1;
 }
 
 /* ===================== MAIN ===================== */
@@ -325,10 +299,10 @@ enum plugin_status plugin_start(const void *parameter)
     int i;
     int total_mbs = TEST_WIDTH_MBS * TEST_HEIGHT_MBS;
 
-    rb->splash(HZ/2, "v26 START");
+    rb->splash(HZ/2, "v30b START");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v26 — H.264 init fix (128x128) ===");
+    poc_log("=== v30b — Per-MB addressing + 3-sub-call architecture (128x128) ===");
 
     /* ---- Allocate buffers from audio buffer ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -358,7 +332,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->memset(dma_work, 0, DMA_WORK_SIZE);
     rb->memset(work_buf1, 0xBB, WORK_BUF_SIZE);
     rb->memset(work_buf2, 0, WORK_BUF_SIZE);
-    rb->memset(ref_y, 0x40, Y_PLANE_SIZE);
+    rb->memset(ref_y, 0x00, Y_PLANE_SIZE);
     rb->memset(ref_cbcr, 0x80, CBCR_PLANE_SIZE);
     rb->memset(out_y, 0xAA, Y_PLANE_SIZE);
     rb->memset(out_cbcr, 0xAA, CBCR_PLANE_SIZE);
@@ -416,260 +390,211 @@ enum plugin_status plugin_start(const void *parameter)
         (uint32_t)(uintptr_t)dma_work,
         (uint32_t)(uintptr_t)work_buf1
     );
-    poc_log("  [post-P2] MAIN+04=%08lx DEBLK+10=%08lx SUB+04=%08lx",
+    /* v29: verify Phase 2 set the correct H.264 values (not MPEG-4) */
+    poc_log("  [post-P2] MAIN+04=%08lx SUB+10=%08lx MAIN+10=%08lx SUB+6C=%08lx",
             (unsigned long)REG32(VDEC_MAIN + 0x04),
-            (unsigned long)REG32(VDEC_DEBLK + 0x10),
-            (unsigned long)REG32(VDEC_SUB + 0x04));
+            (unsigned long)REG32(VDEC_SUB + 0x10),
+            (unsigned long)REG32(VDEC_MAIN + 0x10),
+            (unsigned long)REG32(VDEC_SUB + 0x6C));
+    poc_log("  Expected: MAIN+04=0x40 SUB+10=0x182 MAIN+10=0x%08lx SUB+6C=0x%08lx",
+            (unsigned long)(((uint32_t)TEST_HEIGHT_MBS << 16) | ((uint32_t)TEST_WIDTH_MBS << 8)),
+            (unsigned long)(((uint32_t)TEST_HEIGHT_MBS << 16) | ((uint32_t)TEST_WIDTH_MBS << 8)) - 0xFF);
     lflush();
 
-    /* Phase 3: Output config */
-    vdec_output_config(TEST_WIDTH_MBS, TEST_HEIGHT_MBS);
-    poc_log("  [post-P3] MAIN=%08lx SUB=%08lx CORE=%08lx",
-            (unsigned long)REG32(VDEC_MAIN),
-            (unsigned long)REG32(VDEC_SUB),
-            (unsigned long)REG32(VDEC_CORE));
-    lflush();
+    /* Phase 3/4 REMOVED in v29 — Phase 3 was MPEG-4 output config that
+     * overwrote SUB+10 to 0x200 (wrong mode). Phase 4 wrote extra SUB
+     * registers that FUN_0009144c doesn't use. SUB+2C/3C are now set
+     * per-MB in hw_mb_submit, matching Apple's FUN_0009144c exactly. */
 
-    /* Phase 4: Reference and output frame addresses */
-    vdec_refframe_set(
-        (uint32_t)(uintptr_t)ref_y,
-        (uint32_t)(uintptr_t)ref_cbcr,
-        (uint32_t)(uintptr_t)out_y,
-        (uint32_t)(uintptr_t)out_cbcr
-    );
-    poc_log("  [post-P4] MAIN=%08lx SUB=%08lx CORE=%08lx",
-            (unsigned long)REG32(VDEC_MAIN),
-            (unsigned long)REG32(VDEC_SUB),
-            (unsigned long)REG32(VDEC_CORE));
-    lflush();
-
-    /* NOTE: Skipping CORE+10/14/34/9C setup entirely.
-     * The hybrid path (FUN_0007e9e0 → FUN_0009144c) does NOT configure
-     * CORE registers — validated via Ghidra callee analysis. */
-    poc_log("Phase 5: per-MB coefficient feed (%d MBs)", total_mbs);
-    poc_log("  XFORM+800 pre: %08lx  XFORM+808 pre: %08lx",
-            (unsigned long)XFORM_800, (unsigned long)XFORM_808);
+    poc_log("Phase 3: per-MB decode (%d MBs, 3 sub-calls each)", total_mbs);
+    poc_log("  HW_STRIDE=%d, XFORM luma=0x%08lx chroma=0x%08lx",
+            HW_STRIDE,
+            (unsigned long)XFORM_CMD_BASE,
+            (unsigned long)(XFORM_CMD_BASE | (1u << 19)));
     lflush();
 
     /* Flush all buffer data to physical memory before DMA */
     rb->commit_discard_dcache();
 
-    /* ---- Per-MB coefficient feed loop ---- */
+    /* ---- Per-MB loop: 3 sub-calls per MB ---- */
     {
         int mb, frame_toggle = 0;
         int timeouts = 0;
+        uint32_t coeff_phys = (uint32_t)(uintptr_t)coeff_buf;
+        uint32_t *cb = (uint32_t *)(void *)coeff_buf;
 
         for (mb = 0; mb < total_mbs; mb++) {
-            /* Fill coefficient buffer with test data */
-            fill_test_coefficients((uint32_t *)(void *)coeff_buf, mb);
+            int mc = mb % TEST_WIDTH_MBS;
+            int mr = mb / TEST_WIDTH_MBS;
+            uint32_t y_base = (uint32_t)(uintptr_t)ref_y
+                            + (uint32_t)(mr * 16 * HW_STRIDE + mc * 32);
+            uint32_t c_base = (uint32_t)(uintptr_t)ref_cbcr
+                            + (uint32_t)(mr * 8 * HW_STRIDE + mc * 32);
+            uint32_t dc = (uint32_t)((mb + 1) * 2);
 
-            /* Flush coefficient buffer to physical memory */
+            /* Sub-call 1: Y-top (blocks Y0+Y1, rows 0-7) */
+            fill_coeff_pair(cb, dc, dc);
             rb->commit_dcache();
-
-            /* Submit to hardware IDCT */
-            if (hw_mb_submit(
-                    (uint32_t)(uintptr_t)coeff_buf,
-                    (uint32_t)(uintptr_t)ref_y,
-                    (uint32_t)(uintptr_t)out_y,
-                    frame_toggle,
-                    1  /* has_data = 1 */
-                ) < 0) {
+            if (hw_mb_submit(coeff_phys, y_base, y_base,
+                             frame_toggle, 0) < 0)
                 timeouts++;
-                if (timeouts >= 3) {
-                    poc_log("  ABORT: %d timeouts, stopping at MB %d", timeouts, mb);
-                    lflush();
-                    break;
-                }
-            }
-
-            /* Toggle frame buffer (double-buffering, per Apple firmware) */
+            wait_and_clear();
             frame_toggle ^= 1;
 
-            /* Log first few and last MB for debugging */
-            if (mb < 3 || mb == total_mbs - 1) {
-                poc_log("  MB[%d]: SUB=%08lx DEBLK+14=%08lx XFORM808=%08lx",
-                        mb,
+            /* Sub-call 2: Y-bottom (blocks Y2+Y3, rows 8-15) */
+            fill_coeff_pair(cb, dc, dc);
+            rb->commit_dcache();
+            if (hw_mb_submit(coeff_phys,
+                             y_base + 8 * HW_STRIDE,
+                             y_base + 8 * HW_STRIDE,
+                             frame_toggle, 0) < 0)
+                timeouts++;
+            wait_and_clear();
+            frame_toggle ^= 1;
+
+            /* Sub-call 3: Chroma (Cb+Cr blocks) */
+            fill_coeff_pair(cb, 0, 0);
+            rb->commit_dcache();
+            if (hw_mb_submit(coeff_phys, c_base, c_base,
+                             frame_toggle, 1) < 0)
+                timeouts++;
+            wait_and_clear();
+            frame_toggle ^= 1;
+
+            /* Log first 2 + last MB */
+            if (mb < 2 || mb == total_mbs - 1) {
+                poc_log("  MB[%d](%d,%d): y_base=%08lx SUB=%08lx DEBLK+14=%08lx",
+                        mb, mc, mr, (unsigned long)y_base,
                         (unsigned long)REG32(VDEC_SUB),
-                        (unsigned long)REG32(VDEC_DEBLK + 0x14),
-                        (unsigned long)XFORM_808);
+                        (unsigned long)REG32(VDEC_DEBLK + 0x14));
+            }
+
+            if (timeouts >= 3) {
+                poc_log("  ABORT: %d timeouts at MB %d", timeouts, mb);
+                lflush();
+                break;
             }
         }
 
         poc_log("  %d/%d MBs submitted (%d timeouts)", mb, total_mbs, timeouts);
-        poc_log("  Final toggle=%d", frame_toggle);
     }
     lflush();
 
-    /* NOTE: Skipping Phase 6 (CORE+0C trigger) — not used in hybrid path */
-
-    /* ---- Small delay for any pending HW operations ---- */
-    rb->sleep(HZ/10);
-
-    /* ---- Invalidate cache to see DMA results ---- */
+    /* ---- Check output buffers ---- */
     rb->commit_discard_dcache();
-
-    /* ---- Check output buffer ---- */
     poc_log("--- Output buffer check ---");
     {
-        int changed = 0;
-        for (i = 0; i < Y_PLANE_SIZE; i++) {
-            if (out_y[i] != 0xAA) {
-                changed++;
-            }
-        }
-        poc_log("Y plane: %d/%d bytes changed from 0xAA", changed, Y_PLANE_SIZE);
+        int ref_changed = 0;
+        for (i = 0; i < Y_PLANE_SIZE; i++)
+            if (ref_y[i] != 0x00) ref_changed++;
+        poc_log("ref_y: %d/%d bytes non-zero", ref_changed, Y_PLANE_SIZE);
 
-        if (changed > 0) {
-            int first_changed = -1, last_changed = -1;
-            poc_log("*** OUTPUT BUFFER MODIFIED! ***");
-            for (i = 0; i < Y_PLANE_SIZE; i++) {
-                if (out_y[i] != 0xAA) {
-                    if (first_changed < 0) first_changed = i;
-                    last_changed = i;
-                }
-            }
-            poc_log("  Changed range: [%d..%d] (%d bytes)",
-                    first_changed, last_changed, changed);
+        int rc_changed = 0;
+        for (i = 0; i < CBCR_PLANE_SIZE; i++)
+            if (ref_cbcr[i] != 0x80) rc_changed++;
+        poc_log("ref_cbcr: %d/%d bytes changed from 0x80", rc_changed, CBCR_PLANE_SIZE);
+    }
+    lflush();
 
-            {
-                int dump_start = (first_changed / 16) * 16;
-                int dump_end = ((last_changed / 16) + 1) * 16;
-                if (dump_end > Y_PLANE_SIZE) dump_end = Y_PLANE_SIZE;
-                if (dump_end - dump_start > 256) dump_end = dump_start + 256;
-                for (i = dump_start; i < dump_end; i += 16) {
-                    poc_log("  Y[%04x] %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
-                            i,
-                            out_y[i], out_y[i+1], out_y[i+2], out_y[i+3],
-                            out_y[i+4], out_y[i+5], out_y[i+6], out_y[i+7],
-                            out_y[i+8], out_y[i+9], out_y[i+10], out_y[i+11],
-                            out_y[i+12], out_y[i+13], out_y[i+14], out_y[i+15]);
+    /* ---- MB position grid scan ---- */
+    poc_log("--- MB position scan (HW_STRIDE=%d) ---", HW_STRIDE);
+    {
+        int mr, mc, mb_found = 0;
+        for (mr = 0; mr < TEST_HEIGHT_MBS; mr++) {
+            for (mc = 0; mc < TEST_WIDTH_MBS; mc++) {
+                int off = mr * 16 * HW_STRIDE + mc * 32;
+                int c = 0;
+                for (i = 0; i < 16; i++)
+                    if (ref_y[off + i] != 0x00) c++;
+                if (c > 0) {
+                    mb_found++;
+                    if (mb_found <= 4 || mr == TEST_HEIGHT_MBS - 1)
+                        poc_log("  MB(%d,%d) off=%d: %d/16 [0]=%02x [8]=%02x",
+                                mc, mr, off, c, ref_y[off], ref_y[off + 8]);
                 }
             }
         }
-
-        changed = 0;
-        for (i = 0; i < CBCR_PLANE_SIZE; i++) {
-            if (out_cbcr[i] != 0xAA) {
-                changed++;
-            }
-        }
-        poc_log("CbCr plane: %d/%d bytes changed from 0xAA", changed, CBCR_PLANE_SIZE);
-
-        {
-            int work_changed = 0;
-            for (i = 0; i < WORK_BUF_SIZE; i++) {
-                if (work_buf1[i] != 0xBB) work_changed++;
-            }
-            poc_log("work_buf1: %d/%d bytes changed from 0xBB", work_changed, WORK_BUF_SIZE);
-        }
-
-        {
-            int ref_changed = 0;
-            for (i = 0; i < Y_PLANE_SIZE; i++) {
-                if (ref_y[i] != 0x40) ref_changed++;
-            }
-            poc_log("ref_y: %d/%d bytes changed from 0x40", ref_changed, Y_PLANE_SIZE);
-        }
+        poc_log("  Total: %d/%d MB positions with data", mb_found, total_mbs);
     }
     lflush();
 
     /* ---- Binary dump ---- */
-    poc_log("--- Dumping output buffers to files ---");
+    poc_log("--- Dumping ref_y to file ---");
     {
         int dump_fd;
         ssize_t written;
-
-        dump_fd = rb->open("/vdec_y.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
+        dump_fd = rb->open("/vdec_refy.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
         if (dump_fd >= 0) {
-            written = rb->write(dump_fd, out_y, Y_PLANE_SIZE);
+            written = rb->write(dump_fd, ref_y, Y_PLANE_SIZE);
             rb->close(dump_fd);
-            poc_log("  Y dump: %ld bytes to /vdec_y.bin", (long)written);
-        }
-
-        dump_fd = rb->open("/vdec_cbcr.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-        if (dump_fd >= 0) {
-            written = rb->write(dump_fd, out_cbcr, CBCR_PLANE_SIZE);
-            rb->close(dump_fd);
-            poc_log("  CbCr dump: %ld bytes to /vdec_cbcr.bin", (long)written);
+            poc_log("  ref_y dump: %ld bytes", (long)written);
         }
     }
     lflush();
 
     /* ---- Post-decode register dump ---- */
     poc_log("--- Post-decode register dump ---");
-    poc_log("MAIN:");
-    {
-        int off;
-        for (off = 0; off <= 0x2C; off += 4)
-            poc_log("  +%02x=%08lx", off, (unsigned long)REG32(VDEC_MAIN + off));
-    }
-    poc_log("CORE:");
-    {
-        int off;
-        for (off = 0; off <= 0x1C; off += 4)
-            poc_log("  +%02x=%08lx", off, (unsigned long)REG32(VDEC_CORE + off));
-        poc_log("  +34=%08lx +9C=%08lx +A0=%08lx",
-                (unsigned long)REG32(VDEC_CORE+0x34),
-                (unsigned long)REG32(VDEC_CORE+0x9C),
-                (unsigned long)REG32(VDEC_CORE+0xA0));
-    }
-    poc_log("SUB:");
-    {
-        int off;
-        for (off = 0; off <= 0x80; off += 4)
-            poc_log("  +%02x=%08lx", off, (unsigned long)REG32(VDEC_SUB + off));
-    }
-    poc_log("DMA:");
-    {
-        int off;
-        for (off = 0; off <= 0x20; off += 4)
-            poc_log("  +%02x=%08lx", off, (unsigned long)REG32(VDEC_DMA + off));
-        poc_log("  +100=%08lx +104=%08lx +10c=%08lx +110=%08lx",
-                (unsigned long)REG32(VDEC_DMA+0x100),
-                (unsigned long)REG32(VDEC_DMA+0x104),
-                (unsigned long)REG32(VDEC_DMA+0x10C),
-                (unsigned long)REG32(VDEC_DMA+0x110));
-    }
-    poc_log("XFORM: +800=%08lx +804=%08lx +808=%08lx",
-            (unsigned long)XFORM_800,
-            (unsigned long)REG32(VDEC_XFORM+0x804),
-            (unsigned long)XFORM_808);
-    poc_log("DEBLK: +00=%08lx +0c=%08lx +10=%08lx +14=%08lx",
+    poc_log("MAIN: +00=%08lx +04=%08lx +08=%08lx +10=%08lx +2C=%08lx",
+            (unsigned long)REG32(VDEC_MAIN),
+            (unsigned long)REG32(VDEC_MAIN + 0x04),
+            (unsigned long)REG32(VDEC_MAIN + 0x08),
+            (unsigned long)REG32(VDEC_MAIN + 0x10),
+            (unsigned long)REG32(VDEC_MAIN + 0x2C));
+    poc_log("SUB: +00=%08lx +10=%08lx +6C=%08lx +74=%08lx",
+            (unsigned long)REG32(VDEC_SUB),
+            (unsigned long)REG32(VDEC_SUB + 0x10),
+            (unsigned long)REG32(VDEC_SUB + 0x6C),
+            (unsigned long)REG32(VDEC_SUB + 0x74));
+    poc_log("DEBLK: +00=%08lx +14=%08lx",
             (unsigned long)REG32(VDEC_DEBLK),
-            (unsigned long)REG32(VDEC_DEBLK+0x0C),
-            (unsigned long)REG32(VDEC_DEBLK+0x10),
-            (unsigned long)REG32(VDEC_DEBLK+0x14));
+            (unsigned long)REG32(VDEC_DEBLK + 0x14));
     lflush();
 
-    /* ---- Display Y buffer on LCD ---- */
-    poc_log("--- Displaying Y buffer on LCD ---");
+    /* ---- De-tile HW buffer → LCD display ---- */
+    poc_log("--- De-tiling ref_y → LCD ---");
     lflush();
     {
         fb_data *frame_rgb = (fb_data *)(void *)work_buf1;
-        int px;
+        int px, py;
 
-        for (px = 0; px < TEST_WIDTH * TEST_HEIGHT; px++) {
-            uint8_t luma = out_y[px];
-            frame_rgb[px] = ((luma >> 3) << 11)
-                          | ((luma >> 2) << 5)
-                          | (luma >> 3);
+        for (py = 0; py < TEST_HEIGHT; py++) {
+            for (px = 0; px < TEST_WIDTH; px++) {
+                int mc = px / 16, mr = py / 16;
+                int bc = (px / 8) & 1, br = (py / 8) & 1;
+                int bx = px % 8, by = py % 8;
+                int hw_off = (mr * 16 + br * 8 + by) * HW_STRIDE
+                           + mc * 32 + bc * 8 + bx;
+                /* Byte-swap within uint32 (HW stores big-endian pixels) */
+                int wb = hw_off & ~3;
+                int bi = 3 - (hw_off & 3);
+                uint8_t pixel = ref_y[wb + bi];
+                frame_rgb[py * TEST_WIDTH + px] = ((pixel >> 3) << 11)
+                                                | ((pixel >> 2) << 5)
+                                                | (pixel >> 3);
+            }
         }
 
         rb->lcd_clear_display();
         rb->lcd_bitmap(frame_rgb, 0, 0, TEST_WIDTH, TEST_HEIGHT);
         rb->lcd_update();
 
-        poc_log("  LCD updated, waiting for button press...");
+        poc_log("  LCD updated, 5s timeout...");
         lflush();
-        while (rb->button_get(true) == BUTTON_NONE) {}
+        {
+            int btn_wait = 50;
+            while (--btn_wait > 0) {
+                if (rb->button_get(false) != BUTTON_NONE) break;
+                rb->sleep(HZ/10);
+            }
+        }
     }
 
     /* ---- Cleanup ---- */
     vdec_power_off();
-    poc_log("=== v26 done ===");
+    poc_log("=== v30b done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
 
-    rb->splashf(HZ*3, "v26 done");
+    rb->splashf(HZ*3, "v30b done");
     return PLUGIN_OK;
 }

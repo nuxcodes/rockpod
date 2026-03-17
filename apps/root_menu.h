@@ -68,6 +68,9 @@ enum {
 #ifdef HAVE_TAGCACHE
     GO_TO_PICTUREFLOW,
 #endif
+#ifdef IPOD_6G
+    GO_TO_VIDEOS,
+#endif
 };
 #ifndef PLUGIN
 extern struct menu_item_ex root_menu_;

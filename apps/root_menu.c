@@ -74,6 +74,9 @@
 #include "plugin.h"
 #include "filetypes.h"
 #include "disk.h"
+#ifdef IPOD_6G
+#include "videos.h"
+#endif
 
 struct root_items {
     int (*function)(void* param);
@@ -470,6 +473,14 @@ static int pictureflow_scrn(void* param)
 }
 #endif
 
+#ifdef IPOD_6G
+static int videos_handler(void* param)
+{
+    (void)param;
+    return videos_screen();
+}
+#endif
+
 /* These are all static const'd from apps/menus/ *.c
    so little hack so we can use them */
 extern struct menu_item_ex
@@ -510,6 +521,9 @@ static const struct root_items items[] = {
 #ifdef HAVE_TAGCACHE
     [GO_TO_PICTUREFLOW] = { pictureflow_scrn, NULL, NULL },
 #endif
+#ifdef IPOD_6G
+    [GO_TO_VIDEOS] = { videos_handler, NULL, NULL },
+#endif
 
 };
 //static const int nb_items = sizeof(items)/sizeof(*items);
@@ -531,6 +545,10 @@ MENUITEM_RETURNVALUE(pictureflow_item, "Cover Flow", GO_TO_PICTUREFLOW,
 #endif
 MENUITEM_RETURNVALUE(rocks_browser, ID2P(LANG_PLUGINS), GO_TO_BROWSEPLUGINS,
                         NULL, Icon_Plugin);
+#ifdef IPOD_6G
+MENUITEM_RETURNVALUE(videos_item, "Videos", GO_TO_VIDEOS,
+                        NULL, Icon_Playback_menu);
+#endif
 
 static char *get_wps_item_name(int selected_item, void * data,
                                char *buffer, size_t buffer_len)
@@ -565,6 +583,9 @@ static struct menu_callback_with_desc root_menu_desc = {
         item_callback, ID2P(LANG_ROCKBOX_TITLE), Icon_Rockbox };
 
 static struct menu_table menu_table[] = {
+#ifdef IPOD_6G
+    { "videos", &videos_item },
+#endif
 #ifdef HAVE_TAGCACHE
     { "pictureflow", &pictureflow_item },
     { "database", &db_browser },
