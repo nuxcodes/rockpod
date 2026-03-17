@@ -54,6 +54,7 @@ root_menu.c
 itunesdb.c
 videos.c
 mp4_demux.c
+video_thumb.c
 #endif
 screens.c
 settings.c

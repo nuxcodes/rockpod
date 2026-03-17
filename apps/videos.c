@@ -29,15 +29,26 @@
 #include "misc.h"
 #include "root_menu.h"
 #include "itunesdb.h"
+#include "mp4_demux.h"
+#include "video_thumb.h"
 #include "videos.h"
 
 #include "file.h"
 #include "string-extra.h"
+#include "lcd.h"
 
 #include <string.h>
 #include <stdio.h>
 
 #define MAX_VIDEO_ENTRIES 256
+
+/* Thumbnail storage: one THUMB_SIZE x THUMB_SIZE RGB565 bitmap per video */
+#define MAX_THUMBS 64
+static fb_data thumb_bitmaps[MAX_THUMBS][THUMB_SIZE * THUMB_SIZE];
+static bool    thumb_valid[MAX_THUMBS];
+
+/* Line height for thumbnail lists */
+#define THUMB_LINE_HEIGHT (THUMB_SIZE + 4)
 
 #define VIDEOS_CACHE_PATH ROCKBOX_DIR "/videos.cache"
 #define ITUNESDB_PATH     "/iPod_Control/iTunes/iTunesDB"
@@ -180,12 +191,99 @@ static int ensure_video_lib(void)
     return ret;
 }
 
-/* --- Video list (innermost: title + duration, no artist) --- */
+/* --- Thumbnail loading --- */
+
+/* JPEG decoder needs working memory: struct jpeg (~50KB) + decode buf (38KB)
+ * + output pixels. 128KB should be safe. */
+#define THUMB_WORK_SIZE (128 * 1024)
+static unsigned char thumb_work_buf[THUMB_WORK_SIZE] CACHEALIGN_ATTR;
+
+/* Try to find a fallback JPEG thumbnail for a video.
+ * Looks for <artist>.jpg in .rockbox/albumart/ */
+static bool load_fallback_thumb(struct video_entry *entry, int thumb_idx)
+{
+    char path[MAX_PATH];
+
+    if (entry->artist[0])
+    {
+        snprintf(path, sizeof(path),
+                 "/.rockbox/albumart/%s.jpg", entry->artist);
+        if (video_thumb_from_jpeg(path, thumb_bitmaps[thumb_idx],
+                                  thumb_work_buf, THUMB_WORK_SIZE))
+            return true;
+    }
+    return false;
+}
+
+static void load_thumbnails(int *indices, int count)
+{
+    int i;
+    int limit = (count < MAX_THUMBS) ? count : MAX_THUMBS;
+
+    memset(thumb_valid, 0, sizeof(thumb_valid));
+
+    for (i = 0; i < limit; i++)
+    {
+        struct video_entry *entry = &video_lib.entries[indices[i]];
+
+        /* Try embedded cover art first */
+        thumb_valid[i] = video_thumb_extract(
+            entry->filepath,
+            thumb_bitmaps[i],
+            thumb_work_buf, THUMB_WORK_SIZE);
+
+        /* Fall back to album art */
+        if (!thumb_valid[i])
+            thumb_valid[i] = load_fallback_thumb(entry, i);
+    }
+}
+
+/* --- Open video: demux MP4, show info, eventually play --- */
+
+/* Buffers for MP4 demuxer sample tables */
+static uint32_t demux_sample_sizes[MP4V_MAX_SAMPLES];
+static uint32_t demux_chunk_offsets[MP4V_MAX_STCO];
+
+static void open_video(struct video_entry *entry)
+{
+    struct mp4v_demux_res demux;
+    int ret;
+
+    splash(0, "Opening...");
+
+    ret = mp4v_demux_open(entry->filepath, &demux,
+                          demux_sample_sizes, MP4V_MAX_SAMPLES,
+                          demux_chunk_offsets, MP4V_MAX_STCO);
+
+    if (ret < 0)
+    {
+        splashf(HZ * 2, "Cannot open:\n%s", entry->filepath);
+        return;
+    }
+
+    /* Show track info */
+    splashf(HZ * 4,
+            "%s\n"
+            "%c%c%c%c %ux%u\n"
+            "Profile %u Level %u\n"
+            "%u frames, %u keyframes\n"
+            "Cover: %s",
+            entry->title,
+            SPLITFOURCC(demux.format),
+            demux.width, demux.height,
+            demux.avc_profile, demux.avc_level,
+            demux.num_samples, demux.num_stss,
+            demux.cover_size > 0 ? "yes" : "no");
+}
+
+/* --- Video list with thumbnails --- */
 
 struct video_list_ctx {
     int *indices;
     int count;
 };
+
+static struct video_list_ctx *_vlist_ctx; /* for draw callback */
 
 static const char *video_list_get_name(int selected_item, void *data,
                                        char *buffer, size_t buffer_len)
@@ -202,22 +300,98 @@ static const char *video_list_get_name(int selected_item, void *data,
     return buffer;
 }
 
+static void video_list_draw_item(struct list_putlineinfo_t *info)
+{
+    struct screen *display = info->display;
+    int item = info->line;
+    int x = info->x;
+    int y = info->y;
+    struct bitmap thumb_bm;
+
+    if (item < 0 || item >= _vlist_ctx->count)
+        return;
+
+    /* Draw thumbnail if available */
+    if (item < MAX_THUMBS && thumb_valid[item])
+    {
+        thumb_bm.width = THUMB_SIZE;
+        thumb_bm.height = THUMB_SIZE;
+        thumb_bm.data = (unsigned char *)thumb_bitmaps[item];
+#if (LCD_DEPTH > 1)
+        thumb_bm.format = FORMAT_NATIVE;
+        thumb_bm.maskdata = NULL;
+#endif
+#ifdef HAVE_LCD_COLOR
+        thumb_bm.alpha_offset = 0;
+#endif
+        int thumb_y = y + (THUMB_LINE_HEIGHT - THUMB_SIZE) / 2;
+        display->bitmap(&thumb_bm, x, thumb_y, THUMB_SIZE, THUMB_SIZE);
+        x += THUMB_SIZE + 4;
+    }
+
+    /* Draw text to the right of the thumbnail */
+    {
+        const char *text = info->dsp_text;
+        int text_y = y + (THUMB_LINE_HEIGHT - display->getcharheight()) / 2;
+
+        if (info->is_selected)
+        {
+            display->set_drawmode(DRMODE_SOLID);
+            display->fillrect(x, y, info->vp->width - x, THUMB_LINE_HEIGHT);
+            display->set_drawmode(DRMODE_SOLID | DRMODE_INVERSEVID);
+        }
+
+        display->putsxy(x, text_y, text);
+        display->set_drawmode(DRMODE_SOLID);
+    }
+}
+
 static int show_artist_videos(const char *artist, int *indices, int count)
 {
     struct gui_synclist list;
     struct video_list_ctx ctx;
     int action;
+    bool has_any_thumbs = false;
+    int i;
+    int ret = GO_TO_PREVIOUS;
 
     ctx.indices = indices;
     ctx.count = count;
+    _vlist_ctx = &ctx;
+
+    /* Load thumbnails for these videos */
+    load_thumbnails(indices, count);
+    for (i = 0; i < count && i < MAX_THUMBS; i++)
+    {
+        if (thumb_valid[i])
+        {
+            has_any_thumbs = true;
+            break;
+        }
+    }
+
 
     gui_synclist_init(&list, video_list_get_name, &ctx, false, 1, NULL);
     gui_synclist_set_nb_items(&list, count);
     gui_synclist_set_title(&list, artist, Icon_NOICON);
+
+    if (has_any_thumbs)
+    {
+        list.selected_size = 2;
+        list.callback_draw_item = video_list_draw_item;
+    }
+
+    /* Force our line height and do the first draw.
+     * We must set line_height after gui_synclist_draw's dirty reinit. */
     gui_synclist_draw(&list);
+    if (has_any_thumbs)
+        list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
 
     for (;;)
     {
+        if (has_any_thumbs)
+            list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
+
         list_do_action(CONTEXT_STD, HZ / 2, &list, &action);
 
         switch (action)
@@ -229,21 +403,28 @@ static int show_artist_videos(const char *artist, int *indices, int count)
                 {
                     struct video_entry *entry =
                         &video_lib.entries[indices[sel]];
-                    splashf(HZ * 3, "%s\n%s", entry->title, entry->filepath);
+                    open_video(entry);
                     gui_synclist_draw(&list);
                 }
                 break;
             }
 
             case ACTION_STD_CANCEL:
-                return GO_TO_PREVIOUS;
+                ret = GO_TO_PREVIOUS;
+                goto out;
 
             default:
                 if (default_event_handler(action) == SYS_USB_CONNECTED)
-                    return GO_TO_ROOT;
+                {
+                    ret = GO_TO_ROOT;
+                    goto out;
+                }
                 break;
         }
     }
+
+out:
+    return ret;
 }
 
 /* --- Artist list (middle layer: group by artist within a category) --- */

@@ -653,6 +653,62 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
     return true;
 }
 
+/* Walk a generic box container, skipping all children except the target.
+ * When found, records the file offset + size of the target's data payload. */
+static void walk_for_covr(struct mp4_parse_ctx *ctx, size_t chunk_len,
+                          int depth)
+{
+    size_t size_remaining = chunk_len - 8;
+
+    /* depth 0 = udta, 1 = meta, 2 = ilst, 3 = covr */
+
+    if (depth == 1)
+    {
+        /* meta has a 4-byte version/flags before children */
+        stream_read_uint32(&ctx->stream);
+        size_remaining -= 4;
+    }
+
+    while (size_remaining > 8)
+    {
+        uint32_t sub_len = stream_read_uint32(&ctx->stream);
+        uint32_t sub_id  = stream_read_uint32(&ctx->stream);
+
+        if (sub_len <= 1 || sub_len > size_remaining)
+            break;
+
+        bool descend = false;
+
+        if (depth == 0 && sub_id == MAKEFOURCC('m','e','t','a'))
+            descend = true;
+        else if (depth == 1 && sub_id == MAKEFOURCC('i','l','s','t'))
+            descend = true;
+        else if (depth == 2 && sub_id == MAKEFOURCC('c','o','v','r'))
+            descend = true;
+
+        if (descend && depth < 3)
+        {
+            walk_for_covr(ctx, sub_len, depth + 1);
+        }
+        else if (depth == 3 && sub_id == MAKEFOURCC('d','a','t','a'))
+        {
+            /* covr/data: version+flags(4) + locale(4) + image_data */
+            uint32_t data_type = stream_read_uint32(&ctx->stream);
+            stream_skip(&ctx->stream, 4); /* locale */
+            ctx->res->cover_type = (uint8_t)(data_type & 0xFF);
+            ctx->res->cover_offset = (uint32_t)stream_tell(&ctx->stream);
+            ctx->res->cover_size = sub_len - 8 - 8;
+            stream_skip(&ctx->stream, sub_len - 8 - 8);
+        }
+        else
+        {
+            stream_skip(&ctx->stream, sub_len - 8);
+        }
+
+        size_remaining -= sub_len;
+    }
+}
+
 /* moov - movie container */
 static bool read_chunk_moov(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
@@ -679,6 +735,10 @@ static bool read_chunk_moov(struct mp4_parse_ctx *ctx, size_t chunk_len)
                 {
                     stream_skip(&ctx->stream, sub_len - 8);
                 }
+                break;
+            case MAKEFOURCC('u','d','t','a'):
+                /* Walk udta → meta → ilst → covr for cover art */
+                walk_for_covr(ctx, sub_len, 0);
                 break;
             default:
                 stream_skip(&ctx->stream, sub_len - 8);

@@ -103,6 +103,11 @@ struct mp4v_demux_res {
     /* mdat location */
     uint32_t mdat_offset;
     uint32_t mdat_len;
+
+    /* Cover art (covr atom) — file offset and size of JPEG/PNG data */
+    uint32_t cover_offset;  /* 0 if no cover art */
+    uint32_t cover_size;
+    uint8_t  cover_type;    /* 13=JPEG, 14=PNG */
 };
 
 /* Open and parse an MP4 file, extracting the first H.264 video track.
