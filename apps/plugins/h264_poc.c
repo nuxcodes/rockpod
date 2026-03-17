@@ -1,11 +1,11 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder - PoC v25
+ * S5L8702 H.264 Hardware Video Decoder - PoC v26
  *
  * HYBRID PATH TEST: SW coefficients → HW IDCT/deblock/MC
  *
- * Instead of feeding H.264 CAVLC bitstream to the entropy decoder
- * (which we've proven doesn't work), this version feeds software-
- * prepared coefficient data directly to the IDCT pipeline.
+ * v26 fix: Phase 2 was using MPEG-4 path config (FUN_000692e0) which
+ * put DEBLK in wrong mode causing hang. Now uses H.264 path init from
+ * Apple's FUN_0007e9e0 (MAIN+04=0x40, DEBLK+10=0x10, etc.).
  *
  * Based on decompilation of Apple's FUN_0009144c (per-MB writeback):
  *   - SUB+18/1C = coefficient buffer address (512 bytes per MB)
@@ -148,57 +148,71 @@ static void vdec_reset(void)
     REG32(VDEC_SUB)          = 0xFFFFFFFF;
 }
 
-/* ===================== PHASE 2: Frame Setup ===================== */
-static void vdec_frame_setup(uint32_t dma_addr, uint32_t work1_addr,
-                             uint32_t work2_addr)
+/* ===================== PHASE 2: H.264 Init ===================== */
+/* From Apple's FUN_0007e9e0 — uses H.264 hybrid path register values,
+ * NOT the MPEG-4 path values from FUN_000692e0 that v25 used. */
+static void vdec_h264_init(uint32_t dma_addr, uint32_t work1_addr)
 {
     int i;
-    poc_log("Phase 2: frame_setup");
-    poc_log("  dma=%08lx w1=%08lx w2=%08lx",
-            (unsigned long)dma_addr, (unsigned long)work1_addr,
-            (unsigned long)work2_addr);
+    poc_log("Phase 2: H.264 init (FUN_0007e9e0 sequence)");
 
+    /* Second clear block — Apple does this in FUN_0007e9e0 after
+     * calling FUN_0007476c.  Notably includes MAIN+0 = 0xFFFFFFFF
+     * which FUN_0007476c does NOT write. */
+    REG32(VDEC_MAIN + 0x1C) = 0xFFFFFFFF;
+    REG32(VDEC_MAIN + 0x0C) = 0;
+    REG32(VDEC_CORE)         = 0xFFFFFFFF;
+    REG32(VDEC_CORE)         = 0xFFFFFFFF;
+    REG32(VDEC_DMA + 0x100)  = 0xFFFFFFFF;
+    REG32(VDEC_DEBLK)        = 0xFFFFFFFF;
+    REG32(VDEC_SUB)          = 0xFFFFFFFF;
+    REG32(VDEC_MAIN)         = 0xFFFFFFFF;
+
+    /* H.264 config — from FUN_0007e9e0 via DAT_0007f470 array.
+     * v25 used MPEG-4 values (MAIN+04=0x142, DEBLK+10=0x0C06, etc.)
+     * which put DEBLK in wrong mode causing the hang. */
+    REG32(VDEC_MAIN + 0x04) = 0x40;
+    REG32(VDEC_SUB  + 0x04) = 2;
+    REG32(VDEC_SUB  + 0x10) = 0x182;
+    REG32(VDEC_MAIN + 0x10) = 0x10100;
+    REG32(VDEC_DMA + 0x110) = 0x800;
+    REG32(VDEC_XFORM+ 0x804)= 0x40;
+    REG32(VDEC_DEBLK+ 0x10) = 0x10;
+    REG32(VDEC_SUB  + 0x6C) = 0x10001;
+
+    poc_log("  MAIN+04=%08lx DEBLK+10=%08lx XFORM+804=%08lx",
+            (unsigned long)REG32(VDEC_MAIN + 0x04),
+            (unsigned long)REG32(VDEC_DEBLK + 0x10),
+            (unsigned long)REG32(VDEC_XFORM + 0x804));
+
+    /* Work buffer setup — kept for safety */
     REG32(VDEC_SUB + 0x20) = dma_addr;
     REG32(VDEC_SUB + 0x24) = DMA_WORK_SIZE;
     REG32(VDEC_SUB + 0x78) = work1_addr;
     REG32(VDEC_SUB + 0x7C) = WORK_BUF_SIZE;
     REG32(VDEC_SUB + 0x80) = 0;
-    REG32(VDEC_MAIN + 0x10) = 0x80000000;
-    REG32(VDEC_CORE + 0x1C) = 1;
-    REG32(VDEC_MAIN + 0x04) = 0x142;
-    REG32(VDEC_DMA + 0x104) = 0x14;
-    REG32(VDEC_CORE + 0x04) = 0x3F;
-    REG32(VDEC_SUB  + 0x04) = 0x12;
 
-    /* Scaling matrices (all 16s — identity for baseline) */
+    /* Scaling matrices (flat=16 for baseline H.264) */
     for (i = 0; i < 64; i++) {
         REG32(VDEC_XFORM + 0x200 + i * 4) = 16;
         REG32(VDEC_XFORM + 0x300 + i * 4) = 16;
     }
     poc_log("  scaling matrices written");
-
-    /* Per-frame XFORM config */
-    REG32(VDEC_XFORM + 0x804) = (0xFE << 8) | 0x20;  /* chroma_qp_offset=-2 */
-    poc_log("  XFORM+804=0x%08lx", (unsigned long)REG32(VDEC_XFORM + 0x804));
-
-    /* Deblocking config (disabled for test) */
-    REG32(VDEC_DEBLK + 0x10) = 0x0C02 | (1 << 2);
-    poc_log("  DEBLK+10=0x%08lx", (unsigned long)REG32(VDEC_DEBLK + 0x10));
 }
 
 /* ===================== PHASE 3: Output Config ===================== */
 static void vdec_output_config(int w_mbs, int h_mbs)
 {
-    uint32_t v;
     poc_log("Phase 3: output_config (%dx%d MBs)", w_mbs, h_mbs);
 
-    REG32(VDEC_SUB + 0x6C) = (0 << 22) | (w_mbs << 16) | (0 << 6) | h_mbs;
-
-    v = REG32(VDEC_MAIN + 0x10);
-    v |= ((w_mbs - 1) << 16) | ((h_mbs - 1) << 8);
-    REG32(VDEC_MAIN + 0x10) = v;
-
+    REG32(VDEC_SUB + 0x6C) = (w_mbs << 16) | h_mbs;
+    REG32(VDEC_MAIN + 0x10) = ((w_mbs - 1) << 16) | ((h_mbs - 1) << 8);
     REG32(VDEC_SUB + 0x10) = 0x200;
+
+    poc_log("  SUB+6C=%08lx MAIN+10=%08lx SUB+10=%08lx",
+            (unsigned long)REG32(VDEC_SUB + 0x6C),
+            (unsigned long)REG32(VDEC_MAIN + 0x10),
+            (unsigned long)REG32(VDEC_SUB + 0x10));
 }
 
 /* ===================== PHASE 4: Reference Frame Setup ===================== */
@@ -224,11 +238,14 @@ static void vdec_refframe_set(uint32_t ref_y, uint32_t ref_cbcr,
 
 /* ===================== PER-MB HARDWARE IDCT ===================== */
 /* Implements Apple's FUN_0009144c register sequence.
- * Feeds 512-byte coefficient buffer to HW IDCT/deblock pipeline. */
-static void hw_mb_submit(uint32_t coeff_buf_phys,
-                         uint32_t ref_y, uint32_t out_y,
-                         int frame_toggle, int has_data)
+ * Feeds 512-byte coefficient buffer to HW IDCT/deblock pipeline.
+ * Returns 0 on success, -1 on timeout. */
+static int hw_mb_submit(uint32_t coeff_buf_phys,
+                        uint32_t ref_y, uint32_t out_y,
+                        int frame_toggle, int has_data)
 {
+    int timeout;
+
     /* 1. Point SUB DMA to coefficient buffer (512 bytes) */
     REG32(VDEC_SUB + 0x18) = coeff_buf_phys;
     REG32(VDEC_SUB + 0x1C) = coeff_buf_phys + COEFF_BUF_SIZE;
@@ -239,7 +256,13 @@ static void hw_mb_submit(uint32_t coeff_buf_phys,
     REG32(VDEC_SUB + 0x3C) = out_y;
 
     /* 3. Wait for DEBLK ready, write control */
-    while (REG32(VDEC_DEBLK + 0x14) & 0x10000) {}
+    timeout = 100000;
+    while ((REG32(VDEC_DEBLK + 0x14) & 0x10000) && --timeout > 0) {}
+    if (timeout == 0) {
+        poc_log("  TIMEOUT: DEBLK+14=%08lx (bit16 stuck)",
+                (unsigned long)REG32(VDEC_DEBLK + 0x14));
+        return -1;
+    }
     REG32(VDEC_DEBLK + 0x0C) = ((uint32_t)frame_toggle << 30) | 0x80;
 
     /* 4. XFORM IDCT command — 2 partitions (luma then chroma) */
@@ -247,11 +270,18 @@ static void hw_mb_submit(uint32_t coeff_buf_phys,
         int p;
         for (p = 0; p < 2; p++) {
             int d = has_data;
-            while (XFORM_808 & 2) {}
+            timeout = 100000;
+            while ((XFORM_808 & 2) && --timeout > 0) {}
+            if (timeout == 0) {
+                poc_log("  TIMEOUT: XFORM+808=%08lx (bit1 stuck, part %d)",
+                        (unsigned long)XFORM_808, p);
+                return -1;
+            }
             XFORM_800 = XFORM_CMD_BASE | ((uint32_t)d << 19);
             DMA_10C = ((uint32_t)d << 3) | 0x31;
         }
     }
+    return 0;
 }
 
 /* Fill a 512-byte coefficient buffer for one MB.
@@ -295,10 +325,10 @@ enum plugin_status plugin_start(const void *parameter)
     int i;
     int total_mbs = TEST_WIDTH_MBS * TEST_HEIGHT_MBS;
 
-    rb->splash(HZ/2, "v25 START");
+    rb->splash(HZ/2, "v26 START");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v25 — SW coeff + HW IDCT test (128x128) ===");
+    poc_log("=== v26 — H.264 init fix (128x128) ===");
 
     /* ---- Allocate buffers from audio buffer ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -381,16 +411,15 @@ enum plugin_status plugin_start(const void *parameter)
             (unsigned long)REG32(VDEC_CORE));
     lflush();
 
-    /* Phase 2: Frame setup (scaling matrices, work buffers) */
-    vdec_frame_setup(
+    /* Phase 2: H.264 init (FUN_0007e9e0 register values, NOT MPEG-4) */
+    vdec_h264_init(
         (uint32_t)(uintptr_t)dma_work,
-        (uint32_t)(uintptr_t)work_buf1,
-        (uint32_t)(uintptr_t)work_buf2
+        (uint32_t)(uintptr_t)work_buf1
     );
-    poc_log("  [post-P2] MAIN=%08lx SUB=%08lx CORE=%08lx",
-            (unsigned long)REG32(VDEC_MAIN),
-            (unsigned long)REG32(VDEC_SUB),
-            (unsigned long)REG32(VDEC_CORE));
+    poc_log("  [post-P2] MAIN+04=%08lx DEBLK+10=%08lx SUB+04=%08lx",
+            (unsigned long)REG32(VDEC_MAIN + 0x04),
+            (unsigned long)REG32(VDEC_DEBLK + 0x10),
+            (unsigned long)REG32(VDEC_SUB + 0x04));
     lflush();
 
     /* Phase 3: Output config */
@@ -428,6 +457,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* ---- Per-MB coefficient feed loop ---- */
     {
         int mb, frame_toggle = 0;
+        int timeouts = 0;
 
         for (mb = 0; mb < total_mbs; mb++) {
             /* Fill coefficient buffer with test data */
@@ -437,28 +467,35 @@ enum plugin_status plugin_start(const void *parameter)
             rb->commit_dcache();
 
             /* Submit to hardware IDCT */
-            hw_mb_submit(
-                (uint32_t)(uintptr_t)coeff_buf,
-                (uint32_t)(uintptr_t)ref_y,
-                (uint32_t)(uintptr_t)out_y,
-                frame_toggle,
-                1  /* has_data = 1 */
-            );
+            if (hw_mb_submit(
+                    (uint32_t)(uintptr_t)coeff_buf,
+                    (uint32_t)(uintptr_t)ref_y,
+                    (uint32_t)(uintptr_t)out_y,
+                    frame_toggle,
+                    1  /* has_data = 1 */
+                ) < 0) {
+                timeouts++;
+                if (timeouts >= 3) {
+                    poc_log("  ABORT: %d timeouts, stopping at MB %d", timeouts, mb);
+                    lflush();
+                    break;
+                }
+            }
 
             /* Toggle frame buffer (double-buffering, per Apple firmware) */
             frame_toggle ^= 1;
 
             /* Log first few and last MB for debugging */
             if (mb < 3 || mb == total_mbs - 1) {
-                poc_log("  MB[%d]: SUB=%08lx DEBLK=%08lx XFORM800=%08lx",
+                poc_log("  MB[%d]: SUB=%08lx DEBLK+14=%08lx XFORM808=%08lx",
                         mb,
                         (unsigned long)REG32(VDEC_SUB),
-                        (unsigned long)REG32(VDEC_DEBLK),
-                        (unsigned long)XFORM_800);
+                        (unsigned long)REG32(VDEC_DEBLK + 0x14),
+                        (unsigned long)XFORM_808);
             }
         }
 
-        poc_log("  All %d MBs submitted", total_mbs);
+        poc_log("  %d/%d MBs submitted (%d timeouts)", mb, total_mbs, timeouts);
         poc_log("  Final toggle=%d", frame_toggle);
     }
     lflush();
@@ -629,10 +666,10 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* ---- Cleanup ---- */
     vdec_power_off();
-    poc_log("=== v25 done ===");
+    poc_log("=== v26 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
 
-    rb->splashf(HZ*3, "v25 done");
+    rb->splashf(HZ*3, "v26 done");
     return PLUGIN_OK;
 }
