@@ -1,14 +1,12 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42i
+ * S5L8702 H.264 Hardware Video Decoder — v42j
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42i: CRITICAL FIX — Remove VPU_MODE toggle between frames.
- * Apple sets VPU_MODE=1 ONCE at init and never toggles per-frame (only 3
- * VPU_MODE writes in entire firmware, none in decode path). Our toggle
- * was destroying the VPU's internal decoder state (DPB context) needed
- * for P-frame motion compensation. Also: zero only ref list (0x00-0xBF)
- * instead of all regs, add post-decode CONFIG re-write.
+ * v42j: No VPU_MODE toggle (Apple never toggles per-frame) + full register
+ * zero (clear stale CTRL/STATUS from previous decode) + immediate CTRL kill
+ * after clock enable (prevent stale trigger re-fire). VPU internal decoder
+ * state (DPB) lives in silicon, not MMIO regs — zeroing regs is safe.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -448,14 +446,16 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
     int i, ret;
 
-    /* Step 1: Enable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,1)) */
+    /* Step 1: Enable VPU-B clock + kill stale trigger immediately */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
+    VPU_CTRL = 0;  /* kill stale trigger bits before VPU can act on them */
 
-    /* Step 2: Zero ref list only (0x00-0xBF). DO NOT toggle VPU_MODE —
-     * Apple sets it once at init and never toggles per-frame (verified:
-     * only 3 VPU_MODE writes in entire firmware, none in decode path).
-     * Preserves VPU internal decoder state needed for P-frame refs. */
-    for (i = 0; i < 0xC0/4; i++)
+    /* Step 2: Zero ALL MMIO regs. DO NOT toggle VPU_MODE — Apple sets it
+     * once at init and never toggles per-frame (only 3 VPU_MODE writes in
+     * entire firmware, none in decode path). MMIO zeroing clears stale
+     * config/status but does NOT destroy internal decoder state (DPB etc)
+     * which lives in VPU silicon, not in these registers. */
+    for (i = 0; i < 0x130/4; i++)
         base[i] = 0;
 
     poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
@@ -594,10 +594,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42i VPU-B P-frame");
+    rb->splash(HZ/2, "v42j VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42i — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42j — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -919,9 +919,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42i done ===");
+    poc_log("=== v42j done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42i: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42j: %d frames", frame_count);
     return PLUGIN_OK;
 }
