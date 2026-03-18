@@ -1,15 +1,14 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42k
+ * S5L8702 H.264 Hardware Video Decoder — v42l
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42k: Fix ctrl_buf size — Apple allocates 0x1C200 (115,200) bytes = one
- * full YCbCr 4:2:0 frame (DAT_001c0fc8 in FUN_001c0b68). Our 4KB was 28×
- * too small, causing VPU working data to overflow into slice_desc and bs_dma.
- * P-frame decode then corrupted the VPU's recon data when rebuilding those
- * buffers, causing STATUS1=0x11002082.
- * Also: vtable+0x48 RESOLVED at 0x001c1434 — just zeros 4 C++ object fields,
- * no HW access. Apple does ZERO hardware reset between frames.
+ * v42l: Match Apple's exact per-frame approach:
+ * - VPU_MODE set once at init, never toggled
+ * - NO register zeroing between frames (preserves HW-set state like +0xEC)
+ * - Just clock gate on/off and program needed registers
+ * - vtable+0x48 (0x001c1434) = zeros 4 C++ obj fields, no HW access
+ * - ctrl_buf = 0x1C200 bytes (full YCbCr frame, DAT_001c0fc8)
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -383,9 +382,20 @@ static void vpub_power_on(void)
     PWRCON(0) = pw & ~(7 << 14);
     rb->sleep(HZ/5);
 
-    /* Set VPU_MODE for H.264 */
+    /* Set VPU_MODE for H.264 (set once, never toggled per-frame) */
     VPU_MODE_REG |= 1;
     rb->sleep(HZ/10);
+
+    /* Enable VPU-B clock briefly to zero stale registers from prior runs */
+    PWRCON(0) = PWRCON(0) & ~(1 << 17);
+    {
+        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+        int i;
+        base[0xE8/4] = 0;  /* kill any stale trigger bits first */
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
+    PWRCON(0) = PWRCON(0) | (1 << 17);
 }
 
 static void vpub_power_off(void)
@@ -433,13 +443,14 @@ static void build_slice_descriptor(uint32_t *desc,
 
 /* ---- VPU-B decode trigger ---- */
 
-/* Matches Apple's FUN_001c06ac sequence:
+/* Apple's FUN_001c06ac per-frame sequence:
  * 1. Enable clock (PWRCON bit 17 clear)
- * 2. VPU_MODE pulse + zero regs (substitute for vtable+0x48)
- * 3. Program registers (Apple's exact order, RMW)
- * 4. Write ref list + ref registers
- * 5. Trigger + wait
- * 6. Disable clock (PWRCON bit 17 set) */
+ * 2. vtable+0x48 (0x001c1434) — zeros 4 C++ obj fields, no HW access
+ * 3. Program registers (RMW, Apple's exact order)
+ * 4. Write DPB ref list + ref registers (P-frames only)
+ * 5. Trigger + wait (IRQ semaphore event 0x23)
+ * 6. Re-write CONFIG on success
+ * 7. Disable clock (PWRCON bit 17 set) */
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
                         uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
@@ -449,23 +460,17 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
 {
     uint32_t val;
     volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-    int i, ret;
+    int ret;
 
-    /* Step 1: Enable VPU-B clock + kill stale trigger immediately */
+    /* Step 1: Enable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,1))
+     * NO VPU_MODE toggle, NO register zeroing — Apple does neither.
+     * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
+     * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
-    VPU_CTRL = 0;  /* kill stale trigger bits before VPU can act on them */
 
-    /* Step 2: Zero ALL MMIO regs. DO NOT toggle VPU_MODE — Apple sets it
-     * once at init and never toggles per-frame (only 3 VPU_MODE writes in
-     * entire firmware, none in decode path). MMIO zeroing clears stale
-     * config/status but does NOT destroy internal decoder state (DPB etc)
-     * which lives in VPU silicon, not in these registers. */
-    for (i = 0; i < 0x130/4; i++)
-        base[i] = 0;
-
-    poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
+    poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx +EC=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
-            (unsigned long)VPU_CTRL);
+            (unsigned long)VPU_CTRL, (unsigned long)VPU_B(0xEC));
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -599,10 +604,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42k VPU-B P-frame");
+    rb->splash(HZ/2, "v42l VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42k — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42l — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -924,9 +929,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42k done ===");
+    poc_log("=== v42l done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42k: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42l: %d frames", frame_count);
     return PLUGIN_OK;
 }
