@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v43c
+ * S5L8702 H.264 Hardware Video Decoder — v43d
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v43c: 9-agent Ghidra research breakthrough:
+ * v43d: 9-agent Ghidra research breakthrough:
  * - Apple's "DPB loop" (0x1c0834) writes SLICE DESCRIPTORS to DRAM
  *   (r7 = param_1[0x1c] = same buffer as +DC), NOT to VPU register space.
  * - We were WRONG to write ref frame addrs to VPU regs +0x00/04/08.
@@ -12,7 +12,7 @@
  *   secret reset. Shadow regs +FC-+114 are HW read-only (writes ignored).
  * - Register +EC is NEVER written by firmware (purely HW-managed).
  * - Apple never zeroes CTRL (+E8) — only uses RMW.
- * v43c: Clear trigger bits (0x88003001) from CTRL after each decode.
+ * v43d: Clear trigger bits (0x88003001) from CTRL after each decode.
  * Without Apple's ISR (event 0x23), stale trigger bits cause VPU to
  * auto-start a phantom decode on clock re-enable, using stale shadow.
  *
@@ -636,10 +636,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v43c VPU-B P-frame");
+    rb->splash(HZ/2, "v43d VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v43c — H.264 HW I+P via VPU-B (no +00 writes, RMW only) ===");
+    poc_log("=== v43d — H.264 HW I+P via VPU-B (no +00 writes, RMW only) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -869,7 +869,7 @@ enum plugin_status plugin_start(const void *parameter)
                     (uint32_t *)UNCACHED(slice_desc),
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                    has_ref ? sh.num_ref_idx_l0_active_minus1 : 0,
+                    has_ref ? (sh.num_ref_idx_l0_active_minus1 + 1) : 0,
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                     bit_off, PHYS(bs_dma), dma_len);
@@ -1046,7 +1046,7 @@ enum plugin_status plugin_start(const void *parameter)
       build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
           0, 0, sh.slice_type, _qp, \
           pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
-          sh.num_ref_idx_l0_active_minus1, \
+          sh.num_ref_idx_l0_active_minus1 + 1, \
           sh.disable_deblocking_filter_idc, \
           sh.alpha_c0_offset_div2, sh.beta_offset_div2, \
           _bo, PHYS(bs_dma), _dl); \
@@ -1105,9 +1105,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v43c done ===");
+    poc_log("=== v43d done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v43c: %d frames", frame_count);
+    rb->splashf(HZ*3, "v43d: %d frames", frame_count);
     return PLUGIN_OK;
 }
