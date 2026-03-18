@@ -1,10 +1,11 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42o
+ * S5L8702 H.264 Hardware Video Decoder — v42p
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42o: Revert num_ref_l0 +1 (Apple uses raw minus1 value, verified from
- * FUN_002dee00 + FUN_001c06ac disasm). Keep diagnostic dumps + test_ip.264.
+ * v42p: Use uncached DMA writes for descriptor + RBSP buffers, matching
+ * the S5L8702 USB DMA driver pattern (S5L8702_UNCACHED_ADDR = +0x40000000).
+ * Adds diagnostic readback to definitively prove/disprove cache coherency.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -17,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_ip.264"
+#define H264_TEST_PATH "/test_ip_hiqp.264"
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
@@ -52,6 +53,9 @@
 #define ALIGN32(x)  (((uintptr_t)(x) + 31) & ~31)
 #define ALIGN4K(x)  (((uintptr_t)(x) + 0xFFF) & ~0xFFF)
 #define PHYS(x)     ((uint32_t)((uintptr_t)(x) & 0x7FFFFFFF))
+/* S5L8702 uncached alias: +0x40000000 = same physical RAM, cache bypassed.
+ * Pattern used by USB DMA driver (firmware/target/arm/usb-s3c6400x.c). */
+#define UNCACHED(x) ((typeof(x))((uintptr_t)(x) + 0x40000000))
 
 #define MAX_FILE_SIZE   500000
 /* Apple allocates pic_w * pic_h * 3/2 for ctrl_buf (DAT_001c0fc8 = 0x1C200
@@ -539,10 +543,8 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
-    /* Ensure descriptor + RBSP are in physical memory before trigger.
-     * commit_dcache() was called by caller, but logging activity since
-     * then may have evicted and dirtied cache lines. Belt + suspenders. */
-    rb->commit_dcache();
+    /* DMA buffers written through uncached alias — already in physical RAM.
+     * No commit_dcache() needed. */
 
     /* Step 14: TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
@@ -618,10 +620,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42o VPU-B P-frame");
+    rb->splash(HZ/2, "v42p VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42o — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42p — H.264 HW I+P via VPU-B (uncached DMA writes) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -812,20 +814,31 @@ enum plugin_status plugin_start(const void *parameter)
                 poc_log("  DMA: %d RBSP bytes from hdr_bytes=%d, bit_off=%d",
                         dma_len, hdr_bytes, bit_off);
 
-                rb->memcpy(bs_dma, nalu_buf + hdr_bytes,
+                /* Flush+invalidate entire cache before uncached writes.
+                 * Prevents dirty cached copies from overwriting our
+                 * uncached data on eviction. */
+                rb->commit_discard_dcache();
+
+                /* Write RBSP through uncached alias — bypasses CPU cache,
+                 * goes directly to physical RAM. Matches S5L8702 USB DMA
+                 * driver pattern (firmware/target/arm/usb-s3c6400x.c). */
+                rb->memcpy(UNCACHED(bs_dma), nalu_buf + hdr_bytes,
                            MIN(dma_len, BS_DMA_SIZE));
 
                 poc_log("  RBSP[0..7]: %02x %02x %02x %02x %02x %02x %02x %02x",
-                        bs_dma[0], bs_dma[1], bs_dma[2], bs_dma[3],
-                        bs_dma[4], bs_dma[5], bs_dma[6], bs_dma[7]);
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[0],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[1],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[2],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[3],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[4],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[5],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[6],
+                        ((volatile uint8_t *)UNCACHED(bs_dma))[7]);
 
-                /* Zero descriptor buffer before building (Apple zeros 0x140 bytes
-                 * per frame in FUN_001c06ac before descriptor construction) */
-                rb->memset(slice_desc, 0, SLICE_DESC_SIZE);
-
-                /* Build slice descriptor */
+                /* Build descriptor through uncached alias */
+                rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
                 build_slice_descriptor(
-                    (uint32_t *)slice_desc,
+                    (uint32_t *)UNCACHED(slice_desc),
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
                     has_ref ? sh.num_ref_idx_l0_active_minus1 : 0,
@@ -834,7 +847,7 @@ enum plugin_status plugin_start(const void *parameter)
                     bit_off, PHYS(bs_dma), dma_len);
 
                 {
-                    uint32_t *d = (uint32_t *)slice_desc;
+                    volatile uint32_t *d = (volatile uint32_t *)UNCACHED(slice_desc);
                     poc_log("  desc: %08lx %08lx %08lx %08lx",
                             (unsigned long)d[0], (unsigned long)d[1],
                             (unsigned long)d[2], (unsigned long)d[3]);
@@ -843,11 +856,30 @@ enum plugin_status plugin_start(const void *parameter)
                             (unsigned long)d[6], (unsigned long)d[7]);
                 }
 
-                /* Clear output buffers */
-                rb->memset(frame_y[cur_buf], 0, frame_y_size);
-                rb->memset(frame_cb[cur_buf], 0x80, frame_cb_size);
-                rb->memset(frame_cr[cur_buf], 0x80, frame_cr_size);
-                rb->commit_dcache();
+                /* Diagnostic: read desc from BOTH aliases to verify coherency */
+                {
+                    volatile uint32_t *d_unc = (volatile uint32_t *)UNCACHED(slice_desc);
+                    volatile uint32_t *d_cac;
+                    rb->commit_discard_dcache();
+                    d_cac = (volatile uint32_t *)slice_desc;
+                    poc_log("  desc(unc): %08lx %08lx | rbsp(unc): %02x%02x%02x%02x",
+                            (unsigned long)d_unc[0], (unsigned long)d_unc[5],
+                            ((volatile uint8_t *)UNCACHED(bs_dma))[0],
+                            ((volatile uint8_t *)UNCACHED(bs_dma))[1],
+                            ((volatile uint8_t *)UNCACHED(bs_dma))[2],
+                            ((volatile uint8_t *)UNCACHED(bs_dma))[3]);
+                    poc_log("  desc(cac): %08lx %08lx | rbsp(cac): %02x%02x%02x%02x",
+                            (unsigned long)d_cac[0], (unsigned long)d_cac[5],
+                            ((volatile uint8_t *)bs_dma)[0],
+                            ((volatile uint8_t *)bs_dma)[1],
+                            ((volatile uint8_t *)bs_dma)[2],
+                            ((volatile uint8_t *)bs_dma)[3]);
+                }
+
+                /* Clear output buffers through uncached alias */
+                rb->memset(UNCACHED(frame_y[cur_buf]), 0, frame_y_size);
+                rb->memset(UNCACHED(frame_cb[cur_buf]), 0x80, frame_cb_size);
+                rb->memset(UNCACHED(frame_cr[cur_buf]), 0x80, frame_cr_size);
 
                 poc_log("  Triggering VPU-B decode...");
                 lflush();
@@ -943,9 +975,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42o done ===");
+    poc_log("=== v42p done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42o: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42p: %d frames", frame_count);
     return PLUGIN_OK;
 }
