@@ -3,9 +3,9 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42w: v42v failed because STATUS1 (+F4) error persisted and poisoned
- * all subsequent decodes. Fix: zero config (0x00-0xE8) + STATUS1 (+F4),
- * PRESERVE shadow descriptor (0xF8-0x114) for P-frame state continuity.
+ * v42w: Zero 0x00-0xF4, PRESERVE 0xF8-0x114 (shadow descriptor).
+ * v42v showed writing 0xF4 alone fails (ignored). Need to zero 0xEC
+ * first (status write-enable?). Preserve shadow desc for P-frame state.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -489,20 +489,17 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     dump_vpu_regs("after clock enable");
 
-    /* Selective zeroing: clear config (0x00-0xE8) + STATUS1 (0xF4).
-     * PRESERVE shadow descriptor (0xF8-0x114) — VPU needs this for P-frames.
-     * v42v proved: preserving STATUS1 error state poisons subsequent decodes.
-     * v42t proved: zeroing shadow descriptor breaks P-frames.
-     * This version zeros config + error, preserves shadow state. */
+    /* Selective zeroing: zero 0x00-0xF4, PRESERVE 0xF8-0x114.
+     * v42w showed: writing 0 to STATUS1 (+F4) alone is IGNORED.
+     * But v42t's sequential zeroing (0x00-0x12C) DID clear STATUS1.
+     * Key: zeroing 0xEC first may enable STATUS1 writes.
+     * PRESERVE 0xF8-0x114 = shadow descriptor (VPU P-frame state). */
     {
         int i;
-        base[0xE8/4] = 0;  /* kill trigger first */
-        for (i = 0; i < 0xEC/4; i++)  /* zero 0x00-0xE8 (config) */
+        base[0xE8/4] = 0;    /* kill trigger first */
+        for (i = 0; i <= 0xF4/4; i++)  /* zero 0x00-0xF4 */
             base[i] = 0;
-        /* 0xEC: preserve (auto-sets to 1) */
-        /* 0xF0: preserve (read-only STATUS0) */
-        base[0xF4/4] = 0;  /* clear STATUS1 error state */
-        /* 0xF8-0x114: PRESERVE (shadow desc — VPU needs for P-frame) */
+        /* 0xF8-0x114: PRESERVE (shadow desc for P-frame) */
         /* 0x118, 0x120-0x12C: reprogrammed below */
     }
 
