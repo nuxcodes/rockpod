@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v39
+ * S5L8702 H.264 Hardware Video Decoder — v40
  *
  * TRUE HARDWARE H.264 DECODE via VPU-B (0x39800000).
  * Apple's real H.264 decoder is at a SEPARATE hardware block from the
@@ -274,11 +274,12 @@ static void parse_slice_header(sps_t *sps, pps_t *pps, bs_t *b,
 static void vpub_power_on(void)
 {
     uint32_t cg, pw;
+    int i;
 
-    /* Force power OFF first to reset stale VPU-B state */
+    /* Force FULL power OFF: VPU mode, PWRCON, and clocks */
     VPU_MODE_REG &= ~1;
     PWRCON(0) |= (1 << 17) | (7 << 14);
-    rb->sleep(HZ/5);
+    rb->sleep(HZ/2);
 
     /* Enable video subsystem clocks */
     cg = REG32(CLK_BASE + 0x08);
@@ -287,19 +288,26 @@ static void vpub_power_on(void)
     REG32(CLK_BASE + 0x08) = cg;
     rb->sleep(HZ/5);
 
-    /* Clear PWRCON bits: 14-16 (video subsystem) + 17 (VPU-B) */
+    /* Power ON VPU-B */
     pw = PWRCON(0);
     PWRCON(0) = pw & ~((7 << 14) | (1 << 17));
     rb->sleep(HZ/5);
 
-    /* Set H.264 mode (bit 0 = 1) */
+    /* Toggle VPU_MODE: set H.264, clear, set again (reset pulse) */
     VPU_MODE_REG |= 1;
-    rb->sleep(HZ/100);
+    rb->sleep(HZ/10);
+    VPU_MODE_REG &= ~1;
+    rb->sleep(HZ/10);
+    VPU_MODE_REG |= 1;
+    rb->sleep(HZ/10);
 
-    /* Try to clear any stale status by writing to status registers */
-    VPU_STATUS1 = 0xFFFFFFFF;
-    VPU_STATUS0 = 0xFFFFFFFF;
-    rb->sleep(HZ/100);
+    /* Zero ALL VPU-B registers from 0x00 to 0x12F */
+    {
+        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
+    rb->sleep(HZ/10);
 }
 
 static void vpub_power_off(void)
@@ -357,15 +365,9 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     uint32_t val;
     int timeout;
 
-    /* Attempt software reset: clear config and control, try clearing status */
-    VPU_CONFIG = 0;
-    VPU_CTRL = 0;
-    VPU_STATUS1 = 0xFFFFFFFF;
-    VPU_STATUS0 = 0xFFFFFFFF;
-    rb->sleep(HZ/100);
-
-    poc_log("  pre-decode: +F0=%08lx +F4=%08lx",
-            (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1);
+    poc_log("  pre-prog: +F0=%08lx +F4=%08lx +E8=%08lx +118=%08lx",
+            (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
+            (unsigned long)VPU_CTRL, (unsigned long)VPU_CONFIG);
 
     /* Clear reference picture area (I-frame: no refs) */
     {
@@ -421,27 +423,45 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
+    /* Record pre-trigger STATUS1 for comparison */
+    uint32_t pre_s1 = VPU_STATUS1;
+
     /* TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
 
-    /* Poll for completion or error */
+    /* Poll for completion: wait for STATUS0 bit 0 = 1 (done)
+     * or STATUS1 to change from pre-trigger value (something happened).
+     * Do NOT break on pre-existing STATUS1 bits! */
     timeout = 5000000;
     while (--timeout > 0) {
-        uint32_t s1 = VPU_STATUS1;
-        if ((s1 << 3) >> 21)
-            break;              /* error bits [28:18] set */
         if (VPU_STATUS0 & 1)
             break;              /* completion: bit 0 set */
+        if (VPU_STATUS1 != pre_s1)
+            break;              /* STATUS1 changed = decode finished/errored */
+    }
+
+    /* Log what we saw */
+    {
+        uint32_t post_s0 = VPU_STATUS0;
+        uint32_t post_s1 = VPU_STATUS1;
+        poc_log("  poll: timeout_rem=%d pre_s1=%08lx post_s0=%08lx post_s1=%08lx",
+                timeout, (unsigned long)pre_s1,
+                (unsigned long)post_s0, (unsigned long)post_s1);
     }
 
     if (timeout <= 0)
         return -1;  /* timeout */
 
     val = VPU_STATUS1;
-    if ((val << 3) >> 21)
-        return -2;  /* HW error */
+    /* Check for NEW error bits (not pre-existing ones) */
+    uint32_t new_bits = val & ~pre_s1;
+    if ((new_bits << 3) >> 21)
+        return -2;  /* new HW error bits appeared */
 
-    return 0;
+    if (VPU_STATUS0 & 1)
+        return 0;   /* success: completion bit set */
+
+    return -3;      /* STATUS1 changed but no completion */
 }
 
 /* ---- Main ---- */
@@ -458,10 +478,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int i;
 
-    rb->splash(HZ/2, "v39 VPU-B H.264");
+    rb->splash(HZ/2, "v40 VPU-B H.264");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v39 — H.264 HW decode via VPU-B (0x39800000) ===");
+    poc_log("=== v40 — H.264 HW decode via VPU-B (0x39800000) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -783,9 +803,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v39 done ===");
+    poc_log("=== v40 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v39 done");
+    rb->splashf(HZ*3, "v40 done");
     return PLUGIN_OK;
 }
