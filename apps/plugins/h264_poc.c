@@ -3,10 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42s: Second IDR fails too (v42r: IDR-2 = 0x10102042)! VPU can't do
- * any second decode with just register zeroing. Testing FULL power cycle
- * (vpub_power_on with VPU_MODE toggle) between experiments.
- * ctrl_buf = all zeros after I-frame. No EPBs in test file.
+ * v42t: BREAKTHROUGH — v42s EXP2 showed 2nd IDR SUCCEEDS when all VPU-B
+ * registers (0x00-0x12C) are zeroed between decodes. Without zeroing,
+ * stale shadow/config regs block the next decode. Fix: zero ALL registers
+ * at the START of vpub_decode() before programming new values.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -424,18 +424,6 @@ static void vpub_power_off(void)
     PWRCON(0) |= (1 << 17) | (7 << 14);
 }
 
-/* Quick VPU-B reset: zero all registers without full power cycle.
- * Needed because VPU gets STUCK after a failed decode (v42q finding). */
-static void vpub_reset(void)
-{
-    volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-    int i;
-    PWRCON(0) = PWRCON(0) & ~(1 << 17);  /* enable clock */
-    base[0xE8/4] = 0;  /* kill trigger first */
-    for (i = 0; i < 0x130/4; i++)
-        base[i] = 0;
-    PWRCON(0) = PWRCON(0) | (1 << 17);  /* disable clock */
-}
 
 /* ---- Slice descriptor builder ---- */
 
@@ -501,7 +489,18 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     dump_vpu_regs("after clock enable");
-    VPU_CTRL = 0;  /* clear stale trigger bits (Apple's IRQ handler does this) */
+
+    /* Zero ALL writable VPU-B registers before programming.
+     * v42s proved: second decode FAILS without this, SUCCEEDS with it.
+     * Stale shadow/config registers from previous decode block the next one.
+     * Apple's BootROM clock gate function (thunk_EXT_FUN_22000318) likely
+     * does this internally — we must do it explicitly. */
+    {
+        int i;
+        base[0xE8/4] = 0;  /* kill trigger first */
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -642,10 +641,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42s VPU-B P-frame");
+    rb->splash(HZ/2, "v42t VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42s — H.264 HW I+P via VPU-B (full power cycle) ===");
+    poc_log("=== v42t — H.264 HW I+P via VPU-B (zero regs per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1082,35 +1081,20 @@ enum plugin_status plugin_start(const void *parameter)
     } \
 } while(0)
 
+        /* v42t: vpub_decode() now zeros all registers internally.
+         * No external reset needed. Just verify IDR+IDR and IDR+P work. */
         if (idr_nalu_start >= 0 && have_sps && have_pps) {
-            /* EXP1: Full power cycle + IDR + IDR (back-to-back) */
-            poc_log("--- EXP1: FULL POWER CYCLE + IDR + IDR ---");
+            poc_log("--- EXP1: IDR + IDR (with internal reg zeroing) ---");
             lflush();
-            vpub_power_off();
-            vpub_power_on();
             RUN_EXP_IDR("IDR-1", 0);
             RUN_EXP_IDR("IDR-2", 1);
-            lflush();
-
-            /* EXP2: Full power cycle + IDR, then just reset + IDR
-             * (test if register zeroing alone allows second decode) */
-            poc_log("--- EXP2: POWER CYCLE + IDR, then RESET + IDR ---");
-            lflush();
-            vpub_power_off();
-            vpub_power_on();
-            RUN_EXP_IDR("IDR-fresh", 0);
-            vpub_reset();
-            RUN_EXP_IDR("IDR-reset", 1);
             lflush();
         }
 
         if (idr_nalu_start >= 0 && p_nalu_start >= 0 &&
             have_sps && have_pps) {
-            /* EXP3: Full power cycle + IDR + P-frame */
-            poc_log("--- EXP3: POWER CYCLE + IDR + P-frame ---");
+            poc_log("--- EXP2: IDR + P-frame (with internal reg zeroing) ---");
             lflush();
-            vpub_power_off();
-            vpub_power_on();
             RUN_EXP_IDR("IDR", 0);
             RUN_EXP_P("P-frame", 1, 0, 0, 0);
             lflush();
@@ -1118,9 +1102,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42s done ===");
+    poc_log("=== v42t done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42s: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42t: %d frames", frame_count);
     return PLUGIN_OK;
 }
