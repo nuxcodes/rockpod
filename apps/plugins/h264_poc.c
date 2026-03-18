@@ -3,9 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42w: Zero 0x00-0xF4, PRESERVE 0xF8-0x114 (shadow descriptor).
- * v42v showed writing 0xF4 alone fails (ignored). Need to zero 0xEC
- * first (status write-enable?). Preserve shadow desc for P-frame state.
+ * v42x: Use SWRCON (Software Reset Control, 0x3C500050) to hardware-reset
+ * VPU-B between decodes, instead of manual register zeroing. This is what
+ * Apple's BootROM clock gate function (thunk_EXT_FUN_22000318) likely does.
+ * Standard SoC sequence: assert reset → enable clock → deassert reset.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -486,22 +487,15 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * NO VPU_MODE toggle, NO register zeroing — Apple does neither.
      * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
-    PWRCON(0) = PWRCON(0) & ~(1 << 17);
-    dump_vpu_regs("after clock enable");
+    /* Hardware reset VPU-B via SWRCON (Software Reset Control Register).
+     * This is what Apple's BootROM clock gate function likely does.
+     * Resets VPU internal state machine cleanly, no manual register zeroing.
+     * Sequence: assert reset → enable clock → deassert reset. */
+    SWRCON |= (1 << 17);                     /* assert VPU-B reset */
+    PWRCON(0) = PWRCON(0) & ~(1 << 17);      /* enable VPU-B clock */
+    SWRCON &= ~(1 << 17);                    /* deassert reset → clean state */
 
-    /* Selective zeroing: zero 0x00-0xF4, PRESERVE 0xF8-0x114.
-     * v42w showed: writing 0 to STATUS1 (+F4) alone is IGNORED.
-     * But v42t's sequential zeroing (0x00-0x12C) DID clear STATUS1.
-     * Key: zeroing 0xEC first may enable STATUS1 writes.
-     * PRESERVE 0xF8-0x114 = shadow descriptor (VPU P-frame state). */
-    {
-        int i;
-        base[0xE8/4] = 0;    /* kill trigger first */
-        for (i = 0; i <= 0xF4/4; i++)  /* zero 0x00-0xF4 */
-            base[i] = 0;
-        /* 0xF8-0x114: PRESERVE (shadow desc for P-frame) */
-        /* 0x118, 0x120-0x12C: reprogrammed below */
-    }
+    dump_vpu_regs("after reset+clock");
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -642,10 +636,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42w VPU-B P-frame");
+    rb->splash(HZ/2, "v42x VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42w — H.264 HW I+P via VPU-B (zero config+F4, keep shadow) ===");
+    poc_log("=== v42x — H.264 HW I+P via VPU-B (SWRCON hardware reset) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1103,9 +1097,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42w done ===");
+    poc_log("=== v42x done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42w: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42x: %d frames", frame_count);
     return PLUGIN_OK;
 }
