@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v40
+ * S5L8702 H.264 Hardware Video Decoder — v41
  *
  * TRUE HARDWARE H.264 DECODE via VPU-B (0x39800000).
  * Apple's real H.264 decoder is at a SEPARATE hardware block from the
@@ -363,7 +363,6 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         int pic_w, int num_slices)
 {
     uint32_t val;
-    int timeout;
 
     poc_log("  pre-prog: +F0=%08lx +F4=%08lx +E8=%08lx +118=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
@@ -423,45 +422,22 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
-    /* Record pre-trigger STATUS1 for comparison */
-    uint32_t pre_s1 = VPU_STATUS1;
-
     /* TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
 
-    /* Poll for completion: wait for STATUS0 bit 0 = 1 (done)
-     * or STATUS1 to change from pre-trigger value (something happened).
-     * Do NOT break on pre-existing STATUS1 bits! */
-    timeout = 5000000;
-    while (--timeout > 0) {
-        if (VPU_STATUS0 & 1)
-            break;              /* completion: bit 0 set */
-        if (VPU_STATUS1 != pre_s1)
-            break;              /* STATUS1 changed = decode finished/errored */
-    }
-
-    /* Log what we saw */
-    {
-        uint32_t post_s0 = VPU_STATUS0;
-        uint32_t post_s1 = VPU_STATUS1;
-        poc_log("  poll: timeout_rem=%d pre_s1=%08lx post_s0=%08lx post_s1=%08lx",
-                timeout, (unsigned long)pre_s1,
-                (unsigned long)post_s0, (unsigned long)post_s1);
-    }
-
-    if (timeout <= 0)
-        return -1;  /* timeout */
+    /* Wait for decode completion.
+     * Apple uses IRQ semaphore (event 0x23) with 0x84ms timeout.
+     * STATUS0 bit 0 is unreliable for polling, so we sleep instead. */
+    rb->sleep(HZ/5);  /* 200ms — generous for 320x240 I-frame */
 
     val = VPU_STATUS1;
-    /* Check for NEW error bits (not pre-existing ones) */
-    uint32_t new_bits = val & ~pre_s1;
-    if ((new_bits << 3) >> 21)
-        return -2;  /* new HW error bits appeared */
+    poc_log("  done: +F0=%08lx +F4=%08lx",
+            (unsigned long)VPU_STATUS0, (unsigned long)val);
 
-    if (VPU_STATUS0 & 1)
-        return 0;   /* success: completion bit set */
+    if ((val << 3) >> 21)
+        return -2;  /* HW error bits [28:18] set */
 
-    return -3;      /* STATUS1 changed but no completion */
+    return 0;
 }
 
 /* ---- Main ---- */
@@ -478,10 +454,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int i;
 
-    rb->splash(HZ/2, "v40 VPU-B H.264");
+    rb->splash(HZ/2, "v41 VPU-B H.264");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v40 — H.264 HW decode via VPU-B (0x39800000) ===");
+    poc_log("=== v41 — H.264 HW decode via VPU-B (0x39800000) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -803,9 +779,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v40 done ===");
+    poc_log("=== v41 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v40 done");
+    rb->splashf(HZ*3, "v41 done");
     return PLUGIN_OK;
 }
