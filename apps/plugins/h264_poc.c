@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42e
+ * S5L8702 H.264 Hardware Video Decoder — v42f
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42e fix: Apple cycles VPU-B clock gate between every frame (disable
+ * v42f fix: Apple cycles VPU-B clock gate between every frame (disable
  * after each decode, re-enable before next). Apple also calls vtable+0x48
  * before every decode (unresolvable — vtable is in runtime RAM). We
  * substitute with VPU_MODE pulse + register zeroing.
@@ -449,11 +449,24 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Step 1: Enable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,1)) */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
 
-    /* Step 2: VPU_MODE pulse + zero registers (substitute for vtable+0x48).
-     * Apple calls an unresolvable vtable function here. Our best substitute
-     * is the VPU_MODE toggle that we know resets the VPU-B state machine. */
+    /* Step 2: VPU_MODE pulse (substitute for vtable+0x48). */
     VPU_MODE_REG &= ~1;
     VPU_MODE_REG |= 1;
+
+    /* Dump ALL VPU-B registers BEFORE zeroing — find non-zero defaults */
+    {
+        int any_nz = 0;
+        for (i = 0; i < 0x130/4; i++)
+            if (base[i] != 0) any_nz++;
+        poc_log("  post-pulse: %d non-zero regs (of %d)", any_nz, 0x130/4);
+        if (any_nz > 0) {
+            for (i = 0; i < 0x130/4; i++) {
+                if (base[i] != 0)
+                    poc_log("    +%02x = %08lx", i*4, (unsigned long)base[i]);
+            }
+        }
+    }
+
     for (i = 0; i < 0x130/4; i++)
         base[i] = 0;
 
@@ -584,10 +597,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42e VPU-B P-frame");
+    rb->splash(HZ/2, "v42f VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42e — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42f — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1052,9 +1065,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42e done ===");
+    poc_log("=== v42f done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42e: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42f: %d frames", frame_count);
     return PLUGIN_OK;
 }
