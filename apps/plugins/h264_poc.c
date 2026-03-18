@@ -540,6 +540,11 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
+    /* Ensure descriptor + RBSP are in physical memory before trigger.
+     * commit_dcache() was called by caller, but logging activity since
+     * then may have evicted and dirtied cache lines. Belt + suspenders. */
+    rb->commit_dcache();
+
     /* Step 14: TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
 
