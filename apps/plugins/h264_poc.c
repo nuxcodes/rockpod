@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42f
+ * S5L8702 H.264 Hardware Video Decoder — v42g
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42f fix: Apple cycles VPU-B clock gate between every frame (disable
+ * v42g fix: Apple cycles VPU-B clock gate between every frame (disable
  * after each decode, re-enable before next). Apple also calls vtable+0x48
  * before every decode (unresolvable — vtable is in runtime RAM). We
  * substitute with VPU_MODE pulse + register zeroing.
@@ -467,8 +467,13 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
         }
     }
 
-    for (i = 0; i < 0x130/4; i++)
-        base[i] = 0;
+    /* Zero all VPU-B regs EXCEPT +0xEC which VPU_MODE sets to 1.
+     * Register dump shows +0xEC=1 is a VPU_MODE default.
+     * Zeroing it may disable inter prediction (P-frame support). */
+    for (i = 0; i < 0x130/4; i++) {
+        if (i != 0xEC/4)
+            base[i] = 0;
+    }
 
     poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
@@ -597,10 +602,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42f VPU-B P-frame");
+    rb->splash(HZ/2, "v42g VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42f — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42g — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1065,9 +1070,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42f done ===");
+    poc_log("=== v42g done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42f: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42g: %d frames", frame_count);
     return PLUGIN_OK;
 }
