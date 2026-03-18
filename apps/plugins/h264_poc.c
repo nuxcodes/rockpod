@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v38
+ * S5L8702 H.264 Hardware Video Decoder — v39
  *
  * TRUE HARDWARE H.264 DECODE via VPU-B (0x39800000).
  * Apple's real H.264 decoder is at a SEPARATE hardware block from the
@@ -275,7 +275,12 @@ static void vpub_power_on(void)
 {
     uint32_t cg, pw;
 
-    /* Enable video subsystem clocks (same as VPU-A but bit 17 for VPU-B) */
+    /* Force power OFF first to reset stale VPU-B state */
+    VPU_MODE_REG &= ~1;
+    PWRCON(0) |= (1 << 17) | (7 << 14);
+    rb->sleep(HZ/5);
+
+    /* Enable video subsystem clocks */
     cg = REG32(CLK_BASE + 0x08);
     cg &= ~0x80000000;
     cg |= 0x30000000;
@@ -289,6 +294,11 @@ static void vpub_power_on(void)
 
     /* Set H.264 mode (bit 0 = 1) */
     VPU_MODE_REG |= 1;
+    rb->sleep(HZ/100);
+
+    /* Try to clear any stale status by writing to status registers */
+    VPU_STATUS1 = 0xFFFFFFFF;
+    VPU_STATUS0 = 0xFFFFFFFF;
     rb->sleep(HZ/100);
 }
 
@@ -347,10 +357,15 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     uint32_t val;
     int timeout;
 
-    /* Attempt software reset: toggle config, clear control */
+    /* Attempt software reset: clear config and control, try clearing status */
     VPU_CONFIG = 0;
     VPU_CTRL = 0;
+    VPU_STATUS1 = 0xFFFFFFFF;
+    VPU_STATUS0 = 0xFFFFFFFF;
     rb->sleep(HZ/100);
+
+    poc_log("  pre-decode: +F0=%08lx +F4=%08lx",
+            (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1);
 
     /* Clear reference picture area (I-frame: no refs) */
     {
@@ -443,10 +458,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int i;
 
-    rb->splash(HZ/2, "v38 VPU-B H.264");
+    rb->splash(HZ/2, "v39 VPU-B H.264");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v38 — H.264 HW decode via VPU-B (0x39800000) ===");
+    poc_log("=== v39 — H.264 HW decode via VPU-B (0x39800000) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -768,9 +783,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v38 done ===");
+    poc_log("=== v39 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v38 done");
+    rb->splashf(HZ*3, "v39 done");
     return PLUGIN_OK;
 }
