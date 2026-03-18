@@ -3,10 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42t: BREAKTHROUGH — v42s EXP2 showed 2nd IDR SUCCEEDS when all VPU-B
- * registers (0x00-0x12C) are zeroed between decodes. Without zeroing,
- * stale shadow/config regs block the next decode. Fix: zero ALL registers
- * at the START of vpub_decode() before programming new values.
+ * v42u: Test P_Skip (test_skip.264) WITH register zeroing. In v42m P_Skip
+ * worked WITHOUT zeroing — but stale I-frame shadow regs (bit_off=0) may
+ * have masked a bit_off handling issue. If P_Skip fails now → bit_off!=0
+ * is the root cause. If succeeds → coded MBs have a separate issue.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -19,7 +19,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_ip_hiqp.264"
+#define H264_TEST_PATH "/test_skip.264"
 
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -641,10 +641,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42t VPU-B P-frame");
+    rb->splash(HZ/2, "v42u VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42t — H.264 HW I+P via VPU-B (zero regs per frame) ===");
+    poc_log("=== v42u — H.264 HW I+P via VPU-B (P_Skip + reg zeroing) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1102,9 +1102,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42t done ===");
+    poc_log("=== v42u done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42t: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42u: %d frames", frame_count);
     return PLUGIN_OK;
 }
