@@ -3,9 +3,8 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42o: Fix num_ref_l0 encoding — VPU expects actual ref count (1), not
- * minus1 value (0). With 0, VPU can't index ref list for coded MBs.
- * P_Skip worked because it copies reference without checking ref count.
+ * v42o: Revert num_ref_l0 +1 (Apple uses raw minus1 value, verified from
+ * FUN_002dee00 + FUN_001c06ac disasm). Keep diagnostic dumps + test_ip.264.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -829,7 +828,7 @@ enum plugin_status plugin_start(const void *parameter)
                     (uint32_t *)slice_desc,
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                    has_ref ? (sh.num_ref_idx_l0_active_minus1 + 1) : 0,
+                    has_ref ? sh.num_ref_idx_l0_active_minus1 : 0,
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                     bit_off, PHYS(bs_dma), dma_len);
