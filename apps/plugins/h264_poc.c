@@ -1,12 +1,15 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42j
+ * S5L8702 H.264 Hardware Video Decoder — v42k
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42j: No VPU_MODE toggle (Apple never toggles per-frame) + full register
- * zero (clear stale CTRL/STATUS from previous decode) + immediate CTRL kill
- * after clock enable (prevent stale trigger re-fire). VPU internal decoder
- * state (DPB) lives in silicon, not MMIO regs — zeroing regs is safe.
+ * v42k: Fix ctrl_buf size — Apple allocates 0x1C200 (115,200) bytes = one
+ * full YCbCr 4:2:0 frame (DAT_001c0fc8 in FUN_001c0b68). Our 4KB was 28×
+ * too small, causing VPU working data to overflow into slice_desc and bs_dma.
+ * P-frame decode then corrupted the VPU's recon data when rebuilding those
+ * buffers, causing STATUS1=0x11002082.
+ * Also: vtable+0x48 RESOLVED at 0x001c1434 — just zeros 4 C++ object fields,
+ * no HW access. Apple does ZERO hardware reset between frames.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -56,7 +59,9 @@
 #define PHYS(x)     ((uint32_t)((uintptr_t)(x) & 0x7FFFFFFF))
 
 #define MAX_FILE_SIZE   500000
-#define CTRL_BUF_SIZE   4096
+/* Apple allocates pic_w * pic_h * 3/2 for ctrl_buf (DAT_001c0fc8 = 0x1C200
+ * for 320x240). VPU uses this as frame-sized working/recon memory. */
+#define CTRL_BUF_SIZE   (320 * 240 * 3 / 2)  /* 115200 = 0x1C200 */
 #define SLICE_DESC_SIZE 320
 #define BS_DMA_SIZE     131072
 #define MAX_FRAMES      16
@@ -594,10 +599,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42j VPU-B P-frame");
+    rb->splash(HZ/2, "v42k VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42j — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42k — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -919,9 +924,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42j done ===");
+    poc_log("=== v42k done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42j: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42k: %d frames", frame_count);
     return PLUGIN_OK;
 }
