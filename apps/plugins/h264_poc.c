@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42c
+ * S5L8702 H.264 Hardware Video Decoder — v42d
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42c fix: Apple cycles VPU-B clock gate between every frame (disable
+ * v42d fix: Apple cycles VPU-B clock gate between every frame (disable
  * after each decode, re-enable before next). Apple also calls vtable+0x48
  * before every decode (unresolvable — vtable is in runtime RAM). We
  * substitute with VPU_MODE pulse + register zeroing.
@@ -584,10 +584,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42c VPU-B P-frame");
+    rb->splash(HZ/2, "v42d VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42c — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42d — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -893,6 +893,78 @@ enum plugin_status plugin_start(const void *parameter)
                     }
                 }
 
+                /* --- DIAGNOSTIC: after first IDR, re-decode same I to buf[1] --- */
+                if (frame_count == 0 && is_idr && ret == 0) {
+                    int diag_buf = cur_buf ^ 1;
+                    poc_log("--- DIAG: I-I re-decode (same IDR to buf[%d]) ---",
+                            diag_buf);
+
+                    /* Dump VPU-B regs before clock-off (read while still on) */
+                    {
+                        volatile uint32_t *vb = (volatile uint32_t *)VPU_B_BASE;
+                        /* Re-enable clock to read regs (vpub_decode disabled it) */
+                        PWRCON(0) = PWRCON(0) & ~(1 << 17);
+                        poc_log("  VPU post-IDR: +00=%08lx +04=%08lx +08=%08lx",
+                                (unsigned long)vb[0], (unsigned long)vb[1],
+                                (unsigned long)vb[2]);
+                        poc_log("  +CC=%08lx +D0=%08lx +D4=%08lx +D8=%08lx",
+                                (unsigned long)VPU_B(0xCC),
+                                (unsigned long)VPU_B(0xD0),
+                                (unsigned long)VPU_B(0xD4),
+                                (unsigned long)VPU_B(0xD8));
+                        poc_log("  +E0=%08lx +E4=%08lx +E8=%08lx +F0=%08lx +F4=%08lx",
+                                (unsigned long)VPU_B(0xE0),
+                                (unsigned long)VPU_B(0xE4),
+                                (unsigned long)VPU_B(0xE8),
+                                (unsigned long)VPU_B(0xF0),
+                                (unsigned long)VPU_B(0xF4));
+                        poc_log("  +118=%08lx +120=%08lx +12C=%08lx",
+                                (unsigned long)VPU_B(0x118),
+                                (unsigned long)VPU_B(0x120),
+                                (unsigned long)VPU_B(0x12C));
+                        PWRCON(0) = PWRCON(0) | (1 << 17);
+                    }
+
+                    /* Re-decode same IDR to second buffer */
+                    rb->memset(frame_y[diag_buf], 0, frame_y_size);
+                    rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
+                    rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
+                    rb->commit_dcache();
+
+                    poc_log("  Triggering I-I re-decode...");
+                    lflush();
+
+                    int ret2 = vpub_decode(
+                        PHYS(ctrl_buf), PHYS(slice_desc),
+                        PHYS(frame_y[diag_buf]),
+                        PHYS(frame_cb[diag_buf]),
+                        PHYS(frame_cr[diag_buf]),
+                        0, 0, 0, 0,
+                        pic_wmb, pic_hmb, pic_w, 1);
+
+                    rb->commit_discard_dcache();
+
+                    if (ret2 == 0)
+                        poc_log("  I-I re-decode SUCCESS!");
+                    else
+                        poc_log("  I-I re-decode ERROR (%d)", ret2);
+
+                    poc_log("  Post: +F0=%08lx +F4=%08lx",
+                            (unsigned long)VPU_STATUS0,
+                            (unsigned long)VPU_STATUS1);
+
+                    {
+                        int nz = 0, ii;
+                        for (ii = 0; ii < frame_y_size; ii++)
+                            if (frame_y[diag_buf][ii] != 0) nz++;
+                        poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
+                        uint32_t crc2 = crc32_calc(frame_y[diag_buf],
+                                                    frame_y_size);
+                        poc_log("  diag Y crc32=%08lx", (unsigned long)crc2);
+                    }
+                    lflush();
+                }
+
                 /* Swap buffers: current becomes reference for next frame */
                 cur_buf ^= 1;
                 frame_count++;
@@ -905,9 +977,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42c done ===");
+    poc_log("=== v42d done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42c: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42d: %d frames", frame_count);
     return PLUGIN_OK;
 }
