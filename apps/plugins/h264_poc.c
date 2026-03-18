@@ -18,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_skip.264"
+#define H264_TEST_PATH "/test_ip.264"
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
