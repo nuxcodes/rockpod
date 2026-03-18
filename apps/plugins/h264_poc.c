@@ -1,14 +1,13 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42l
+ * S5L8702 H.264 Hardware Video Decoder — v42m
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42l: Match Apple's exact per-frame approach:
- * - VPU_MODE set once at init, never toggled
- * - NO register zeroing between frames (preserves HW-set state like +0xEC)
- * - Just clock gate on/off and program needed registers
- * - vtable+0x48 (0x001c1434) = zeros 4 C++ obj fields, no HW access
- * - ctrl_buf = 0x1C200 bytes (full YCbCr frame, DAT_001c0fc8)
+ * v42m: Clear stale trigger bits in +E8 (CTRL) after clock enable.
+ * After decode, +E8 retains trigger mode bits (31,27,13) — only bits 0,12
+ * auto-clear. Our RMW masks never touch the mode bits, so they persist.
+ * Apple's IRQ handler likely clears +E8; our sleep-based wait doesn't.
+ * Fix: VPU_CTRL = 0 after clock enable (clean trigger transition).
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -467,6 +466,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
+    VPU_CTRL = 0;  /* clear stale trigger bits (Apple's IRQ handler does this) */
 
     poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx +EC=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
@@ -604,10 +604,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42l VPU-B P-frame");
+    rb->splash(HZ/2, "v42m VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42l — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42m — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -929,9 +929,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42l done ===");
+    poc_log("=== v42m done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42l: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42m: %d frames", frame_count);
     return PLUGIN_OK;
 }
