@@ -3,11 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42r: VPU gets STUCK after failed decode (v42q finding). All experiments
- * need VPU reset between them. Back-to-back IDR tested BEFORE P-frame.
- * ctrl_buf = all zeros after I-frame (VPU doesn't write recon there).
- * No EPBs in test file (EBSP=RBSP). Shadow regs +fc/+10c/+114 updated
- * in second P attempt, revealing new register +10c (bit_off shadow).
+ * v42s: Second IDR fails too (v42r: IDR-2 = 0x10102042)! VPU can't do
+ * any second decode with just register zeroing. Testing FULL power cycle
+ * (vpub_power_on with VPU_MODE toggle) between experiments.
+ * ctrl_buf = all zeros after I-frame. No EPBs in test file.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -643,10 +642,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42r VPU-B P-frame");
+    rb->splash(HZ/2, "v42s VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42r — H.264 HW I+P via VPU-B (reset between exps) ===");
+    poc_log("=== v42s — H.264 HW I+P via VPU-B (full power cycle) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1084,39 +1083,44 @@ enum plugin_status plugin_start(const void *parameter)
 } while(0)
 
         if (idr_nalu_start >= 0 && have_sps && have_pps) {
-            /* EXP1: Back-to-back IDR (no P-frame poison) */
-            poc_log("--- EXP1: Reset + IDR + IDR (back-to-back) ---");
+            /* EXP1: Full power cycle + IDR + IDR (back-to-back) */
+            poc_log("--- EXP1: FULL POWER CYCLE + IDR + IDR ---");
             lflush();
-            vpub_reset();
+            vpub_power_off();
+            vpub_power_on();
             RUN_EXP_IDR("IDR-1", 0);
             RUN_EXP_IDR("IDR-2", 1);
+            lflush();
+
+            /* EXP2: Full power cycle + IDR, then just reset + IDR
+             * (test if register zeroing alone allows second decode) */
+            poc_log("--- EXP2: POWER CYCLE + IDR, then RESET + IDR ---");
+            lflush();
+            vpub_power_off();
+            vpub_power_on();
+            RUN_EXP_IDR("IDR-fresh", 0);
+            vpub_reset();
+            RUN_EXP_IDR("IDR-reset", 1);
             lflush();
         }
 
         if (idr_nalu_start >= 0 && p_nalu_start >= 0 &&
             have_sps && have_pps) {
-            /* EXP2: Clean IDR + P-frame (confirm P-frame fails from clean) */
-            poc_log("--- EXP2: Reset + IDR + P-frame (clean state) ---");
+            /* EXP3: Full power cycle + IDR + P-frame */
+            poc_log("--- EXP3: POWER CYCLE + IDR + P-frame ---");
             lflush();
-            vpub_reset();
+            vpub_power_off();
+            vpub_power_on();
             RUN_EXP_IDR("IDR", 0);
             RUN_EXP_P("P-frame", 1, 0, 0, 0);
-            lflush();
-
-            /* EXP3: Clean IDR + P-frame without DPB writes */
-            poc_log("--- EXP3: Reset + IDR + P-frame (no DPB) ---");
-            lflush();
-            vpub_reset();
-            RUN_EXP_IDR("IDR", 0);
-            RUN_EXP_P("P-noDPB", 1, 0, 1, 0);
             lflush();
         }
     }
 
     vpub_power_off();
-    poc_log("=== v42r done ===");
+    poc_log("=== v42s done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42r: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42s: %d frames", frame_count);
     return PLUGIN_OK;
 }
