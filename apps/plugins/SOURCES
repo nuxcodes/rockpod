@@ -87,6 +87,7 @@ crypt_firmware.c
 #endif
 #if defined(IPOD_6G)
 h264_poc.c
+jpeg_poc.c
 #endif
 #endif
 
