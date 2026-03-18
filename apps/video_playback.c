@@ -571,7 +571,7 @@ static void load_theme_colors(void)
 
 static void resume_save(const char *filepath)
 {
-    struct resume_entry entries[MAX_RESUME];
+    static struct resume_entry entries[MAX_RESUME];
     uint32_t hash = fnv1a_hash(filepath);
     int count = 0, found = -1, i, fd;
 
@@ -623,18 +623,22 @@ static void resume_save(const char *filepath)
 
 static uint32_t resume_load(const char *filepath)
 {
-    struct resume_entry entries[MAX_RESUME];
+    static struct resume_entry entries[MAX_RESUME];
     uint32_t hash = fnv1a_hash(filepath);
     int fd, count, i;
+    ssize_t n;
 
     fd = open(RESUME_PATH, O_RDONLY);
     if (fd < 0)
         return 0;
 
-    count = read(fd, entries, sizeof(entries));
+    n = read(fd, entries, sizeof(entries));
     close(fd);
 
-    count /= sizeof(struct resume_entry);
+    if (n <= 0)
+        return 0;
+
+    count = n / (int)sizeof(struct resume_entry);
     for (i = 0; i < count; i++)
     {
         if (entries[i].path_hash == hash)
@@ -692,7 +696,7 @@ static void button_loop(const char *filepath)
 
     while (!exit_loop)
     {
-        int btn = button_get_w_tmo(HZ / 10);
+        long btn = button_get_w_tmo(HZ / 10);
 
         /* Update simulated playback time */
         update_sim_time();

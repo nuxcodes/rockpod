@@ -250,7 +250,6 @@ struct video_list_ctx {
     int count;
 };
 
-static struct video_list_ctx *_vlist_ctx; /* for draw callback */
 
 static const char *video_list_get_name(int selected_item, void *data,
                                        char *buffer, size_t buffer_len)
@@ -309,8 +308,6 @@ static int show_artist_videos(const char *artist, int *indices, int count)
 
     ctx.indices = indices;
     ctx.count = count;
-    _vlist_ctx = &ctx;
-
     /* Load thumbnails for these videos */
     load_thumbnails(indices, count);
     for (i = 0; i < count && i < MAX_THUMBS; i++)
