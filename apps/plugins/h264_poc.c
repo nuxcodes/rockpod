@@ -1,16 +1,15 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42g
+ * S5L8702 H.264 Hardware Video Decoder — v42h
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42g fix: Apple cycles VPU-B clock gate between every frame (disable
- * after each decode, re-enable before next). Apple also calls vtable+0x48
- * before every decode (unresolvable — vtable is in runtime RAM). We
- * substitute with VPU_MODE pulse + register zeroing.
+ * v42h: Restore +0x120-0x12C writes (Apple DOES write them for Baseline
+ * P-frames — param_1+0x34 is non-zero from PPS parser). Zero descriptor
+ * buffer before each frame (Apple zeros 0x140 bytes per frame).
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
- *   +0x120..+0x12C = primary ref Y/Cb/Cr + valid flag (P/B frames)
+ *   +0x120..+0x12C = ref Y/Cb/Cr + valid flag (written for P-frames)
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -449,31 +448,11 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Step 1: Enable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,1)) */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
 
-    /* Step 2: VPU_MODE pulse (substitute for vtable+0x48). */
+    /* Step 2: VPU_MODE pulse + zero registers (substitute for vtable+0x48). */
     VPU_MODE_REG &= ~1;
     VPU_MODE_REG |= 1;
-
-    /* Dump ALL VPU-B registers BEFORE zeroing — find non-zero defaults */
-    {
-        int any_nz = 0;
-        for (i = 0; i < 0x130/4; i++)
-            if (base[i] != 0) any_nz++;
-        poc_log("  post-pulse: %d non-zero regs (of %d)", any_nz, 0x130/4);
-        if (any_nz > 0) {
-            for (i = 0; i < 0x130/4; i++) {
-                if (base[i] != 0)
-                    poc_log("    +%02x = %08lx", i*4, (unsigned long)base[i]);
-            }
-        }
-    }
-
-    /* Zero all VPU-B regs EXCEPT +0xEC which VPU_MODE sets to 1.
-     * Register dump shows +0xEC=1 is a VPU_MODE default.
-     * Zeroing it may disable inter prediction (P-frame support). */
-    for (i = 0; i < 0x130/4; i++) {
-        if (i != 0xEC/4)
-            base[i] = 0;
-    }
+    for (i = 0; i < 0x130/4; i++)
+        base[i] = 0;
 
     poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
@@ -507,10 +486,15 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     VPU_OUT_CR = cr_phys;                                   /* +0xD4 */
     VPU_CONFIG = VPU_CONFIG_CONST;                          /* +0x118 */
 
-    /* +0x120-0x12C are B-frame L1 ref registers — NOT written for Baseline.
-     * Apple's FUN_001c0fd0 clears has_ref for Baseline before calling
-     * FUN_001c06ac, so the +0x120-0x12C block never executes.
-     * Writing +0x12C=1 incorrectly enables B-frame mode, causing errors. */
+    /* Reference registers: Apple DOES write +0x120-0x12C for P-frames.
+     * RE of FUN_001c0fd0 + FUN_00369c80 shows param_1+0x34 is NON-ZERO
+     * for our Baseline stream, so has_ref is NOT cleared. */
+    if (has_ref) {
+        VPU_REF_Y    = ref_y;                               /* +0x120 */
+        VPU_REF_CB   = ref_cb;                              /* +0x124 */
+        VPU_REF_CR   = ref_cr;                              /* +0x128 */
+        VPU_REF_FLAG = 1;                                   /* +0x12C */
+    }
 
     /* Write L0 ref list to +0x00+ (Apple: DPB iterator loop) */
     if (has_ref) {
@@ -519,7 +503,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
         base[2] = ref_cr;
         poc_log("  refs: +00=%08lx +04=%08lx +08=%08lx +12C=%d",
                 (unsigned long)ref_y, (unsigned long)ref_cb,
-                (unsigned long)ref_cr, has_ref);
+                (unsigned long)ref_cr, (int)VPU_REF_FLAG);
     }
 
     poc_log("  regs: +E0=%08lx +E4=%08lx +E8=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
@@ -602,10 +586,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42g VPU-B P-frame");
+    rb->splash(HZ/2, "v42h VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42g — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42h — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -803,6 +787,10 @@ enum plugin_status plugin_start(const void *parameter)
                         bs_dma[0], bs_dma[1], bs_dma[2], bs_dma[3],
                         bs_dma[4], bs_dma[5], bs_dma[6], bs_dma[7]);
 
+                /* Zero descriptor buffer before building (Apple zeros 0x140 bytes
+                 * per frame in FUN_001c06ac before descriptor construction) */
+                rb->memset(slice_desc, 0, SLICE_DESC_SIZE);
+
                 /* Build slice descriptor */
                 build_slice_descriptor(
                     (uint32_t *)slice_desc,
@@ -911,153 +899,6 @@ enum plugin_status plugin_start(const void *parameter)
                     }
                 }
 
-                /* --- DIAGNOSTIC: after first IDR, re-decode same I to buf[1] --- */
-                if (frame_count == 0 && is_idr && ret == 0) {
-                    int diag_buf = cur_buf ^ 1;
-                    poc_log("--- DIAG: I-I re-decode (same IDR to buf[%d]) ---",
-                            diag_buf);
-
-                    /* Dump VPU-B regs before clock-off (read while still on) */
-                    {
-                        volatile uint32_t *vb = (volatile uint32_t *)VPU_B_BASE;
-                        /* Re-enable clock to read regs (vpub_decode disabled it) */
-                        PWRCON(0) = PWRCON(0) & ~(1 << 17);
-                        poc_log("  VPU post-IDR: +00=%08lx +04=%08lx +08=%08lx",
-                                (unsigned long)vb[0], (unsigned long)vb[1],
-                                (unsigned long)vb[2]);
-                        poc_log("  +CC=%08lx +D0=%08lx +D4=%08lx +D8=%08lx",
-                                (unsigned long)VPU_B(0xCC),
-                                (unsigned long)VPU_B(0xD0),
-                                (unsigned long)VPU_B(0xD4),
-                                (unsigned long)VPU_B(0xD8));
-                        poc_log("  +E0=%08lx +E4=%08lx +E8=%08lx +F0=%08lx +F4=%08lx",
-                                (unsigned long)VPU_B(0xE0),
-                                (unsigned long)VPU_B(0xE4),
-                                (unsigned long)VPU_B(0xE8),
-                                (unsigned long)VPU_B(0xF0),
-                                (unsigned long)VPU_B(0xF4));
-                        poc_log("  +118=%08lx +120=%08lx +12C=%08lx",
-                                (unsigned long)VPU_B(0x118),
-                                (unsigned long)VPU_B(0x120),
-                                (unsigned long)VPU_B(0x12C));
-                        PWRCON(0) = PWRCON(0) | (1 << 17);
-                    }
-
-                    /* Re-decode same IDR to second buffer */
-                    rb->memset(frame_y[diag_buf], 0, frame_y_size);
-                    rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
-                    rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
-                    rb->commit_dcache();
-
-                    poc_log("  Triggering I-I re-decode...");
-                    lflush();
-
-                    int ret2 = vpub_decode(
-                        PHYS(ctrl_buf), PHYS(slice_desc),
-                        PHYS(frame_y[diag_buf]),
-                        PHYS(frame_cb[diag_buf]),
-                        PHYS(frame_cr[diag_buf]),
-                        0, 0, 0, 0,
-                        pic_wmb, pic_hmb, pic_w, 1);
-
-                    rb->commit_discard_dcache();
-
-                    if (ret2 == 0)
-                        poc_log("  I-I re-decode SUCCESS!");
-                    else
-                        poc_log("  I-I re-decode ERROR (%d)", ret2);
-
-                    poc_log("  Post: +F0=%08lx +F4=%08lx",
-                            (unsigned long)VPU_STATUS0,
-                            (unsigned long)VPU_STATUS1);
-
-                    {
-                        int nz = 0, ii;
-                        for (ii = 0; ii < frame_y_size; ii++)
-                            if (frame_y[diag_buf][ii] != 0) nz++;
-                        poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
-                        uint32_t crc2 = crc32_calc(frame_y[diag_buf],
-                                                    frame_y_size);
-                        poc_log("  diag Y crc32=%08lx", (unsigned long)crc2);
-                    }
-                    /* DIAG B: Same I-frame RBSP but descriptor says type=0 (P).
-                     * Tests if HW rejects P-mode setup vs bitstream content. */
-                    poc_log("--- DIAG-B: I-RBSP with P-descriptor (type=0) ---");
-                    {
-                        uint32_t *dd = (uint32_t *)slice_desc;
-                        uint32_t saved_w0 = dd[0];
-                        /* Change slice_type from 2(I) to 0(P) in word 0 */
-                        dd[0] = (saved_w0 & ~(0xF << 6)) | (0 << 6);
-                        poc_log("  desc[0]: %08lx (was %08lx)",
-                                (unsigned long)dd[0], (unsigned long)saved_w0);
-
-                        rb->memset(frame_y[diag_buf], 0, frame_y_size);
-                        rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
-                        rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
-                        rb->commit_dcache();
-
-                        int ret3 = vpub_decode(
-                            PHYS(ctrl_buf), PHYS(slice_desc),
-                            PHYS(frame_y[diag_buf]),
-                            PHYS(frame_cb[diag_buf]),
-                            PHYS(frame_cr[diag_buf]),
-                            0, 0, 0, 0,
-                            pic_wmb, pic_hmb, pic_w, 1);
-
-                        rb->commit_discard_dcache();
-                        poc_log("  DIAG-B result: %d  STATUS1=%08lx",
-                                ret3, (unsigned long)VPU_STATUS1);
-                        {
-                            int nz = 0, ii;
-                            for (ii = 0; ii < frame_y_size; ii++)
-                                if (frame_y[diag_buf][ii] != 0) nz++;
-                            poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
-                        }
-
-                        /* Restore descriptor for subsequent use */
-                        dd[0] = saved_w0;
-                        rb->commit_dcache();
-                    }
-
-                    /* DIAG C: Same I-frame RBSP, type=0, WITH ref addrs at +0x00 */
-                    poc_log("--- DIAG-C: I-RBSP + P-desc + refs at +0x00 ---");
-                    {
-                        uint32_t *dd = (uint32_t *)slice_desc;
-                        uint32_t saved_w0 = dd[0];
-                        dd[0] = (saved_w0 & ~(0xF << 6)) | (0 << 6);
-
-                        rb->memset(frame_y[diag_buf], 0, frame_y_size);
-                        rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
-                        rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
-                        rb->commit_dcache();
-
-                        int ret4 = vpub_decode(
-                            PHYS(ctrl_buf), PHYS(slice_desc),
-                            PHYS(frame_y[diag_buf]),
-                            PHYS(frame_cb[diag_buf]),
-                            PHYS(frame_cr[diag_buf]),
-                            PHYS(frame_y[cur_buf]),
-                            PHYS(frame_cb[cur_buf]),
-                            PHYS(frame_cr[cur_buf]),
-                            1,
-                            pic_wmb, pic_hmb, pic_w, 1);
-
-                        rb->commit_discard_dcache();
-                        poc_log("  DIAG-C result: %d  STATUS1=%08lx",
-                                ret4, (unsigned long)VPU_STATUS1);
-                        {
-                            int nz = 0, ii;
-                            for (ii = 0; ii < frame_y_size; ii++)
-                                if (frame_y[diag_buf][ii] != 0) nz++;
-                            poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
-                        }
-
-                        dd[0] = saved_w0;
-                        rb->commit_dcache();
-                    }
-                    lflush();
-                }
-
                 /* Swap buffers: current becomes reference for next frame */
                 cur_buf ^= 1;
                 frame_count++;
@@ -1070,9 +911,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42g done ===");
+    poc_log("=== v42h done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42g: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42h: %d frames", frame_count);
     return PLUGIN_OK;
 }
