@@ -1,11 +1,11 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42n
+ * S5L8702 H.264 Hardware Video Decoder — v42o
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42n: Diagnostic version — full register dump + test_skip.264 (all P_Skip
- * macroblocks, 100% skip, 10-byte P-frame). If skip P-frame fails, the
- * issue is VPU setup, not bitstream content.
+ * v42o: Fix num_ref_l0 encoding — VPU expects actual ref count (1), not
+ * minus1 value (0). With 0, VPU can't index ref list for coded MBs.
+ * P_Skip worked because it copies reference without checking ref count.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -18,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_ip_hiqp.264"
+#define H264_TEST_PATH "/test_ip.264"
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
@@ -619,10 +619,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42n VPU-B P-frame");
+    rb->splash(HZ/2, "v42o VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42n — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42o — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -829,7 +829,7 @@ enum plugin_status plugin_start(const void *parameter)
                     (uint32_t *)slice_desc,
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                    has_ref ? sh.num_ref_idx_l0_active_minus1 : 0,
+                    has_ref ? (sh.num_ref_idx_l0_active_minus1 + 1) : 0,
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                     bit_off, PHYS(bs_dma), dma_len);
@@ -944,9 +944,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42n done ===");
+    poc_log("=== v42o done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42n: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42o: %d frames", frame_count);
     return PLUGIN_OK;
 }
