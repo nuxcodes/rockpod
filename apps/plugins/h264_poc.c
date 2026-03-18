@@ -1,13 +1,11 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42m
+ * S5L8702 H.264 Hardware Video Decoder — v42n
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42m: Clear stale trigger bits in +E8 (CTRL) after clock enable.
- * After decode, +E8 retains trigger mode bits (31,27,13) — only bits 0,12
- * auto-clear. Our RMW masks never touch the mode bits, so they persist.
- * Apple's IRQ handler likely clears +E8; our sleep-based wait doesn't.
- * Fix: VPU_CTRL = 0 after clock enable (clean trigger transition).
+ * v42n: Diagnostic version — full register dump + test_skip.264 (all P_Skip
+ * macroblocks, 100% skip, 10-byte P-frame). If skip P-frame fails, the
+ * issue is VPU setup, not bitstream content.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -20,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_ip.264"
+#define H264_TEST_PATH "/test_skip.264"
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
@@ -87,6 +85,24 @@ static void poc_log(const char *fmt, ...)
     rb->vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (log_fd >= 0) rb->fdprintf(log_fd, "%s\n", buf);
+}
+
+/* ---- VPU-B register dump ---- */
+
+static void dump_vpu_regs(const char *label)
+{
+    volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+    int i, nz = 0;
+    poc_log("  --- %s ---", label);
+    for (i = 0; i < 0x130/4; i++) {
+        uint32_t v = base[i];
+        if (v != 0) {
+            poc_log("    +%02x = %08lx", i*4, (unsigned long)v);
+            nz++;
+        }
+    }
+    poc_log("  --- %d non-zero (of %d) ---", nz, 0x130/4);
+    lflush();
 }
 
 /* ---- CRC-32 (standard, 8 bits per byte) ---- */
@@ -466,11 +482,8 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
+    dump_vpu_regs("after clock enable");
     VPU_CTRL = 0;  /* clear stale trigger bits (Apple's IRQ handler does this) */
-
-    poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx +EC=%08lx",
-            (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
-            (unsigned long)VPU_CTRL, (unsigned long)VPU_B(0xEC));
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -520,11 +533,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                 (unsigned long)ref_cr, (int)VPU_REF_FLAG);
     }
 
-    poc_log("  regs: +E0=%08lx +E4=%08lx +E8=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
-            (unsigned long)VPU_DIMS, (unsigned long)VPU_STRIDES,
-            (unsigned long)VPU_CTRL,
-            (unsigned long)VPU_OUT_Y, (unsigned long)VPU_OUT_CB,
-            (unsigned long)VPU_OUT_CR);
+    dump_vpu_regs("after programming");
 
     /* Step 13: Slice count */
     val = VPU_CTRL;
@@ -540,6 +549,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = VPU_STATUS1;
     poc_log("  done: +F0=%08lx +F4=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)val);
+    dump_vpu_regs("after decode");
 
     ret = 0;
     if ((val << 3) >> 21)
@@ -604,10 +614,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42m VPU-B P-frame");
+    rb->splash(HZ/2, "v42n VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42m — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42n — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -929,9 +939,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42m done ===");
+    poc_log("=== v42n done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42m: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42n: %d frames", frame_count);
     return PLUGIN_OK;
 }
