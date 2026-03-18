@@ -3,10 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42z: v42y proved: bit_off is NOT the issue (EXP2), slice_type=0 alone
- * causes error from zeroed state (EXP3). VPU needs I-frame internal state
- * for P-slice. Fix: DON'T zero registers. Use W1C to clear STATUS1/STATUS0.
- * Also probe VPU-B beyond 0x12C and video system space for reset register.
+ * v43a: v42z showed: non-zero shadow regs prevent VPU from reading new
+ * descriptor (shadow +fc stayed at I-frame 0xa5, not P-frame 0x28).
+ * Fix: zero ONLY shadow descriptor (+FC-+114) + CTRL. Preserve all other
+ * state including +EC, +F0, +F4, +F8. VPU-B mirror found at +200-+32C.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -487,21 +487,26 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * NO VPU_MODE toggle, NO register zeroing — Apple does neither.
      * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
-    /* v42z: NO register zeroing — preserve I-frame internal state.
-     * v42y EXP3 proved: zeroed VPU rejects slice_type=0 (P-slice).
-     * Instead: W1C on STATUS regs + clear CTRL trigger bits only. */
+    /* v43a: Zero ONLY shadow descriptor (+FC-+114) + CTRL (+E8).
+     * v42z proved: non-zero shadows prevent VPU from reading new descriptor
+     * (+fc stayed at I-frame 0xa5, not P-frame 0x28). Clearing shadows
+     * forces VPU to read from descriptor buffer. DON'T zero +EC (cascading
+     * side-effect) or other state that VPU needs for P-slice mode. */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);      /* enable VPU-B clock */
 
-    /* Write-1-to-Clear STATUS registers (DMA pattern: DMACINTTCCLR) */
-    {
-        uint32_t s0 = VPU_STATUS0;
-        uint32_t s1 = VPU_STATUS1;
-        VPU_STATUS0 = s0;  /* W1C: write set bits back to clear */
-        VPU_STATUS1 = s1;  /* W1C: write set bits back to clear */
-    }
-    VPU_CTRL = 0;  /* clear stale trigger bits */
+    VPU_CTRL = 0;  /* +E8: clear trigger bits */
+    /* Zero shadow descriptor registers to force buffer re-read */
+    base[0xFC/4] = 0;   /* shadow desc word 0 */
+    base[0x100/4] = 0;  /* shadow dims */
+    base[0x104/4] = 0;  /* shadow VPU_SLICE_CONST */
+    base[0x108/4] = 0;
+    base[0x10C/4] = 0;  /* shadow bit_off */
+    base[0x110/4] = 0;  /* shadow RBSP addr */
+    base[0x114/4] = 0;  /* shadow RBSP len */
+    /* Preserve: +EC (auto), +F0 (STATUS0), +F4 (STATUS1), +F8 (MB count),
+     * +118 (CONFIG, reprogrammed), +11C (counter), +00-+E4 (config, RMW) */
 
-    dump_vpu_regs("after clock+W1C");
+    dump_vpu_regs("after clock+shadow-clear");
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -642,10 +647,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42z VPU-B P-frame");
+    rb->splash(HZ/2, "v43a VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42z — H.264 HW I+P via VPU-B (W1C + reg probe) ===");
+    poc_log("=== v43a — H.264 HW I+P via VPU-B (shadow-only clear) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1117,9 +1122,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42z done ===");
+    poc_log("=== v43a done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42z: %d frames", frame_count);
+    rb->splashf(HZ*3, "v43a: %d frames", frame_count);
     return PLUGIN_OK;
 }
