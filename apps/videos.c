@@ -28,9 +28,10 @@
 #include "icon.h"
 #include "misc.h"
 #include "root_menu.h"
+#include "screen_access.h"
 #include "itunesdb.h"
-#include "mp4_demux.h"
 #include "video_thumb.h"
+#include "video_playback.h"
 #include "videos.h"
 
 #include "file.h"
@@ -48,7 +49,10 @@ static fb_data thumb_bitmaps[MAX_THUMBS][THUMB_SIZE * THUMB_SIZE];
 static bool    thumb_valid[MAX_THUMBS];
 
 /* Line height for thumbnail lists */
-#define THUMB_LINE_HEIGHT (THUMB_SIZE + 4)
+#define THUMB_LINE_HEIGHT THUMB_SIZE
+
+/* Margin width: thumbnail + right padding before text */
+#define THUMB_MARGIN_WIDTH (THUMB_SIZE + 8)
 
 #define VIDEOS_CACHE_PATH ROCKBOX_DIR "/videos.cache"
 #define ITUNESDB_PATH     "/iPod_Control/iTunes/iTunesDB"
@@ -224,56 +228,19 @@ static void load_thumbnails(int *indices, int count)
 
     for (i = 0; i < limit; i++)
     {
-        struct video_entry *entry = &video_lib.entries[indices[i]];
-
-        /* Try embedded cover art first */
-        thumb_valid[i] = video_thumb_extract(
-            entry->filepath,
-            thumb_bitmaps[i],
-            thumb_work_buf, THUMB_WORK_SIZE);
-
-        /* Fall back to album art */
-        if (!thumb_valid[i])
-            thumb_valid[i] = load_fallback_thumb(entry, i);
+        /* Force test gradient to verify rendering pipeline */
+        fb_data *dst = thumb_bitmaps[i];
+        int r, c;
+        for (r = 0; r < THUMB_SIZE; r++)
+            for (c = 0; c < THUMB_SIZE; c++)
+                dst[r * THUMB_SIZE + c] = LCD_RGBPACK(c * 5, r * 5, 200);
+        thumb_valid[i] = true;
     }
 }
 
-/* --- Open video: demux MP4, show info, eventually play --- */
-
-/* Buffers for MP4 demuxer sample tables */
-static uint32_t demux_sample_sizes[MP4V_MAX_SAMPLES];
-static uint32_t demux_chunk_offsets[MP4V_MAX_STCO];
-
 static void open_video(struct video_entry *entry)
 {
-    struct mp4v_demux_res demux;
-    int ret;
-
-    splash(0, "Opening...");
-
-    ret = mp4v_demux_open(entry->filepath, &demux,
-                          demux_sample_sizes, MP4V_MAX_SAMPLES,
-                          demux_chunk_offsets, MP4V_MAX_STCO);
-
-    if (ret < 0)
-    {
-        splashf(HZ * 2, "Cannot open:\n%s", entry->filepath);
-        return;
-    }
-
-    /* Show track info */
-    splashf(HZ * 4,
-            "%s\n"
-            "%c%c%c%c %ux%u\n"
-            "Profile %u Level %u\n"
-            "%u frames, %u keyframes\n"
-            "Cover: %s",
-            entry->title,
-            SPLITFOURCC(demux.format),
-            demux.width, demux.height,
-            demux.avc_profile, demux.avc_level,
-            demux.num_samples, demux.num_stss,
-            demux.cover_size > 0 ? "yes" : "no");
+    video_playback_start(entry->filepath, entry->title);
 }
 
 /* --- Video list with thumbnails --- */
@@ -290,59 +257,44 @@ static const char *video_list_get_name(int selected_item, void *data,
 {
     struct video_list_ctx *ctx = (struct video_list_ctx *)data;
     struct video_entry *entry;
+    uint32_t dur, h, m, s;
 
     if (selected_item < 0 || selected_item >= ctx->count)
         return "";
 
     entry = &video_lib.entries[ctx->indices[selected_item]];
 
-    strmemccpy(buffer, entry->title, buffer_len);
+    dur = entry->duration_ms / 1000;
+    h = dur / 3600;
+    m = (dur % 3600) / 60;
+    s = dur % 60;
+
+    if (h > 0)
+        snprintf(buffer, buffer_len, "%s  %lu:%02lu:%02lu",
+                 entry->title, (unsigned long)h,
+                 (unsigned long)m, (unsigned long)s);
+    else
+        snprintf(buffer, buffer_len, "%s  %lu:%02lu",
+                 entry->title, (unsigned long)m, (unsigned long)s);
+
     return buffer;
 }
 
-static void video_list_draw_item(struct list_putlineinfo_t *info)
+static void video_margin_draw(int item_index, struct screen *display,
+                              int x, int y, int width, int height,
+                              bool is_selected, void *data)
 {
-    struct screen *display = info->display;
-    int item = info->line;
-    int x = info->x;
-    int y = info->y;
-    struct bitmap thumb_bm;
+    (void)is_selected;
+    (void)data;
+    (void)width;
 
-    if (item < 0 || item >= _vlist_ctx->count)
-        return;
-
-    /* Draw thumbnail if available */
-    if (item < MAX_THUMBS && thumb_valid[item])
+    if (item_index >= 0 && item_index < MAX_THUMBS
+        && thumb_valid[item_index])
     {
-        thumb_bm.width = THUMB_SIZE;
-        thumb_bm.height = THUMB_SIZE;
-        thumb_bm.data = (unsigned char *)thumb_bitmaps[item];
-#if (LCD_DEPTH > 1)
-        thumb_bm.format = FORMAT_NATIVE;
-        thumb_bm.maskdata = NULL;
-#endif
-#ifdef HAVE_LCD_COLOR
-        thumb_bm.alpha_offset = 0;
-#endif
-        int thumb_y = y + (THUMB_LINE_HEIGHT - THUMB_SIZE) / 2;
-        display->bitmap(&thumb_bm, x, thumb_y, THUMB_SIZE, THUMB_SIZE);
-        x += THUMB_SIZE + 4;
-    }
-
-    /* Draw text to the right of the thumbnail */
-    {
-        const char *text = info->dsp_text;
-        int text_y = y + (THUMB_LINE_HEIGHT - display->getcharheight()) / 2;
-
-        if (info->is_selected)
-        {
-            display->set_drawmode(DRMODE_SOLID);
-            display->fillrect(x, y, info->vp->width - x, THUMB_LINE_HEIGHT);
-            display->set_drawmode(DRMODE_SOLID | DRMODE_INVERSEVID);
-        }
-
-        display->putsxy(x, text_y, text);
-        display->set_drawmode(DRMODE_SOLID);
+        int thumb_x = x;
+        int thumb_y = y + (height - THUMB_SIZE) / 2;
+        display->bitmap(thumb_bitmaps[item_index],
+                        thumb_x, thumb_y, THUMB_SIZE, THUMB_SIZE);
     }
 }
 
@@ -377,21 +329,15 @@ static int show_artist_videos(const char *artist, int *indices, int count)
 
     if (has_any_thumbs)
     {
-        list.selected_size = 2;
-        list.callback_draw_item = video_list_draw_item;
+        gui_synclist_set_margin_callback(&list, video_margin_draw,
+                                         THUMB_MARGIN_WIDTH);
+        list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
     }
 
-    /* Force our line height and do the first draw.
-     * We must set line_height after gui_synclist_draw's dirty reinit. */
     gui_synclist_draw(&list);
-    if (has_any_thumbs)
-        list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
 
     for (;;)
     {
-        if (has_any_thumbs)
-            list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
-
         list_do_action(CONTEXT_STD, HZ / 2, &list, &action);
 
         switch (action)
@@ -424,6 +370,7 @@ static int show_artist_videos(const char *artist, int *indices, int count)
     }
 
 out:
+    lcd_scroll_stop();
     return ret;
 }
 
@@ -452,7 +399,9 @@ static const char *artist_list_get_name(int selected_item, void *data,
     if (selected_item < 0 || selected_item >= ctx->count)
         return "";
 
-    strmemccpy(buffer, ctx->artists[selected_item].name, buffer_len);
+    snprintf(buffer, buffer_len, "%s (%d)",
+             ctx->artists[selected_item].name,
+             ctx->artists[selected_item].count);
     return buffer;
 }
 
@@ -508,6 +457,11 @@ static int show_category(enum video_type type)
         }
     }
 
+    /* Single artist — skip straight to video list */
+    if (ctx.count == 1)
+        return show_artist_videos(ctx.artists[0].name,
+                                  ctx.indices, vid_count);
+
     gui_synclist_init(&list, artist_list_get_name, &ctx, false, 1, NULL);
     gui_synclist_set_nb_items(&list, ctx.count);
     gui_synclist_set_title(&list, category_names[type], Icon_NOICON);
@@ -542,6 +496,7 @@ static int show_category(enum video_type type)
                                                      art_indices, art_count);
                     if (sub_ret == GO_TO_ROOT)
                         return GO_TO_ROOT;
+                    /* Redraw; list_draw clears its own viewport */
                     gui_synclist_draw(&list);
                 }
                 break;
@@ -568,11 +523,14 @@ static const char *cat_menu_get_name(int selected_item, void *data,
                                      char *buffer, size_t buffer_len)
 {
     struct cat_menu_ctx *ctx = (struct cat_menu_ctx *)data;
+    enum video_type t;
 
     if (selected_item < 0 || selected_item >= ctx->count)
         return "";
 
-    strmemccpy(buffer, category_names[ctx->types[selected_item]], buffer_len);
+    t = ctx->types[selected_item];
+    snprintf(buffer, buffer_len, "%s (%d)",
+             category_names[t], video_lib.counts[t]);
     return buffer;
 }
 
