@@ -3,10 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42x: Use SWRCON (Software Reset Control, 0x3C500050) to hardware-reset
- * VPU-B between decodes, instead of manual register zeroing. This is what
- * Apple's BootROM clock gate function (thunk_EXT_FUN_22000318) likely does.
- * Standard SoC sequence: assert reset → enable clock → deassert reset.
+ * v42y: SWRCON was a dead end (didn't reset any regs). Back to v42t full
+ * zeroing (IDR+IDR works). P_Skip "success" in v42m was a false positive
+ * (stale I-frame params). Real P-frame error = 0x11002082 from clean state.
+ * New experiment: send FULL NALU (with slice header) to test if VPU needs it.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -487,15 +487,17 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
      * NO VPU_MODE toggle, NO register zeroing — Apple does neither.
      * vtable+0x48 (0x001c1434) only zeros C++ object fields, no HW access.
      * Registers retain HW-set state from previous decode (e.g. +0xEC=1). */
-    /* Hardware reset VPU-B via SWRCON (Software Reset Control Register).
-     * This is what Apple's BootROM clock gate function likely does.
-     * Resets VPU internal state machine cleanly, no manual register zeroing.
-     * Sequence: assert reset → enable clock → deassert reset. */
-    SWRCON |= (1 << 17);                     /* assert VPU-B reset */
+    /* Full register zeroing (v42t approach — proven for IDR+IDR).
+     * SWRCON bit 17 does NOT reset VPU-B registers (v42x proved this). */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);      /* enable VPU-B clock */
-    SWRCON &= ~(1 << 17);                    /* deassert reset → clean state */
+    {
+        int i;
+        base[0xE8/4] = 0;  /* kill trigger first */
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
 
-    dump_vpu_regs("after reset+clock");
+    dump_vpu_regs("after clock+zero");
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
@@ -636,10 +638,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42x VPU-B P-frame");
+    rb->splash(HZ/2, "v42y VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42x — H.264 HW I+P via VPU-B (SWRCON hardware reset) ===");
+    poc_log("=== v42y — H.264 HW I+P via VPU-B (P-frame isolation tests) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1076,30 +1078,152 @@ enum plugin_status plugin_start(const void *parameter)
     } \
 } while(0)
 
-        /* v42t: vpub_decode() now zeros all registers internally.
-         * No external reset needed. Just verify IDR+IDR and IDR+P work. */
-        if (idr_nalu_start >= 0 && have_sps && have_pps) {
-            poc_log("--- EXP1: IDR + IDR (with internal reg zeroing) ---");
-            lflush();
-            RUN_EXP_IDR("IDR-1", 0);
-            RUN_EXP_IDR("IDR-2", 1);
-            lflush();
-        }
-
+        /* v42y experiments: isolate P-frame error 0x11002082 */
         if (idr_nalu_start >= 0 && p_nalu_start >= 0 &&
             have_sps && have_pps) {
-            poc_log("--- EXP2: IDR + P-frame (with internal reg zeroing) ---");
+            /* EXP1: P-frame with FULL NALU (include slice header in DMA).
+             * Tests if VPU needs the header bytes in the DMA buffer. */
+            poc_log("--- EXP1: IDR + P-frame FULL NALU ---");
             lflush();
             RUN_EXP_IDR("IDR", 0);
-            RUN_EXP_P("P-frame", 1, 0, 0, 0);
+            {
+                int r_len = ebsp_to_rbsp(nalu_buf, file_buf + p_nalu_start,
+                                          p_nalu_len);
+                bs.buf = nalu_buf;
+                bs.bit_offset = 0;
+                bs.bit_length = r_len * 8;
+                parse_slice_header(&sps, &pps, &bs, 1, 2, &sh);
+                int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
+                int bo2 = sh.bits_consumed & 7;
+                /* Send FULL NALU from byte 0, bit_off = bits_consumed & 7 */
+                poc_log("  FULL: rbsp=%d bits=%lu bit_off=%d",
+                        r_len, sh.bits_consumed, bo2);
+                rb->commit_discard_dcache();
+                rb->memcpy(UNCACHED(bs_dma), nalu_buf, r_len);
+                rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
+                build_slice_descriptor(
+                    (uint32_t *)UNCACHED(slice_desc),
+                    0, 0, sh.slice_type, qp2,
+                    pps.chroma_qp_index_offset, pps.weighted_pred_flag,
+                    sh.num_ref_idx_l0_active_minus1,
+                    sh.disable_deblocking_filter_idc,
+                    sh.alpha_c0_offset_div2, sh.beta_offset_div2,
+                    bo2, PHYS(bs_dma), r_len);
+                rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
+                rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
+                rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
+                {
+                    int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
+                        PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
+                        PHYS(frame_y[0]), PHYS(frame_cb[0]), PHYS(frame_cr[0]),
+                        1, 0, pic_wmb, pic_hmb, pic_w, 1);
+                    rb->commit_discard_dcache();
+                    int nz = 0, i;
+                    for (i = 0; i < frame_y_size; i++)
+                        if (frame_y[1][i] != 0) nz++;
+                    poc_log("  FULL-P: %s (nz=%d, F4=%08lx)",
+                            r == 0 ? "SUCCESS" : "FAIL", nz,
+                            (unsigned long)VPU_STATUS1);
+                }
+            }
+            lflush();
+
+            /* EXP2: P-frame with bit_off FORCED to 0.
+             * Skip extra byte (lose 6 MB-data bits). If error CHANGES,
+             * bit_off handling is involved. */
+            poc_log("--- EXP2: IDR + P-frame bit_off=0 ---");
+            lflush();
+            RUN_EXP_IDR("IDR", 0);
+            {
+                int r_len = ebsp_to_rbsp(nalu_buf, file_buf + p_nalu_start,
+                                          p_nalu_len);
+                bs.buf = nalu_buf;
+                bs.bit_offset = 0;
+                bs.bit_length = r_len * 8;
+                parse_slice_header(&sps, &pps, &bs, 1, 2, &sh);
+                int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
+                int hb2 = (sh.bits_consumed + 7) / 8;  /* ceil: 26→4 */
+                int dl2 = r_len - hb2;
+                poc_log("  ALIGN: hdr=%d dma=%d bit_off=0", hb2, dl2);
+                rb->commit_discard_dcache();
+                rb->memcpy(UNCACHED(bs_dma), nalu_buf + hb2, dl2);
+                rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
+                build_slice_descriptor(
+                    (uint32_t *)UNCACHED(slice_desc),
+                    0, 0, sh.slice_type, qp2,
+                    pps.chroma_qp_index_offset, pps.weighted_pred_flag,
+                    sh.num_ref_idx_l0_active_minus1,
+                    sh.disable_deblocking_filter_idc,
+                    sh.alpha_c0_offset_div2, sh.beta_offset_div2,
+                    0, PHYS(bs_dma), dl2);  /* bit_off = 0 */
+                rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
+                rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
+                rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
+                {
+                    int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
+                        PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
+                        PHYS(frame_y[0]), PHYS(frame_cb[0]), PHYS(frame_cr[0]),
+                        1, 0, pic_wmb, pic_hmb, pic_w, 1);
+                    rb->commit_discard_dcache();
+                    int nz = 0, i;
+                    for (i = 0; i < frame_y_size; i++)
+                        if (frame_y[1][i] != 0) nz++;
+                    poc_log("  ALIGN-P: %s (nz=%d, F4=%08lx)",
+                            r == 0 ? "SUCCESS" : "FAIL", nz,
+                            (unsigned long)VPU_STATUS1);
+                }
+            }
+            lflush();
+
+            /* EXP3: IDR with P-frame descriptor (isolate desc vs RBSP).
+             * Decode IDR NALU but with slice_type=0, bit_off=0 in desc. */
+            poc_log("--- EXP3: IDR NALU + P-type descriptor ---");
+            lflush();
+            RUN_EXP_IDR("IDR-ref", 0);
+            {
+                int r_len = ebsp_to_rbsp(nalu_buf, file_buf + idr_nalu_start,
+                                          idr_nalu_len);
+                bs.buf = nalu_buf;
+                bs.bit_offset = 0;
+                bs.bit_length = r_len * 8;
+                parse_slice_header(&sps, &pps, &bs, 5, 3, &sh);
+                int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
+                int hb2 = sh.bits_consumed / 8;
+                int dl2 = r_len - hb2;
+                poc_log("  IDR-as-P: type=0 in desc, IDR RBSP");
+                rb->commit_discard_dcache();
+                rb->memcpy(UNCACHED(bs_dma), nalu_buf + hb2, dl2);
+                rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
+                build_slice_descriptor(
+                    (uint32_t *)UNCACHED(slice_desc),
+                    0, 0, 0 /* P-slice type */, qp2,
+                    pps.chroma_qp_index_offset, pps.weighted_pred_flag,
+                    0, sh.disable_deblocking_filter_idc,
+                    sh.alpha_c0_offset_div2, sh.beta_offset_div2,
+                    0, PHYS(bs_dma), dl2);  /* bit_off=0 */
+                rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
+                rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
+                rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
+                {
+                    /* No refs — just see if the desc type=0 causes the error */
+                    int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
+                        PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
+                        0, 0, 0, 0, 0,
+                        pic_wmb, pic_hmb, pic_w, 1);
+                    rb->commit_discard_dcache();
+                    poc_log("  IDR-as-P: %s (F4=%08lx)",
+                            r == 0 ? "SUCCESS" : "FAIL",
+                            (unsigned long)VPU_STATUS1);
+                }
+            }
             lflush();
         }
     }
 
     vpub_power_off();
-    poc_log("=== v42x done ===");
+    poc_log("=== v42y done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42x: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42y: %d frames", frame_count);
     return PLUGIN_OK;
 }
