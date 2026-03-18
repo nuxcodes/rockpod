@@ -1,15 +1,13 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v41
+ * S5L8702 H.264 Hardware Video Decoder — v42
  *
- * TRUE HARDWARE H.264 DECODE via VPU-B (0x39800000).
- * Apple's real H.264 decoder is at a SEPARATE hardware block from the
- * JPEG/MPEG-4 VPU-A (0x39600000). Previous versions (v33-v36) accidentally
- * used the JPEG IDCT engine. This version feeds raw H.264 bitstream to
- * VPU-B. The HW does CAVLC, dequant, IDCT, intra pred, AND deblocking.
+ * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
+ * Extends v41 (bit-perfect I-frame) with reference picture management,
+ * double-buffered frame memory, and extended slice header parsing.
  *
- * Discovery: FUN_0007e9e0 = JPEG decoder (not H.264)
- *            FUN_0001b388 = bswap32 (not forward DCT)
- *            FUN_001c06ac = H.264 HW trigger via VPU-B
+ * VPU-B reference registers (from RE of FUN_001c06ac):
+ *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
+ *   +0x120..+0x12C = primary ref Y/Cb/Cr + valid flag
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -18,7 +16,8 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_iframe.264"
+#define H264_TEST_PATH "/test_ip.264"
+#define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
 /* ---- VPU-B H.264 hardware registers (0x39800000) ---- */
@@ -36,6 +35,10 @@
 #define VPU_STATUS0     VPU_B(0xF0)
 #define VPU_STATUS1     VPU_B(0xF4)
 #define VPU_CONFIG      VPU_B(0x118)
+#define VPU_REF_Y       VPU_B(0x120)
+#define VPU_REF_CB      VPU_B(0x124)
+#define VPU_REF_CR      VPU_B(0x128)
+#define VPU_REF_FLAG    VPU_B(0x12C)
 
 /* Constants from Apple firmware (verified from Ghidra) */
 #define VPU_CONFIG_CONST    0x82625A00
@@ -53,6 +56,7 @@
 #define CTRL_BUF_SIZE   4096
 #define SLICE_DESC_SIZE 320
 #define BS_DMA_SIZE     131072
+#define MAX_FRAMES      16
 
 #ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -77,6 +81,20 @@ static void poc_log(const char *fmt, ...)
     rb->vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (log_fd >= 0) rb->fdprintf(log_fd, "%s\n", buf);
+}
+
+/* ---- CRC-32 (standard, 8 bits per byte) ---- */
+
+static uint32_t crc32_calc(const uint8_t *data, int len)
+{
+    uint32_t crc = 0xFFFFFFFF;
+    int i, j;
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (j = 0; j < 8; j++)
+            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    }
+    return crc ^ 0xFFFFFFFF;
 }
 
 /* ---- Bitstream reader (exp-Golomb) ---- */
@@ -168,6 +186,8 @@ typedef struct {
     int first_mb_in_slice, slice_type, slice_qp_delta;
     int disable_deblocking_filter_idc;
     int alpha_c0_offset_div2, beta_offset_div2;
+    int frame_num;
+    int num_ref_idx_l0_active_minus1;
     unsigned long bits_consumed;
 } slice_hdr_t;
 
@@ -233,24 +253,84 @@ static void parse_pps(pps_t *pps, bs_t *b)
 }
 
 static void parse_slice_header(sps_t *sps, pps_t *pps, bs_t *b,
-                                int nal_type, slice_hdr_t *sh)
+                                int nal_type, int nal_ref_idc,
+                                slice_hdr_t *sh)
 {
     b->bit_offset = 8;
     sh->first_mb_in_slice = bs_ue(b);
     sh->slice_type = bs_ue(b);
     if (sh->slice_type >= 5) sh->slice_type -= 5;
-    bs_ue(b);
-    bs_un(b, sps->log2_max_frame_num_minus4 + 4);
+    bs_ue(b);  /* pic_parameter_set_id */
+    sh->frame_num = bs_un(b, sps->log2_max_frame_num_minus4 + 4);
 
     if (nal_type == 5) {
-        bs_ue(b);
+        bs_ue(b);  /* idr_pic_id */
     }
     if (sps->pic_order_cnt_type == 0) {
         bs_un(b, sps->log2_max_pic_order_cnt_lsb_minus4 + 4);
     }
 
-    if (nal_type == 5) {
-        bs_u1(b); bs_u1(b);
+    /* num_ref_idx_active_override (P/B slices only) */
+    sh->num_ref_idx_l0_active_minus1 = pps->num_ref_idx_l0_default_active_minus1;
+    if (sh->slice_type == 0 || sh->slice_type == 1) {
+        /* P-slice (0) or B-slice (1) */
+        if (bs_u1(b)) {
+            sh->num_ref_idx_l0_active_minus1 = bs_ue(b);
+            if (sh->slice_type == 1)
+                bs_ue(b);  /* num_ref_idx_l1_active_minus1 */
+        }
+    }
+
+    /* ref_pic_list_modification (P/B slices only) */
+    if (sh->slice_type == 0 || sh->slice_type == 1) {
+        /* ref_pic_list_modification_flag_l0 */
+        if (bs_u1(b)) {
+            uint32_t idc;
+            do {
+                idc = bs_ue(b);
+                if (idc == 0 || idc == 1)
+                    bs_ue(b);  /* abs_diff_pic_num_minus1 */
+                else if (idc == 2)
+                    bs_ue(b);  /* long_term_pic_num */
+            } while (idc != 3);
+        }
+        if (sh->slice_type == 1) {
+            /* ref_pic_list_modification_flag_l1 */
+            if (bs_u1(b)) {
+                uint32_t idc;
+                do {
+                    idc = bs_ue(b);
+                    if (idc == 0 || idc == 1)
+                        bs_ue(b);
+                    else if (idc == 2)
+                        bs_ue(b);
+                } while (idc != 3);
+            }
+        }
+    }
+
+    /* dec_ref_pic_marking */
+    if (nal_ref_idc != 0) {
+        if (nal_type == 5) {
+            bs_u1(b);  /* no_output_of_prior_pics_flag */
+            bs_u1(b);  /* long_term_reference_flag */
+        } else {
+            /* adaptive_ref_pic_marking_mode_flag */
+            if (bs_u1(b)) {
+                uint32_t mmco;
+                do {
+                    mmco = bs_ue(b);
+                    if (mmco == 1 || mmco == 3)
+                        bs_ue(b);  /* difference_of_pic_nums_minus1 */
+                    if (mmco == 2)
+                        bs_ue(b);  /* long_term_pic_num */
+                    if (mmco == 3 || mmco == 6)
+                        bs_ue(b);  /* long_term_frame_idx */
+                    if (mmco == 4)
+                        bs_ue(b);  /* max_long_term_frame_idx_plus1 */
+                } while (mmco != 0);
+            }
+        }
     }
 
     sh->slice_qp_delta = bs_se(b);
@@ -333,13 +413,11 @@ static void build_slice_descriptor(uint32_t *desc,
                                     uint32_t bs_phys_addr,
                                     int bs_length)
 {
-    /* Word 0: verified from ARM disasm at 0x1c0840-0x1c0868 */
     desc[0] = ((slice_index & 0x7FF) << 21)
             | ((first_mb_in_slice & 0x7FF) << 10)
             | ((slice_type & 0xF) << 6)
             | (slice_qp_y & 0x3F);
 
-    /* Word 1: verified from ARM disasm at 0x1c086c-0x1c08ac */
     desc[1] = ((chroma_qp_off & 0xFF) << 15)
             | ((weighted_pred & 1) << 14)
             | ((num_ref_l0 & 0xF) << 10)
@@ -359,24 +437,43 @@ static void build_slice_descriptor(uint32_t *desc,
 
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
+                        uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
+                        int has_ref,
                         int width_mbs, int height_mbs,
                         int pic_w, int num_slices)
 {
     uint32_t val;
+    volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+    int i;
 
-    poc_log("  pre-prog: +F0=%08lx +F4=%08lx +E8=%08lx +118=%08lx",
+    poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
-            (unsigned long)VPU_CTRL, (unsigned long)VPU_CONFIG);
+            (unsigned long)VPU_CTRL);
 
-    /* Clear reference picture area (I-frame: no refs) */
-    {
-        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-        int i;
+    /* Reference picture registers */
+    if (has_ref) {
+        /* L0 ref list entry 0: Y, Cb, Cr */
+        base[0] = ref_y;
+        base[1] = ref_cb;
+        base[2] = ref_cr;
+        /* Clear remaining ref slots (3..47) */
+        for (i = 3; i < 48; i++)
+            base[i] = 0;
+        /* Primary reference registers (+0x120..+0x12C) */
+        VPU_REF_Y = ref_y;
+        VPU_REF_CB = ref_cb;
+        VPU_REF_CR = ref_cr;
+        VPU_REF_FLAG = 1;
+        poc_log("  refs: +00=%08lx +04=%08lx +08=%08lx +12C=%08lx",
+                (unsigned long)ref_y, (unsigned long)ref_cb,
+                (unsigned long)ref_cr, (unsigned long)VPU_REF_FLAG);
+    } else {
         for (i = 0; i < 48; i++)
             base[i] = 0;
+        VPU_REF_FLAG = 0;
     }
 
-    /* Buffer addresses */
+    /* Buffer addresses (ctrl_buf persists between frames) */
     VPU_CTRL_BUF  = ctrl_phys;
     VPU_SLICE_DESC = desc_phys;
 
@@ -388,7 +485,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x003F) | (width_mbs & 0x3F);
     VPU_DIMS = val;
 
-    /* Frame size in control register (before strides, like Apple) */
+    /* Frame size in control register */
     val = VPU_CTRL;
     val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
     VPU_CTRL = val;
@@ -409,15 +506,12 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Config */
     VPU_CONFIG = VPU_CONFIG_CONST;
 
-    poc_log("  regs: +118=%08lx +E0=%08lx +E4=%08lx +E8=%08lx",
-            (unsigned long)VPU_CONFIG, (unsigned long)VPU_DIMS,
-            (unsigned long)VPU_STRIDES, (unsigned long)VPU_CTRL);
-    poc_log("  bufs: +D8=%08lx +DC=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
-            (unsigned long)VPU_CTRL_BUF, (unsigned long)VPU_SLICE_DESC,
+    poc_log("  regs: +E0=%08lx +E4=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
+            (unsigned long)VPU_DIMS, (unsigned long)VPU_STRIDES,
             (unsigned long)VPU_OUT_Y, (unsigned long)VPU_OUT_CB,
             (unsigned long)VPU_OUT_CR);
 
-    /* Slice count (separate RMW on +0xE8) */
+    /* Slice count */
     val = VPU_CTRL;
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
@@ -428,7 +522,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Wait for decode completion.
      * Apple uses IRQ semaphore (event 0x23) with 0x84ms timeout.
      * STATUS0 bit 0 is unreliable for polling, so we sleep instead. */
-    rb->sleep(HZ/5);  /* 200ms — generous for 320x240 I-frame */
+    rb->sleep(HZ/5);  /* 200ms */
 
     val = VPU_STATUS1;
     poc_log("  done: +F0=%08lx +F4=%08lx",
@@ -440,6 +534,41 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     return 0;
 }
 
+/* ---- YCbCr to LCD display ---- */
+
+static void display_frame(const uint8_t *y, const uint8_t *cb,
+                           const uint8_t *cr, int pic_w, int pic_h,
+                           uint8_t *tile_buf)
+{
+    fb_data *tile = (fb_data *)(void *)tile_buf;
+    int ty, py, px;
+
+    rb->lcd_clear_display();
+    for (ty = 0; ty < pic_h; ty += 16) {
+        int rows = MIN(16, pic_h - ty);
+        for (py = 0; py < rows; py++) {
+            for (px = 0; px < pic_w; px++) {
+                uint8_t yv = y[(ty+py)*pic_w+px];
+                uint8_t cbv = cb[((ty+py)/2)*(pic_w/2)+px/2];
+                uint8_t crv = cr[((ty+py)/2)*(pic_w/2)+px/2];
+                int r = yv + (((int)crv-128)*359>>8);
+                int g = yv - (((int)cbv-128)*88>>8)
+                          - (((int)crv-128)*183>>8);
+                int bv = yv + (((int)cbv-128)*454>>8);
+                if (r < 0) r = 0;
+                if (r > 255) r = 255;
+                if (g < 0) g = 0;
+                if (g > 255) g = 255;
+                if (bv < 0) bv = 0;
+                if (bv > 255) bv = 255;
+                tile[py*pic_w+px] = ((r>>3)<<11)|((g>>2)<<5)|(bv>>3);
+            }
+        }
+        rb->lcd_bitmap(tile, 0, ty, pic_w, rows);
+    }
+    rb->lcd_update();
+}
+
 /* ---- Main ---- */
 
 enum plugin_status plugin_start(const void *parameter)
@@ -448,16 +577,16 @@ enum plugin_status plugin_start(const void *parameter)
     size_t buf_size;
     uint8_t *buf, *p;
     uint8_t *ctrl_buf, *slice_desc, *bs_dma;
-    uint8_t *frame_y, *frame_cb, *frame_cr;
+    uint8_t *frame_y[2], *frame_cb[2], *frame_cr[2];
     uint8_t *file_buf, *nalu_buf;
     int pic_w = 320, pic_h = 240, pic_wmb = 20, pic_hmb = 15;
     int frame_y_size, frame_cb_size, frame_cr_size;
-    int i;
+    int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v41 VPU-B H.264");
+    rb->splash(HZ/2, "v42 VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v41 — H.264 HW decode via VPU-B (0x39800000) ===");
+    poc_log("=== v42 — H.264 HW decode I+P via VPU-B (0x39800000) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -472,9 +601,15 @@ enum plugin_status plugin_start(const void *parameter)
     frame_y_size = 320 * 240;
     frame_cb_size = 160 * 120;
     frame_cr_size = 160 * 120;
-    frame_y  = (uint8_t *)ALIGN4K(p);  p = frame_y + frame_y_size;
-    frame_cb = (uint8_t *)ALIGN32(p);  p = frame_cb + frame_cb_size;
-    frame_cr = (uint8_t *)ALIGN32(p);  p = frame_cr + frame_cr_size;
+
+    /* Double-buffered frame memory */
+    frame_y[0]  = (uint8_t *)ALIGN4K(p);  p = frame_y[0] + frame_y_size;
+    frame_cb[0] = (uint8_t *)ALIGN32(p);  p = frame_cb[0] + frame_cb_size;
+    frame_cr[0] = (uint8_t *)ALIGN32(p);  p = frame_cr[0] + frame_cr_size;
+    frame_y[1]  = (uint8_t *)ALIGN4K(p);  p = frame_y[1] + frame_y_size;
+    frame_cb[1] = (uint8_t *)ALIGN32(p);  p = frame_cb[1] + frame_cb_size;
+    frame_cr[1] = (uint8_t *)ALIGN32(p);  p = frame_cr[1] + frame_cr_size;
+
     file_buf = (uint8_t *)ALIGN32(p);  p = file_buf + MAX_FILE_SIZE;
     nalu_buf = (uint8_t *)ALIGN32(p);  p = nalu_buf + MAX_FILE_SIZE;
 
@@ -488,18 +623,25 @@ enum plugin_status plugin_start(const void *parameter)
     rb->memset(ctrl_buf, 0, CTRL_BUF_SIZE);
     rb->memset(slice_desc, 0, SLICE_DESC_SIZE);
     rb->memset(bs_dma, 0, BS_DMA_SIZE);
-    rb->memset(frame_y, 0, frame_y_size);
-    rb->memset(frame_cb, 0x80, frame_cb_size);
-    rb->memset(frame_cr, 0x80, frame_cr_size);
+    rb->memset(frame_y[0], 0, frame_y_size);
+    rb->memset(frame_cb[0], 0x80, frame_cb_size);
+    rb->memset(frame_cr[0], 0x80, frame_cr_size);
+    rb->memset(frame_y[1], 0, frame_y_size);
+    rb->memset(frame_cb[1], 0x80, frame_cb_size);
+    rb->memset(frame_cr[1], 0x80, frame_cr_size);
 
     poc_log("Buffers: ctrl=%08lx desc=%08lx bs=%08lx",
             (unsigned long)(uintptr_t)ctrl_buf,
             (unsigned long)(uintptr_t)slice_desc,
             (unsigned long)(uintptr_t)bs_dma);
-    poc_log("  Y=%08lx Cb=%08lx Cr=%08lx",
-            (unsigned long)(uintptr_t)frame_y,
-            (unsigned long)(uintptr_t)frame_cb,
-            (unsigned long)(uintptr_t)frame_cr);
+    poc_log("  Y[0]=%08lx Cb[0]=%08lx Cr[0]=%08lx",
+            (unsigned long)(uintptr_t)frame_y[0],
+            (unsigned long)(uintptr_t)frame_cb[0],
+            (unsigned long)(uintptr_t)frame_cr[0]);
+    poc_log("  Y[1]=%08lx Cb[1]=%08lx Cr[1]=%08lx",
+            (unsigned long)(uintptr_t)frame_y[1],
+            (unsigned long)(uintptr_t)frame_cb[1],
+            (unsigned long)(uintptr_t)frame_cr[1]);
     lflush();
 
     /* ---- Power on VPU-B ---- */
@@ -539,13 +681,13 @@ enum plugin_status plugin_start(const void *parameter)
         pps_t pps;
         slice_hdr_t sh;
         bs_t bs;
-        int have_sps = 0, have_pps = 0, decoded = 0;
+        int have_sps = 0, have_pps = 0;
         int pos = 0, sc_len;
 
         rb->memset(&sps, 0, sizeof(sps));
         rb->memset(&pps, 0, sizeof(pps));
 
-        while (pos < fread_n && !decoded) {
+        while (pos < fread_n && frame_count < MAX_FRAMES) {
             int sc_pos = find_start_code(file_buf + pos, fread_n - pos,
                                           &sc_len);
             if (sc_pos < 0) break;
@@ -561,9 +703,10 @@ enum plugin_status plugin_start(const void *parameter)
                                          nalu_len);
             uint8_t nal_hdr = nalu_buf[0];
             int nal_type = nal_hdr & 0x1F;
+            int nal_ref_idc = (nal_hdr >> 5) & 3;
 
             poc_log("  NALU type=%d ref=%d len=%d",
-                    nal_type, (nal_hdr >> 5) & 3, rbsp_len);
+                    nal_type, nal_ref_idc, rbsp_len);
 
             bs.buf = nalu_buf;
             bs.bit_offset = 0;
@@ -578,42 +721,50 @@ enum plugin_status plugin_start(const void *parameter)
                 frame_y_size = pic_w * pic_h;
                 frame_cb_size = (pic_w / 2) * (pic_h / 2);
                 frame_cr_size = frame_cb_size;
-                poc_log("  SPS: %dx%d (%dx%d MBs) profile=%d level=%d",
+                poc_log("  SPS: %dx%d (%dx%d MBs) profile=%d level=%d "
+                        "max_ref=%d log2_fn=%d poc_type=%d",
                         pic_w, pic_h, pic_wmb, pic_hmb,
-                        sps.profile_idc, sps.level_idc);
+                        sps.profile_idc, sps.level_idc,
+                        sps.max_num_ref_frames,
+                        sps.log2_max_frame_num_minus4 + 4,
+                        sps.pic_order_cnt_type);
                 have_sps = 1;
 
             } else if (nal_type == 8) {
                 parse_pps(&pps, &bs);
-                poc_log("  PPS: qp=%d cqp_off=%d deblk=%d wpred=%d",
+                poc_log("  PPS: qp=%d cqp_off=%d deblk=%d wpred=%d "
+                        "l0_default=%d",
                         26 + pps.pic_init_qp_minus26,
                         pps.chroma_qp_index_offset,
                         pps.deblocking_filter_control_present_flag,
-                        pps.weighted_pred_flag);
+                        pps.weighted_pred_flag,
+                        pps.num_ref_idx_l0_default_active_minus1);
                 have_pps = 1;
 
             } else if ((nal_type == 5 || nal_type == 1) &&
                        have_sps && have_pps) {
-                poc_log("  %s slice: decoding %dx%d...",
-                        nal_type == 5 ? "IDR" : "non-IDR", pic_w, pic_h);
+                int is_idr = (nal_type == 5);
+                int has_ref = !is_idr;
+                int ref_buf = cur_buf ^ 1;
+
+                poc_log("--- Frame %d: %s slice ---",
+                        frame_count, is_idr ? "IDR" : "P");
                 lflush();
 
-                parse_slice_header(&sps, &pps, &bs, nal_type, &sh);
+                parse_slice_header(&sps, &pps, &bs, nal_type,
+                                    nal_ref_idc, &sh);
 
                 int slice_qp = 26 + pps.pic_init_qp_minus26
                              + sh.slice_qp_delta;
-                poc_log("  slice: type=%d qp=%d deblk=%d alpha=%d beta=%d "
-                        "bits=%lu",
-                        sh.slice_type, slice_qp,
+                poc_log("  hdr: type=%d qp=%d frame_num=%d "
+                        "nref_l0=%d deblk=%d alpha=%d beta=%d bits=%lu",
+                        sh.slice_type, slice_qp, sh.frame_num,
+                        sh.num_ref_idx_l0_active_minus1,
                         sh.disable_deblocking_filter_idc,
                         sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                         sh.bits_consumed);
 
-                /* Compact RBSP: strip slice header, keep MB data.
-                 * bits_consumed includes NAL header (8 bits) + slice header.
-                 * hdr_bytes = byte offset into RBSP where MB data begins.
-                 * Apple strips EBSP emulation prevention bytes BEFORE DMA.
-                 * nalu_buf already has RBSP (0x000003 removed). */
+                /* Compact RBSP: strip slice header, keep MB data */
                 int hdr_bytes = sh.bits_consumed / 8;
                 int bit_off = sh.bits_consumed & 7;
                 int dma_len = rbsp_len - hdr_bytes;
@@ -626,7 +777,6 @@ enum plugin_status plugin_start(const void *parameter)
                 poc_log("  DMA: %d RBSP bytes from hdr_bytes=%d, bit_off=%d",
                         dma_len, hdr_bytes, bit_off);
 
-                /* Copy RBSP macroblock data (emulation prevention stripped) */
                 rb->memcpy(bs_dma, nalu_buf + hdr_bytes,
                            MIN(dma_len, BS_DMA_SIZE));
 
@@ -639,7 +789,7 @@ enum plugin_status plugin_start(const void *parameter)
                     (uint32_t *)slice_desc,
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                    0, /* num_ref_l0 = 0 for I-frame */
+                    has_ref ? sh.num_ref_idx_l0_active_minus1 : 0,
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                     bit_off, PHYS(bs_dma), dma_len);
@@ -654,14 +804,10 @@ enum plugin_status plugin_start(const void *parameter)
                             (unsigned long)d[6], (unsigned long)d[7]);
                 }
 
-                poc_log("  dims: wmb=%d hmb=%d, cur=(h<<8)|w=%04lx, alt=(w<<8)|h=%04lx",
-                        pic_wmb, pic_hmb,
-                        (unsigned long)((pic_hmb << 8) | pic_wmb),
-                        (unsigned long)((pic_wmb << 8) | pic_hmb));
-
-                rb->memset(frame_y, 0, frame_y_size);
-                rb->memset(frame_cb, 0x80, frame_cb_size);
-                rb->memset(frame_cr, 0x80, frame_cr_size);
+                /* Clear output buffers */
+                rb->memset(frame_y[cur_buf], 0, frame_y_size);
+                rb->memset(frame_cb[cur_buf], 0x80, frame_cb_size);
+                rb->memset(frame_cr[cur_buf], 0x80, frame_cr_size);
                 rb->commit_dcache();
 
                 poc_log("  Triggering VPU-B decode...");
@@ -669,7 +815,13 @@ enum plugin_status plugin_start(const void *parameter)
 
                 int ret = vpub_decode(
                     PHYS(ctrl_buf), PHYS(slice_desc),
-                    PHYS(frame_y), PHYS(frame_cb), PHYS(frame_cr),
+                    PHYS(frame_y[cur_buf]),
+                    PHYS(frame_cb[cur_buf]),
+                    PHYS(frame_cr[cur_buf]),
+                    has_ref ? PHYS(frame_y[ref_buf]) : 0,
+                    has_ref ? PHYS(frame_cb[ref_buf]) : 0,
+                    has_ref ? PHYS(frame_cr[ref_buf]) : 0,
+                    has_ref,
                     pic_wmb, pic_hmb, pic_w, 1);
 
                 rb->commit_discard_dcache();
@@ -688,100 +840,73 @@ enum plugin_status plugin_start(const void *parameter)
 
                 /* Frame analysis */
                 {
-                    int nz = 0;
+                    int nz = 0, i;
                     for (i = 0; i < frame_y_size; i++)
-                        if (frame_y[i] != 0) nz++;
+                        if (frame_y[cur_buf][i] != 0) nz++;
                     poc_log("  frame_y: %d/%d non-zero", nz, frame_y_size);
                     poc_log("  row0: %08lx %08lx %08lx %08lx",
-                            (unsigned long)*(uint32_t *)(frame_y),
-                            (unsigned long)*(uint32_t *)(frame_y + 4),
-                            (unsigned long)*(uint32_t *)(frame_y + 8),
-                            (unsigned long)*(uint32_t *)(frame_y + 12));
+                            (unsigned long)*(uint32_t *)(frame_y[cur_buf]),
+                            (unsigned long)*(uint32_t *)(frame_y[cur_buf]+4),
+                            (unsigned long)*(uint32_t *)(frame_y[cur_buf]+8),
+                            (unsigned long)*(uint32_t *)(frame_y[cur_buf]+12));
                 }
 
                 /* CRC */
                 {
-                    uint32_t crc = 0xFFFFFFFF;
-                    for (i = 0; i < frame_y_size; i++) {
-                        crc ^= frame_y[i];
-                        crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
-                    }
-                    poc_log("  Y crc32=%08lx",
-                            (unsigned long)(crc ^ 0xFFFFFFFF));
+                    uint32_t crc = crc32_calc(frame_y[cur_buf], frame_y_size);
+                    poc_log("  Y crc32=%08lx", (unsigned long)crc);
                 }
 
-                /* Dump */
+                /* Dump Y plane */
                 {
-                    int dfd = rb->open("/vdec_framey.bin",
+                    static char dump_path[40];
+                    rb->snprintf(dump_path, sizeof(dump_path),
+                                 FRAME_DUMP_PATH, frame_count);
+                    int dfd = rb->open(dump_path,
                                         O_WRONLY|O_CREAT|O_TRUNC, 0666);
                     if (dfd >= 0) {
-                        rb->write(dfd, frame_y, frame_y_size);
+                        rb->write(dfd, frame_y[cur_buf], frame_y_size);
                         rb->close(dfd);
-                        poc_log("  frame_y dumped (%d bytes)", frame_y_size);
+                        poc_log("  dumped %s (%d bytes)",
+                                dump_path, frame_y_size);
                     }
                 }
                 lflush();
 
                 /* LCD display */
-                if (ret == 0 || 1) { /* display even on error for debugging */
-                    poc_log("--- YCbCr -> LCD ---");
+                {
+                    poc_log("--- Display frame %d ---", frame_count);
+                    display_frame(frame_y[cur_buf], frame_cb[cur_buf],
+                                  frame_cr[cur_buf], pic_w, pic_h,
+                                  nalu_buf);
+
+                    poc_log("  LCD updated, 3s...");
+                    lflush();
                     {
-                        fb_data *tile = (fb_data *)(void *)nalu_buf;
-                        int ty, py, px;
-
-                        rb->lcd_clear_display();
-                        for (ty = 0; ty < pic_h; ty += 16) {
-                            int rows = MIN(16, pic_h - ty);
-                            for (py = 0; py < rows; py++) {
-                                for (px = 0; px < pic_w; px++) {
-                                    uint8_t yv = frame_y[(ty+py)*pic_w+px];
-                                    uint8_t cbv = frame_cb[((ty+py)/2)*(pic_w/2)+px/2];
-                                    uint8_t crv = frame_cr[((ty+py)/2)*(pic_w/2)+px/2];
-                                    int r = yv + (((int)crv-128)*359>>8);
-                                    int g = yv - (((int)cbv-128)*88>>8)
-                                              - (((int)crv-128)*183>>8);
-                                    int bv = yv + (((int)cbv-128)*454>>8);
-                                    if (r < 0) r = 0;
-                                    if (r > 255) r = 255;
-                                    if (g < 0) g = 0;
-                                    if (g > 255) g = 255;
-                                    if (bv < 0) bv = 0;
-                                    if (bv > 255) bv = 255;
-                                    tile[py*pic_w+px] =
-                                        ((r>>3)<<11)|((g>>2)<<5)|(bv>>3);
-                                }
-                            }
-                            rb->lcd_bitmap(tile, 0, ty, pic_w, rows);
-                        }
-                        rb->lcd_update();
-
-                        poc_log("  LCD updated, 5s...");
-                        lflush();
-                        {
-                            int btn = 50;
-                            while (--btn > 0) {
-                                if (rb->button_get(false) != BUTTON_NONE)
-                                    break;
-                                rb->sleep(HZ/10);
-                            }
+                        int btn = 30;
+                        while (--btn > 0) {
+                            if (rb->button_get(false) != BUTTON_NONE)
+                                break;
+                            rb->sleep(HZ/10);
                         }
                     }
                 }
 
-                decoded = 1;
+                /* Swap buffers: current becomes reference for next frame */
+                cur_buf ^= 1;
+                frame_count++;
             }
 
             pos = nalu_start + nalu_len;
         }
 
-        if (!decoded)
-            poc_log("  No slice found to decode!");
+        poc_log("--- Decoded %d frames ---", frame_count);
     }
 
     vpub_power_off();
-    poc_log("=== v41 done ===");
+    poc_log("=== v42 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v41 done");
+    rb->splashf(HZ*3, "v42: %d frames", frame_count);
     return PLUGIN_OK;
 }
