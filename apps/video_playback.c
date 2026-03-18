@@ -816,7 +816,7 @@ static void button_loop(const char *filepath)
 
 void video_playback_start(const char *filepath, const char *title)
 {
-    struct mp4v_demux_res demux;
+    static struct mp4v_demux_res demux;
     int ret;
     uint32_t resume_time;
 
