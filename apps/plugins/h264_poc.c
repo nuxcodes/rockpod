@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42b
+ * S5L8702 H.264 Hardware Video Decoder — v42c
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42b fix: Apple cycles VPU-B clock gate between every frame (disable
+ * v42c fix: Apple cycles VPU-B clock gate between every frame (disable
  * after each decode, re-enable before next). Apple also calls vtable+0x48
  * before every decode (unresolvable — vtable is in runtime RAM). We
  * substitute with VPU_MODE pulse + register zeroing.
@@ -489,15 +489,12 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     VPU_OUT_CR = cr_phys;                                   /* +0xD4 */
     VPU_CONFIG = VPU_CONFIG_CONST;                          /* +0x118 */
 
-    /* Step 10: Reference registers (Apple writes these when param_1[0xc]!=0) */
-    if (has_ref) {
-        VPU_REF_Y    = ref_y;                               /* +0x120 */
-        VPU_REF_CB   = ref_cb;                              /* +0x124 */
-        VPU_REF_CR   = ref_cr;                              /* +0x128 */
-        VPU_REF_FLAG = 1;                                   /* +0x12C */
-    }
+    /* +0x120-0x12C are B-frame L1 ref registers — NOT written for Baseline.
+     * Apple's FUN_001c0fd0 clears has_ref for Baseline before calling
+     * FUN_001c06ac, so the +0x120-0x12C block never executes.
+     * Writing +0x12C=1 incorrectly enables B-frame mode, causing errors. */
 
-    /* Step 12: Write L0 ref list to +0x00+ (Apple: DPB iterator loop) */
+    /* Write L0 ref list to +0x00+ (Apple: DPB iterator loop) */
     if (has_ref) {
         base[0] = ref_y;
         base[1] = ref_cb;
@@ -587,10 +584,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42b VPU-B P-frame");
+    rb->splash(HZ/2, "v42c VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42b — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42c — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -908,9 +905,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42b done ===");
+    poc_log("=== v42c done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42b: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42c: %d frames", frame_count);
     return PLUGIN_OK;
 }
