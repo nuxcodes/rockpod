@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v37
+ * S5L8702 H.264 Hardware Video Decoder — v38
  *
  * TRUE HARDWARE H.264 DECODE via VPU-B (0x39800000).
  * Apple's real H.264 decoder is at a SEPARATE hardware block from the
@@ -347,6 +347,11 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     uint32_t val;
     int timeout;
 
+    /* Attempt software reset: toggle config, clear control */
+    VPU_CONFIG = 0;
+    VPU_CTRL = 0;
+    rb->sleep(HZ/100);
+
     /* Clear reference picture area (I-frame: no refs) */
     {
         volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
@@ -355,53 +360,71 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
             base[i] = 0;
     }
 
+    /* Buffer addresses */
+    VPU_CTRL_BUF  = ctrl_phys;
+    VPU_SLICE_DESC = desc_phys;
+
+    /* Frame dimensions (read-modify-write, two writes like Apple) */
+    val = VPU_DIMS;
+    val = (val & ~0x3F00) | ((height_mbs & 0x3F) << 8);
+    VPU_DIMS = val;
+    val = VPU_DIMS;
+    val = (val & ~0x003F) | (width_mbs & 0x3F);
+    VPU_DIMS = val;
+
+    /* Frame size in control register (before strides, like Apple) */
+    val = VPU_CTRL;
+    val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
+    VPU_CTRL = val;
+
+    /* Strides */
+    val = VPU_STRIDES;
+    val = (val & ~0x01FF0000) | (((pic_w / 2) & 0x1FF) << 16);
+    VPU_STRIDES = val;
+    val = VPU_STRIDES;
+    val = (val & ~0x000003FF) | (pic_w & 0x3FF);
+    VPU_STRIDES = val;
+
     /* Output frame addresses */
     VPU_OUT_Y  = y_phys;
     VPU_OUT_CB = cb_phys;
     VPU_OUT_CR = cr_phys;
 
-    /* Buffer addresses */
-    VPU_CTRL_BUF  = ctrl_phys;
-    VPU_SLICE_DESC = desc_phys;
-
-    /* Frame dimensions (read-modify-write) */
-    val = VPU_DIMS;
-    val = (val & ~0x3F00) | ((height_mbs & 0x3F) << 8);
-    val = (val & ~0x003F) | (width_mbs & 0x3F);
-    VPU_DIMS = val;
-
-    /* Strides */
-    val = VPU_STRIDES;
-    val = (val & ~0x01FF0000) | (((pic_w / 2) & 0x1FF) << 16);
-    val = (val & ~0x000003FF) | (pic_w & 0x3FF);
-    VPU_STRIDES = val;
-
     /* Config */
     VPU_CONFIG = VPU_CONFIG_CONST;
 
-    /* Control: set frame size and slice count */
+    poc_log("  regs: +118=%08lx +E0=%08lx +E4=%08lx +E8=%08lx",
+            (unsigned long)VPU_CONFIG, (unsigned long)VPU_DIMS,
+            (unsigned long)VPU_STRIDES, (unsigned long)VPU_CTRL);
+    poc_log("  bufs: +D8=%08lx +DC=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
+            (unsigned long)VPU_CTRL_BUF, (unsigned long)VPU_SLICE_DESC,
+            (unsigned long)VPU_OUT_Y, (unsigned long)VPU_OUT_CB,
+            (unsigned long)VPU_OUT_CR);
+
+    /* Slice count (separate RMW on +0xE8) */
     val = VPU_CTRL;
-    val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
     /* TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
 
-    /* Poll for completion */
+    /* Poll for completion or error */
     timeout = 5000000;
     while (--timeout > 0) {
-        val = VPU_STATUS1;
-        if (((val << 3) >> 21) == 0 && (VPU_STATUS0 & 1) != 0)
-            break;
+        uint32_t s1 = VPU_STATUS1;
+        if ((s1 << 3) >> 21)
+            break;              /* error bits [28:18] set */
+        if (VPU_STATUS0 & 1)
+            break;              /* completion: bit 0 set */
     }
 
     if (timeout <= 0)
-        return -1;
+        return -1;  /* timeout */
 
     val = VPU_STATUS1;
-    if (((val << 3) >> 21) != 0)
-        return -2;
+    if ((val << 3) >> 21)
+        return -2;  /* HW error */
 
     return 0;
 }
@@ -420,10 +443,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int i;
 
-    rb->splash(HZ/2, "v37 VPU-B H.264");
+    rb->splash(HZ/2, "v38 VPU-B H.264");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v37 — H.264 HW decode via VPU-B (0x39800000) ===");
+    poc_log("=== v38 — H.264 HW decode via VPU-B (0x39800000) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -576,25 +599,29 @@ enum plugin_status plugin_start(const void *parameter)
                         sh.bits_consumed);
 
                 /* Compact RBSP: strip slice header, keep MB data.
-                 * bit_offset = sub-byte alignment into first RBSP byte.
-                 * Apple's FUN_001c0fd0 does this exact stripping. */
+                 * bits_consumed includes NAL header (8 bits) + slice header.
+                 * hdr_bytes = byte offset into RBSP where MB data begins.
+                 * Apple strips EBSP emulation prevention bytes BEFORE DMA.
+                 * nalu_buf already has RBSP (0x000003 removed). */
                 int hdr_bytes = sh.bits_consumed / 8;
                 int bit_off = sh.bits_consumed & 7;
-                int raw_start = 1 + hdr_bytes; /* +1 for NAL header byte */
-                int raw_len = nalu_len - raw_start;
+                int dma_len = rbsp_len - hdr_bytes;
 
-                if (raw_len <= 0 || raw_len > BS_DMA_SIZE) {
-                    poc_log("  ERROR: bad RBSP len %d", raw_len);
+                if (dma_len <= 0 || dma_len > BS_DMA_SIZE) {
+                    poc_log("  ERROR: bad RBSP len %d", dma_len);
                     break;
                 }
 
-                poc_log("  DMA: %d bytes from offset %d, bit_off=%d",
-                        raw_len, raw_start, bit_off);
+                poc_log("  DMA: %d RBSP bytes from hdr_bytes=%d, bit_off=%d",
+                        dma_len, hdr_bytes, bit_off);
 
-                /* Copy raw NAL data (not RBSP-stripped) to DMA buffer.
-                 * HW likely handles emulation prevention internally. */
-                rb->memcpy(bs_dma, file_buf + nalu_start + raw_start,
-                           MIN(raw_len, BS_DMA_SIZE));
+                /* Copy RBSP macroblock data (emulation prevention stripped) */
+                rb->memcpy(bs_dma, nalu_buf + hdr_bytes,
+                           MIN(dma_len, BS_DMA_SIZE));
+
+                poc_log("  RBSP[0..7]: %02x %02x %02x %02x %02x %02x %02x %02x",
+                        bs_dma[0], bs_dma[1], bs_dma[2], bs_dma[3],
+                        bs_dma[4], bs_dma[5], bs_dma[6], bs_dma[7]);
 
                 /* Build slice descriptor */
                 build_slice_descriptor(
@@ -604,7 +631,7 @@ enum plugin_status plugin_start(const void *parameter)
                     0, /* num_ref_l0 = 0 for I-frame */
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
-                    bit_off, PHYS(bs_dma), raw_len);
+                    bit_off, PHYS(bs_dma), dma_len);
 
                 {
                     uint32_t *d = (uint32_t *)slice_desc;
@@ -615,6 +642,11 @@ enum plugin_status plugin_start(const void *parameter)
                             (unsigned long)d[4], (unsigned long)d[5],
                             (unsigned long)d[6], (unsigned long)d[7]);
                 }
+
+                poc_log("  dims: wmb=%d hmb=%d, cur=(h<<8)|w=%04lx, alt=(w<<8)|h=%04lx",
+                        pic_wmb, pic_hmb,
+                        (unsigned long)((pic_hmb << 8) | pic_wmb),
+                        (unsigned long)((pic_wmb << 8) | pic_hmb));
 
                 rb->memset(frame_y, 0, frame_y_size);
                 rb->memset(frame_cb, 0x80, frame_cb_size);
@@ -736,9 +768,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v37 done ===");
+    poc_log("=== v38 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v37 done");
+    rb->splashf(HZ*3, "v38 done");
     return PLUGIN_OK;
 }
