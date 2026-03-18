@@ -3,11 +3,11 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42q: Cache ruled out (v42p). Multi-experiment diagnostic build:
- * - Log EBSP vs RBSP lengths (detect EPB removal)
- * - Dump ctrl_buf after I-frame (check VPU reconstruction data)
- * - After main decode: back-to-back IDR, EBSP P-frame, no-DPB P-frame
- * - Apple sends EBSP to VPU (Ghidra: FUN_001c0fd0 copies raw NALU data)
+ * v42r: VPU gets STUCK after failed decode (v42q finding). All experiments
+ * need VPU reset between them. Back-to-back IDR tested BEFORE P-frame.
+ * ctrl_buf = all zeros after I-frame (VPU doesn't write recon there).
+ * No EPBs in test file (EBSP=RBSP). Shadow regs +fc/+10c/+114 updated
+ * in second P attempt, revealing new register +10c (bit_off shadow).
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -425,6 +425,19 @@ static void vpub_power_off(void)
     PWRCON(0) |= (1 << 17) | (7 << 14);
 }
 
+/* Quick VPU-B reset: zero all registers without full power cycle.
+ * Needed because VPU gets STUCK after a failed decode (v42q finding). */
+static void vpub_reset(void)
+{
+    volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+    int i;
+    PWRCON(0) = PWRCON(0) & ~(1 << 17);  /* enable clock */
+    base[0xE8/4] = 0;  /* kill trigger first */
+    for (i = 0; i < 0x130/4; i++)
+        base[i] = 0;
+    PWRCON(0) = PWRCON(0) | (1 << 17);  /* disable clock */
+}
+
 /* ---- Slice descriptor builder ---- */
 
 static void build_slice_descriptor(uint32_t *desc,
@@ -630,10 +643,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42q VPU-B P-frame");
+    rb->splash(HZ/2, "v42r VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42q — H.264 HW I+P via VPU-B (multi-experiment) ===");
+    poc_log("=== v42r — H.264 HW I+P via VPU-B (reset between exps) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -988,146 +1001,122 @@ enum plugin_status plugin_start(const void *parameter)
         poc_log("--- Decoded %d frames ---", frame_count);
         lflush();
 
-        /* ---- v42q EXPERIMENTS (run after main decode loop) ----
-         * Order matters: EXP1/EXP2 (P-frame tests) run first while
-         * ctrl_buf still has I-frame reconstruction data. EXP3 (back-
-         * to-back IDR) runs last since it overwrites ctrl_buf. */
+        /* ---- v42r EXPERIMENTS (with VPU reset between each) ----
+         * v42q showed VPU gets STUCK after failed decode. Each experiment
+         * now starts from a clean VPU state via vpub_reset(). */
 
-        /* Experiment 1: P-frame with EBSP (skip ebsp_to_rbsp) */
-        if (p_nalu_start >= 0 && have_sps && have_pps) {
-            poc_log("--- EXP1: P-frame EBSP (raw NALU) ---");
-            lflush();
-            /* Parse header from RBSP (we need correct bit positions) */
-            int r_len = ebsp_to_rbsp(nalu_buf, file_buf + p_nalu_start,
-                                      p_nalu_len);
-            bs.buf = nalu_buf;
-            bs.bit_offset = 0;
-            bs.bit_length = r_len * 8;
-            parse_slice_header(&sps, &pps, &bs, 1, 2, &sh);
-            int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
-            int hb2 = sh.bits_consumed / 8;
-            int bo2 = sh.bits_consumed & 7;
-            /* Copy EBSP (raw file data, NOT RBSP) after slice header */
-            int ebsp_dl = p_nalu_len - hb2;
-            poc_log("  EBSP: nalu=%d rbsp=%d hdr=%d ebsp_dma=%d bit_off=%d",
-                    p_nalu_len, r_len, hb2, ebsp_dl, bo2);
-            rb->commit_discard_dcache();
-            rb->memcpy(UNCACHED(bs_dma),
-                       file_buf + p_nalu_start + hb2, ebsp_dl);
-            rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
-            build_slice_descriptor((uint32_t *)UNCACHED(slice_desc),
-                0, 0, sh.slice_type, qp2,
-                pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                sh.num_ref_idx_l0_active_minus1,
-                sh.disable_deblocking_filter_idc,
-                sh.alpha_c0_offset_div2, sh.beta_offset_div2,
-                bo2, PHYS(bs_dma), ebsp_dl);
-            rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
-            rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
-            rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
-            {
-                int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
-                    PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
-                    PHYS(frame_y[0]), PHYS(frame_cb[0]), PHYS(frame_cr[0]),
-                    1, 0, pic_wmb, pic_hmb, pic_w, 1);
-                rb->commit_discard_dcache();
-                int nz = 0, i;
-                for (i = 0; i < frame_y_size; i++)
-                    if (frame_y[1][i] != 0) nz++;
-                poc_log("  EXP1 result: %s (nz=%d/%d)",
-                        r == 0 ? "SUCCESS" : "FAIL", nz, frame_y_size);
-            }
-            lflush();
-        }
+#define RUN_EXP_IDR(label, out_idx) do { \
+    int _r_len = ebsp_to_rbsp(nalu_buf, file_buf + idr_nalu_start, \
+                               idr_nalu_len); \
+    bs.buf = nalu_buf; bs.bit_offset = 0; bs.bit_length = _r_len * 8; \
+    parse_slice_header(&sps, &pps, &bs, 5, 3, &sh); \
+    { int _qp = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta; \
+      int _hb = sh.bits_consumed / 8, _bo = sh.bits_consumed & 7; \
+      int _dl = _r_len - _hb; \
+      rb->commit_discard_dcache(); \
+      rb->memcpy(UNCACHED(bs_dma), nalu_buf + _hb, _dl); \
+      rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE); \
+      build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
+          0, 0, sh.slice_type, _qp, \
+          pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
+          0, sh.disable_deblocking_filter_idc, \
+          sh.alpha_c0_offset_div2, sh.beta_offset_div2, \
+          _bo, PHYS(bs_dma), _dl); \
+      rb->memset(UNCACHED(frame_y[out_idx]), 0, frame_y_size); \
+      rb->memset(UNCACHED(frame_cb[out_idx]), 0x80, frame_cb_size); \
+      rb->memset(UNCACHED(frame_cr[out_idx]), 0x80, frame_cr_size); \
+      { int _r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc), \
+            PHYS(frame_y[out_idx]), PHYS(frame_cb[out_idx]), \
+            PHYS(frame_cr[out_idx]), 0, 0, 0, 0, 0, \
+            pic_wmb, pic_hmb, pic_w, 1); \
+        rb->commit_discard_dcache(); \
+        uint32_t _crc = crc32_calc(frame_y[out_idx], frame_y_size); \
+        poc_log("  %s: %s (crc=%08lx, F4=%08lx)", label, \
+                _r == 0 ? "SUCCESS" : "FAIL", \
+                (unsigned long)_crc, \
+                (unsigned long)VPU_STATUS1); \
+      } \
+    } \
+} while(0)
 
-        /* Experiment 2: P-frame without DPB writes (+00/04/08 zeroed) */
-        if (p_nalu_start >= 0 && have_sps && have_pps) {
-            poc_log("--- EXP2: P-frame no DPB writes ---");
-            lflush();
-            int r_len = ebsp_to_rbsp(nalu_buf, file_buf + p_nalu_start,
-                                      p_nalu_len);
-            bs.buf = nalu_buf;
-            bs.bit_offset = 0;
-            bs.bit_length = r_len * 8;
-            parse_slice_header(&sps, &pps, &bs, 1, 2, &sh);
-            int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
-            int hb2 = sh.bits_consumed / 8;
-            int bo2 = sh.bits_consumed & 7;
-            int dl2 = r_len - hb2;
-            rb->commit_discard_dcache();
-            rb->memcpy(UNCACHED(bs_dma), nalu_buf + hb2, dl2);
-            rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
-            build_slice_descriptor((uint32_t *)UNCACHED(slice_desc),
-                0, 0, sh.slice_type, qp2,
-                pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                sh.num_ref_idx_l0_active_minus1,
-                sh.disable_deblocking_filter_idc,
-                sh.alpha_c0_offset_div2, sh.beta_offset_div2,
-                bo2, PHYS(bs_dma), dl2);
-            rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
-            rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
-            rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
-            {
-                int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
-                    PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
-                    PHYS(frame_y[0]), PHYS(frame_cb[0]), PHYS(frame_cr[0]),
-                    1, 1,  /* skip_dpb = 1 */
-                    pic_wmb, pic_hmb, pic_w, 1);
-                rb->commit_discard_dcache();
-                int nz = 0, i;
-                for (i = 0; i < frame_y_size; i++)
-                    if (frame_y[1][i] != 0) nz++;
-                poc_log("  EXP2 result: %s (nz=%d/%d)",
-                        r == 0 ? "SUCCESS" : "FAIL", nz, frame_y_size);
-            }
-            lflush();
-        }
+#define RUN_EXP_P(label, out_idx, ref_idx, _skip_dpb, _use_ebsp) do { \
+    int _r_len = ebsp_to_rbsp(nalu_buf, file_buf + p_nalu_start, \
+                               p_nalu_len); \
+    bs.buf = nalu_buf; bs.bit_offset = 0; bs.bit_length = _r_len * 8; \
+    parse_slice_header(&sps, &pps, &bs, 1, 2, &sh); \
+    { int _qp = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta; \
+      int _hb = sh.bits_consumed / 8, _bo = sh.bits_consumed & 7; \
+      int _dl; \
+      rb->commit_discard_dcache(); \
+      if (_use_ebsp) { \
+          _dl = p_nalu_len - _hb; \
+          rb->memcpy(UNCACHED(bs_dma), file_buf + p_nalu_start + _hb, _dl); \
+      } else { \
+          _dl = _r_len - _hb; \
+          rb->memcpy(UNCACHED(bs_dma), nalu_buf + _hb, _dl); \
+      } \
+      rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE); \
+      build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
+          0, 0, sh.slice_type, _qp, \
+          pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
+          sh.num_ref_idx_l0_active_minus1, \
+          sh.disable_deblocking_filter_idc, \
+          sh.alpha_c0_offset_div2, sh.beta_offset_div2, \
+          _bo, PHYS(bs_dma), _dl); \
+      rb->memset(UNCACHED(frame_y[out_idx]), 0, frame_y_size); \
+      rb->memset(UNCACHED(frame_cb[out_idx]), 0x80, frame_cb_size); \
+      rb->memset(UNCACHED(frame_cr[out_idx]), 0x80, frame_cr_size); \
+      { int _r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc), \
+            PHYS(frame_y[out_idx]), PHYS(frame_cb[out_idx]), \
+            PHYS(frame_cr[out_idx]), \
+            PHYS(frame_y[ref_idx]), PHYS(frame_cb[ref_idx]), \
+            PHYS(frame_cr[ref_idx]), \
+            1, _skip_dpb, pic_wmb, pic_hmb, pic_w, 1); \
+        rb->commit_discard_dcache(); \
+        int _nz = 0, _i; \
+        for (_i = 0; _i < frame_y_size; _i++) \
+            if (frame_y[out_idx][_i] != 0) _nz++; \
+        poc_log("  %s: %s (nz=%d, F4=%08lx)", label, \
+                _r == 0 ? "SUCCESS" : "FAIL", _nz, \
+                (unsigned long)VPU_STATUS1); \
+      } \
+    } \
+} while(0)
 
-        /* Experiment 3: Back-to-back IDR (decode IDR again)
-         * Run LAST because it overwrites ctrl_buf. */
         if (idr_nalu_start >= 0 && have_sps && have_pps) {
-            poc_log("--- EXP3: Back-to-back IDR ---");
+            /* EXP1: Back-to-back IDR (no P-frame poison) */
+            poc_log("--- EXP1: Reset + IDR + IDR (back-to-back) ---");
             lflush();
-            int r_len = ebsp_to_rbsp(nalu_buf, file_buf + idr_nalu_start,
-                                      idr_nalu_len);
-            bs.buf = nalu_buf;
-            bs.bit_offset = 0;
-            bs.bit_length = r_len * 8;
-            parse_slice_header(&sps, &pps, &bs, 5, 3, &sh);
-            int qp2 = 26 + pps.pic_init_qp_minus26 + sh.slice_qp_delta;
-            int hb2 = sh.bits_consumed / 8;
-            int bo2 = sh.bits_consumed & 7;
-            int dl2 = r_len - hb2;
-            rb->commit_discard_dcache();
-            rb->memcpy(UNCACHED(bs_dma), nalu_buf + hb2, dl2);
-            rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
-            build_slice_descriptor((uint32_t *)UNCACHED(slice_desc),
-                0, 0, sh.slice_type, qp2,
-                pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                0, sh.disable_deblocking_filter_idc,
-                sh.alpha_c0_offset_div2, sh.beta_offset_div2,
-                bo2, PHYS(bs_dma), dl2);
-            rb->memset(UNCACHED(frame_y[1]), 0, frame_y_size);
-            rb->memset(UNCACHED(frame_cb[1]), 0x80, frame_cb_size);
-            rb->memset(UNCACHED(frame_cr[1]), 0x80, frame_cr_size);
-            {
-                int r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc),
-                    PHYS(frame_y[1]), PHYS(frame_cb[1]), PHYS(frame_cr[1]),
-                    0, 0, 0, 0, 0, pic_wmb, pic_hmb, pic_w, 1);
-                rb->commit_discard_dcache();
-                uint32_t crc = crc32_calc(frame_y[1], frame_y_size);
-                poc_log("  EXP3 result: %s (Y crc=%08lx)",
-                        r == 0 ? "SUCCESS" : "FAIL",
-                        (unsigned long)crc);
-            }
+            vpub_reset();
+            RUN_EXP_IDR("IDR-1", 0);
+            RUN_EXP_IDR("IDR-2", 1);
+            lflush();
+        }
+
+        if (idr_nalu_start >= 0 && p_nalu_start >= 0 &&
+            have_sps && have_pps) {
+            /* EXP2: Clean IDR + P-frame (confirm P-frame fails from clean) */
+            poc_log("--- EXP2: Reset + IDR + P-frame (clean state) ---");
+            lflush();
+            vpub_reset();
+            RUN_EXP_IDR("IDR", 0);
+            RUN_EXP_P("P-frame", 1, 0, 0, 0);
+            lflush();
+
+            /* EXP3: Clean IDR + P-frame without DPB writes */
+            poc_log("--- EXP3: Reset + IDR + P-frame (no DPB) ---");
+            lflush();
+            vpub_reset();
+            RUN_EXP_IDR("IDR", 0);
+            RUN_EXP_P("P-noDPB", 1, 0, 1, 0);
             lflush();
         }
     }
 
     vpub_power_off();
-    poc_log("=== v42q done ===");
+    poc_log("=== v42r done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42q: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42r: %d frames", frame_count);
     return PLUGIN_OK;
 }
