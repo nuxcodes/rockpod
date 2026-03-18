@@ -3,10 +3,9 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42v: P_Skip FAILS with full zeroing (v42u), WORKS without (v42m).
- * Stale I-frame shadow regs carry state VPU needs for next decode.
- * Fix: SELECTIVE zeroing — zero config regs we reprogram (0x00-0xE8),
- * PRESERVE shadow/status regs (0xEC-0x11C) that hold VPU internal state.
+ * v42w: v42v failed because STATUS1 (+F4) error persisted and poisoned
+ * all subsequent decodes. Fix: zero config (0x00-0xE8) + STATUS1 (+F4),
+ * PRESERVE shadow descriptor (0xF8-0x114) for P-frame state continuity.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -490,21 +489,21 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     dump_vpu_regs("after clock enable");
 
-    /* Selective zeroing: clear config regs (0x00-0xE8), PRESERVE shadow/
-     * status range (0xEC-0x117). Shadow regs carry VPU internal state from
-     * previous decode that P-frames need (reference context, bitstream state).
-     * Apple's BootROM clock gate does this selective reset internally.
-     * v42t proved: full zeroing fixes IDR+IDR but breaks ALL P-frames.
-     * v42u proved: P_Skip also fails with full zeroing (shadow state lost).
-     * Config regs (0x118, 0x120-0x12C) are reprogrammed below. */
+    /* Selective zeroing: clear config (0x00-0xE8) + STATUS1 (0xF4).
+     * PRESERVE shadow descriptor (0xF8-0x114) — VPU needs this for P-frames.
+     * v42v proved: preserving STATUS1 error state poisons subsequent decodes.
+     * v42t proved: zeroing shadow descriptor breaks P-frames.
+     * This version zeros config + error, preserves shadow state. */
     {
         int i;
         base[0xE8/4] = 0;  /* kill trigger first */
-        for (i = 0; i < 0xEC/4; i++)  /* zero 0x00-0xE8 only */
+        for (i = 0; i < 0xEC/4; i++)  /* zero 0x00-0xE8 (config) */
             base[i] = 0;
-        /* 0xEC-0x117: PRESERVED (shadow/status/counters) */
-        /* 0x118: reprogrammed as VPU_CONFIG below */
-        /* 0x120-0x12C: reprogrammed as ref addrs below */
+        /* 0xEC: preserve (auto-sets to 1) */
+        /* 0xF0: preserve (read-only STATUS0) */
+        base[0xF4/4] = 0;  /* clear STATUS1 error state */
+        /* 0xF8-0x114: PRESERVE (shadow desc — VPU needs for P-frame) */
+        /* 0x118, 0x120-0x12C: reprogrammed below */
     }
 
     /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
@@ -646,10 +645,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42v VPU-B P-frame");
+    rb->splash(HZ/2, "v42w VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42v — H.264 HW I+P via VPU-B (selective reg zeroing) ===");
+    poc_log("=== v42w — H.264 HW I+P via VPU-B (zero config+F4, keep shadow) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1107,9 +1106,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42v done ===");
+    poc_log("=== v42w done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42v: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42w: %d frames", frame_count);
     return PLUGIN_OK;
 }
