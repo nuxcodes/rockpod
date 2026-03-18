@@ -1,20 +1,22 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v43d
+ * S5L8702 H.264 Hardware Video Decoder — v44
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v43d: 9-agent Ghidra research breakthrough:
- * - Apple's "DPB loop" (0x1c0834) writes SLICE DESCRIPTORS to DRAM
- *   (r7 = param_1[0x1c] = same buffer as +DC), NOT to VPU register space.
- * - We were WRONG to write ref frame addrs to VPU regs +0x00/04/08.
- *   Apple NEVER writes to those registers. Refs go ONLY to +120/124/128/12C.
- * - BootROM thunk at 0x22000318 = just IRQ-protected PWRCON toggle, no
- *   secret reset. Shadow regs +FC-+114 are HW read-only (writes ignored).
- * - Register +EC is NEVER written by firmware (purely HW-managed).
- * - Apple never zeroes CTRL (+E8) — only uses RMW.
- * v43d: Clear trigger bits (0x88003001) from CTRL after each decode.
- * Without Apple's ISR (event 0x23), stale trigger bits cause VPU to
- * auto-start a phantom decode on clock re-enable, using stale shadow.
+ * v44: 9-agent deep-dive (3 batches) CORRECTED previous research:
+ *   FUN_001c06ac has TWO loops:
+ *   - Loop 1 (0x1c0834): Builds SLICE DESCRIPTORS in DRAM (r7=param_1[0x1c])
+ *   - Loop 2 (0x1c08f0): Writes DPB ref Y/Cb/Cr to VPU MMIO +0x00/04/08
+ *     (r7 reloaded from param_1[0x38] = VPU base 0x39800000)
+ *   Previous research only saw Loop 1 and wrongly concluded Apple never
+ *   writes +0x00/04/08. Loop 2 writes the DPB reference frame table there.
+ *
+ *   Three bugs masked each other across v43a-v43d:
+ *   - v43a: had DPB writes but ALSO zeroed CTRL (+E8)
+ *   - v43b-d: fixed CTRL but REMOVED DPB writes
+ *   - All versions: wrote +0x120/124/128 unconditionally, but Apple only
+ *     writes those when disable_deblocking_filter_idc != 0
+ *   v44 combines: DPB writes + RMW CTRL + conditional +0x120
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -47,6 +49,13 @@
 #define VPU_REF_CB      VPU_B(0x124)
 #define VPU_REF_CR      VPU_B(0x128)
 #define VPU_REF_FLAG    VPU_B(0x12C)
+
+/* DPB reference frame table: 12 bytes per frame at VPU base +0x00.
+ * Apple's Loop 2 (0x1c08f0) iterates frame store and writes Y/Cb/Cr
+ * triplets at 12-byte stride. Up to 16 frames (Baseline Level 3.0). */
+#define VPU_DPB_Y(i)   VPU_B((i) * 12)
+#define VPU_DPB_CB(i)  VPU_B((i) * 12 + 4)
+#define VPU_DPB_CR(i)  VPU_B((i) * 12 + 8)
 
 /* Constants from Apple firmware (verified from Ghidra) */
 #define VPU_CONFIG_CONST    0x82625A00
@@ -468,35 +477,25 @@ static void build_slice_descriptor(uint32_t *desc,
 
 /* ---- VPU-B decode trigger ---- */
 
-/* Apple's FUN_001c06ac per-frame sequence (verified by 9-agent Ghidra RE):
+/* Apple's FUN_001c06ac per-frame sequence (17 stores for P, deblk=0):
  * 1. Enable clock (PWRCON bit 17 clear, IRQ-protected)
- * 2. vtable+0x48 — zeros C++ obj fields only, no HW access
- * 3. Program registers via RMW (Apple's exact order)
- * 4. Write +120/124/128/12C ref registers (P-frames only)
- * 5. Build slice descriptors in DRAM (DPB loop writes to param_1[0x1c])
- * 6. Trigger + wait (IRQ semaphore event 0x23, 132ms)
- * 7. Re-write CONFIG on success
- * 8. Disable clock (PWRCON bit 17 set)
- *
- * KEY: Apple NEVER writes to VPU regs +0x00/04/08. The "DPB loop" writes
- * SLICE DESCRIPTORS to DRAM, not VPU register space. Refs are ONLY at
- * +120/124/128/12C. Apple NEVER zeroes CTRL (+E8) — only RMW. */
+ * 2. Program registers via RMW (Apple's exact order)
+ * 3. Write DPB ref table at +0x00/04/08 (Loop 2, 12-byte stride per ref)
+ * 4. Write +120/124/128/12C ONLY when deblocking disabled
+ * 5. Trigger + wait (IRQ semaphore event 0x23)
+ * 6. Re-write CONFIG on success
+ * 7. Disable clock (PWRCON bit 17 set) */
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
                         uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
-                        int has_ref,
+                        int has_ref, int deblk_disabled,
                         int width_mbs, int height_mbs,
                         int pic_w, int num_slices)
 {
     uint32_t val;
     int ret, old_irq;
 
-    /* Step 1: Enable VPU-B clock with IRQ protection.
-     * BootROM thunk at 0x22000318 = IRQ-protected PWRCON toggle (confirmed
-     * from poweron_report.md + jpeg_report.md). No secret reset logic.
-     * NO register zeroing — Apple does none. Shadow regs +FC-+114 are HW
-     * read-only (writes ignored, confirmed v43a). +EC is HW-managed, never
-     * written by firmware. */
+    /* Enable VPU-B clock with IRQ protection. */
     old_irq = disable_irq_save();
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
@@ -531,18 +530,25 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     VPU_OUT_CR = cr_phys;                                   /* +0xD4 */
     VPU_CONFIG = VPU_CONFIG_CONST;                          /* +0x118 */
 
-    /* P-frame reference: Apple writes +0x120-0x12C ONLY.
-     * Apple NEVER writes ref addrs to +0x00/04/08 — the "DPB loop" at
-     * 0x1c0834 writes slice descriptors to DRAM (r7=param_1[0x1c]),
-     * NOT to VPU register space. */
+    /* DPB reference frame table at +0x00 (Loop 2 in Apple's FUN_001c06ac).
+     * 12-byte stride: Y/Cb/Cr per frame. For I-frame: 0 entries.
+     * For P-frame with 1 ref: 1 entry at +0x00/04/08. */
     if (has_ref) {
+        VPU_DPB_Y(0)  = ref_y;                              /* +0x00 */
+        VPU_DPB_CB(0) = ref_cb;                             /* +0x04 */
+        VPU_DPB_CR(0) = ref_cr;                             /* +0x08 */
+        poc_log("  DPB: +00=%08lx +04=%08lx +08=%08lx",
+                (unsigned long)ref_y, (unsigned long)ref_cb,
+                (unsigned long)ref_cr);
+    }
+
+    /* +0x120/124/128/12C: alternate ref mechanism.
+     * Apple writes ONLY when disable_deblocking_filter_idc != 0. */
+    if (has_ref && deblk_disabled) {
         VPU_REF_Y    = ref_y;                               /* +0x120 */
         VPU_REF_CB   = ref_cb;                              /* +0x124 */
         VPU_REF_CR   = ref_cr;                              /* +0x128 */
         VPU_REF_FLAG = 1;                                   /* +0x12C */
-        poc_log("  refs: +120=%08lx +124=%08lx +128=%08lx +12C=1",
-                (unsigned long)ref_y, (unsigned long)ref_cb,
-                (unsigned long)ref_cr);
     }
 
     dump_vpu_regs("after programming");
@@ -636,10 +642,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v43d VPU-B P-frame");
+    rb->splash(HZ/2, "v44 VPU-B DPB fix");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v43d — H.264 HW I+P via VPU-B (no +00 writes, RMW only) ===");
+    poc_log("=== v44 — H.264 HW I+P via VPU-B (DPB at +00, no +120 for deblk=0) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -903,6 +909,7 @@ enum plugin_status plugin_start(const void *parameter)
                     has_ref ? PHYS(frame_cb[ref_buf]) : 0,
                     has_ref ? PHYS(frame_cr[ref_buf]) : 0,
                     has_ref,
+                    sh.disable_deblocking_filter_idc != 0,
                     pic_wmb, pic_hmb, pic_w, 1);
 
                 rb->commit_discard_dcache();
@@ -1020,7 +1027,7 @@ enum plugin_status plugin_start(const void *parameter)
       rb->memset(UNCACHED(frame_cr[out_idx]), 0x80, frame_cr_size); \
       { int _r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc), \
             PHYS(frame_y[out_idx]), PHYS(frame_cb[out_idx]), \
-            PHYS(frame_cr[out_idx]), 0, 0, 0, 0, \
+            PHYS(frame_cr[out_idx]), 0, 0, 0, 0, 0, \
             pic_wmb, pic_hmb, pic_w, 1); \
         rb->commit_discard_dcache(); \
         uint32_t _crc = crc32_calc(frame_y[out_idx], frame_y_size); \
@@ -1058,7 +1065,7 @@ enum plugin_status plugin_start(const void *parameter)
             PHYS(frame_cr[out_idx]), \
             PHYS(frame_y[ref_idx]), PHYS(frame_cb[ref_idx]), \
             PHYS(frame_cr[ref_idx]), \
-            1, pic_wmb, pic_hmb, pic_w, 1); \
+            1, 0, pic_wmb, pic_hmb, pic_w, 1); \
         rb->commit_discard_dcache(); \
         int _nz = 0, _i; \
         for (_i = 0; _i < frame_y_size; _i++) \
@@ -1105,9 +1112,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v43d done ===");
+    poc_log("=== v44 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v43d: %d frames", frame_count);
+    rb->splashf(HZ*3, "v44: %d frames", frame_count);
     return PLUGIN_OK;
 }
