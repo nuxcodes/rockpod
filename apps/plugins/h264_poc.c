@@ -3,9 +3,10 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42p: Use uncached DMA writes for descriptor + RBSP buffers, matching
- * the S5L8702 USB DMA driver pattern (S5L8702_UNCACHED_ADDR = +0x40000000).
- * Adds diagnostic readback to definitively prove/disprove cache coherency.
+ * v42q: Cache ruled out (v42p verified). New diagnostics:
+ * - Dump ctrl_buf after I-frame to see if VPU uses it for reconstruction
+ * - Skip +00/04/08 DPB writes to test if they cause the error
+ * - Test 2x IDR decode (skip P-frame) to verify back-to-back works
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
@@ -19,6 +20,10 @@
 
 #define LOG_PATH "/vdec_poc.log"
 #define H264_TEST_PATH "/test_ip_hiqp.264"
+
+/* v42q: Set to 1 to skip +00/04/08 DPB writes (test hypothesis).
+ * Set to 2 to decode IDR frame twice (skip P-frame, test back-to-back). */
+#define V42Q_MODE 0
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
@@ -526,14 +531,19 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
         VPU_REF_FLAG = 1;                                   /* +0x12C */
     }
 
-    /* Write L0 ref list to +0x00+ (Apple: DPB iterator loop) */
+    /* Write L0 ref list to +0x00+ (Apple: DPB iterator loop via FUN_00090708) */
     if (has_ref) {
+#if V42Q_MODE != 1
         base[0] = ref_y;
         base[1] = ref_cb;
         base[2] = ref_cr;
         poc_log("  refs: +00=%08lx +04=%08lx +08=%08lx +12C=%d",
                 (unsigned long)ref_y, (unsigned long)ref_cb,
                 (unsigned long)ref_cr, (int)VPU_REF_FLAG);
+#else
+        poc_log("  refs: SKIPPED +00/04/08 (V42Q_MODE=1), +12C=%d",
+                (int)VPU_REF_FLAG);
+#endif
     }
 
     dump_vpu_regs("after programming");
@@ -620,10 +630,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42p VPU-B P-frame");
+    rb->splash(HZ/2, "v42q VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42p — H.264 HW I+P via VPU-B (uncached DMA writes) ===");
+    poc_log("=== v42q — H.264 HW I+P via VPU-B (ctrl_buf + DPB diag) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -781,7 +791,13 @@ enum plugin_status plugin_start(const void *parameter)
             } else if ((nal_type == 5 || nal_type == 1) &&
                        have_sps && have_pps) {
                 int is_idr = (nal_type == 5);
+#if V42Q_MODE == 2
+                /* Force all frames to decode as IDR (no ref) for back-to-back test */
+                int has_ref = 0;
+                (void)is_idr;
+#else
                 int has_ref = !is_idr;
+#endif
                 int ref_buf = cur_buf ^ 1;
 
                 poc_log("--- Frame %d: %s slice ---",
@@ -856,25 +872,7 @@ enum plugin_status plugin_start(const void *parameter)
                             (unsigned long)d[6], (unsigned long)d[7]);
                 }
 
-                /* Diagnostic: read desc from BOTH aliases to verify coherency */
-                {
-                    volatile uint32_t *d_unc = (volatile uint32_t *)UNCACHED(slice_desc);
-                    volatile uint32_t *d_cac;
-                    rb->commit_discard_dcache();
-                    d_cac = (volatile uint32_t *)slice_desc;
-                    poc_log("  desc(unc): %08lx %08lx | rbsp(unc): %02x%02x%02x%02x",
-                            (unsigned long)d_unc[0], (unsigned long)d_unc[5],
-                            ((volatile uint8_t *)UNCACHED(bs_dma))[0],
-                            ((volatile uint8_t *)UNCACHED(bs_dma))[1],
-                            ((volatile uint8_t *)UNCACHED(bs_dma))[2],
-                            ((volatile uint8_t *)UNCACHED(bs_dma))[3]);
-                    poc_log("  desc(cac): %08lx %08lx | rbsp(cac): %02x%02x%02x%02x",
-                            (unsigned long)d_cac[0], (unsigned long)d_cac[5],
-                            ((volatile uint8_t *)bs_dma)[0],
-                            ((volatile uint8_t *)bs_dma)[1],
-                            ((volatile uint8_t *)bs_dma)[2],
-                            ((volatile uint8_t *)bs_dma)[3]);
-                }
+                /* v42p verified: cached/uncached match — cache is NOT the issue */
 
                 /* Clear output buffers through uncached alias */
                 rb->memset(UNCACHED(frame_y[cur_buf]), 0, frame_y_size);
@@ -897,9 +895,19 @@ enum plugin_status plugin_start(const void *parameter)
 
                 rb->commit_discard_dcache();
 
-                if (ret == 0)
+                if (ret == 0) {
                     poc_log("  VPU-B decode SUCCESS!");
-                else if (ret == -1)
+                    /* v42q: dump ctrl_buf after decode to check VPU recon */
+                    {
+                        volatile uint32_t *cb_unc =
+                            (volatile uint32_t *)UNCACHED(ctrl_buf);
+                        poc_log("  ctrl_buf[0..3]: %08lx %08lx %08lx %08lx",
+                                (unsigned long)cb_unc[0],
+                                (unsigned long)cb_unc[1],
+                                (unsigned long)cb_unc[2],
+                                (unsigned long)cb_unc[3]);
+                    }
+                } else if (ret == -1)
                     poc_log("  VPU-B decode TIMEOUT");
                 else
                     poc_log("  VPU-B decode ERROR (%d)", ret);
@@ -975,9 +983,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42p done ===");
+    poc_log("=== v42q done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42p: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42q: %d frames", frame_count);
     return PLUGIN_OK;
 }
