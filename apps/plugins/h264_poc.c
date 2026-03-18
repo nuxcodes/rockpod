@@ -1,13 +1,16 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42
+ * S5L8702 H.264 Hardware Video Decoder — v42b
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
- * Extends v41 (bit-perfect I-frame) with reference picture management,
- * double-buffered frame memory, and extended slice header parsing.
+ *
+ * v42b fix: Apple cycles VPU-B clock gate between every frame (disable
+ * after each decode, re-enable before next). Apple also calls vtable+0x48
+ * before every decode (unresolvable — vtable is in runtime RAM). We
+ * substitute with VPU_MODE pulse + register zeroing.
  *
  * VPU-B reference registers (from RE of FUN_001c06ac):
  *   +0x00..+0x0B  = L0 ref[0] Y/Cb/Cr addresses
- *   +0x120..+0x12C = primary ref Y/Cb/Cr + valid flag
+ *   +0x120..+0x12C = primary ref Y/Cb/Cr + valid flag (P/B frames)
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -351,10 +354,11 @@ static void parse_slice_header(sps_t *sps, pps_t *pps, bs_t *b,
 
 /* ---- VPU-B power management ---- */
 
+/* One-time initialization: enable video subsystem clocks and VPU-B power.
+ * Per-frame clock gating is handled by vpub_decode(). */
 static void vpub_power_on(void)
 {
     uint32_t cg, pw;
-    int i;
 
     /* Force FULL power OFF: VPU mode, PWRCON, and clocks */
     VPU_MODE_REG &= ~1;
@@ -368,32 +372,21 @@ static void vpub_power_on(void)
     REG32(CLK_BASE + 0x08) = cg;
     rb->sleep(HZ/5);
 
-    /* Power ON VPU-B */
+    /* Power ON video subsystem (bits 14-16) but leave VPU-B clock OFF.
+     * vpub_decode() will enable/disable bit 17 per-frame, matching Apple. */
     pw = PWRCON(0);
-    PWRCON(0) = pw & ~((7 << 14) | (1 << 17));
+    PWRCON(0) = pw & ~(7 << 14);
     rb->sleep(HZ/5);
 
-    /* Toggle VPU_MODE: set H.264, clear, set again (reset pulse) */
+    /* Set VPU_MODE for H.264 */
     VPU_MODE_REG |= 1;
-    rb->sleep(HZ/10);
-    VPU_MODE_REG &= ~1;
-    rb->sleep(HZ/10);
-    VPU_MODE_REG |= 1;
-    rb->sleep(HZ/10);
-
-    /* Zero ALL VPU-B registers from 0x00 to 0x12F */
-    {
-        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-        for (i = 0; i < 0x130/4; i++)
-            base[i] = 0;
-    }
     rb->sleep(HZ/10);
 }
 
 static void vpub_power_off(void)
 {
     VPU_MODE_REG &= ~1;
-    PWRCON(0) |= (1 << 17);
+    PWRCON(0) |= (1 << 17) | (7 << 14);
 }
 
 /* ---- Slice descriptor builder ---- */
@@ -435,6 +428,13 @@ static void build_slice_descriptor(uint32_t *desc,
 
 /* ---- VPU-B decode trigger ---- */
 
+/* Matches Apple's FUN_001c06ac sequence:
+ * 1. Enable clock (PWRCON bit 17 clear)
+ * 2. VPU_MODE pulse + zero regs (substitute for vtable+0x48)
+ * 3. Program registers (Apple's exact order, RMW)
+ * 4. Write ref list + ref registers
+ * 5. Trigger + wait
+ * 6. Disable clock (PWRCON bit 17 set) */
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
                         uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
@@ -444,94 +444,98 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
 {
     uint32_t val;
     volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-    int i;
+    int i, ret;
+
+    /* Step 1: Enable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,1)) */
+    PWRCON(0) = PWRCON(0) & ~(1 << 17);
+
+    /* Step 2: VPU_MODE pulse + zero registers (substitute for vtable+0x48).
+     * Apple calls an unresolvable vtable function here. Our best substitute
+     * is the VPU_MODE toggle that we know resets the VPU-B state machine. */
+    VPU_MODE_REG &= ~1;
+    VPU_MODE_REG |= 1;
+    for (i = 0; i < 0x130/4; i++)
+        base[i] = 0;
 
     poc_log("  pre: +F0=%08lx +F4=%08lx +E8=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)VPU_STATUS1,
             (unsigned long)VPU_CTRL);
 
-    /* Reference picture registers */
-    if (has_ref) {
-        /* L0 ref list entry 0: Y, Cb, Cr */
-        base[0] = ref_y;
-        base[1] = ref_cb;
-        base[2] = ref_cr;
-        /* Clear remaining ref slots (3..47) */
-        for (i = 3; i < 48; i++)
-            base[i] = 0;
-        /* Primary reference registers (+0x120..+0x12C) */
-        VPU_REF_Y = ref_y;
-        VPU_REF_CB = ref_cb;
-        VPU_REF_CR = ref_cr;
-        VPU_REF_FLAG = 1;
-        poc_log("  refs: +00=%08lx +04=%08lx +08=%08lx +12C=%08lx",
-                (unsigned long)ref_y, (unsigned long)ref_cb,
-                (unsigned long)ref_cr, (unsigned long)VPU_REF_FLAG);
-    } else {
-        for (i = 0; i < 48; i++)
-            base[i] = 0;
-        VPU_REF_FLAG = 0;
-    }
+    /* Steps 3-9: Program registers (Apple's order from FUN_001c06ac asm) */
+    VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
 
-    /* Buffer addresses (ctrl_buf persists between frames) */
-    VPU_CTRL_BUF  = ctrl_phys;
-    VPU_SLICE_DESC = desc_phys;
-
-    /* Frame dimensions (read-modify-write, two writes like Apple) */
-    val = VPU_DIMS;
+    val = VPU_DIMS;                                         /* +0xE0 RMW */
     val = (val & ~0x3F00) | ((height_mbs & 0x3F) << 8);
     VPU_DIMS = val;
     val = VPU_DIMS;
     val = (val & ~0x003F) | (width_mbs & 0x3F);
     VPU_DIMS = val;
 
-    /* Frame size in control register */
-    val = VPU_CTRL;
+    val = VPU_CTRL;                                         /* +0xE8 RMW */
     val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
     VPU_CTRL = val;
 
-    /* Strides */
-    val = VPU_STRIDES;
+    VPU_SLICE_DESC = desc_phys;                             /* +0xDC */
+
+    val = VPU_STRIDES;                                      /* +0xE4 RMW */
     val = (val & ~0x01FF0000) | (((pic_w / 2) & 0x1FF) << 16);
     VPU_STRIDES = val;
     val = VPU_STRIDES;
     val = (val & ~0x000003FF) | (pic_w & 0x3FF);
     VPU_STRIDES = val;
 
-    /* Output frame addresses */
-    VPU_OUT_Y  = y_phys;
-    VPU_OUT_CB = cb_phys;
-    VPU_OUT_CR = cr_phys;
+    VPU_OUT_Y  = y_phys;                                    /* +0xCC */
+    VPU_OUT_CB = cb_phys;                                   /* +0xD0 */
+    VPU_OUT_CR = cr_phys;                                   /* +0xD4 */
+    VPU_CONFIG = VPU_CONFIG_CONST;                          /* +0x118 */
 
-    /* Config */
-    VPU_CONFIG = VPU_CONFIG_CONST;
+    /* Step 10: Reference registers (Apple writes these when param_1[0xc]!=0) */
+    if (has_ref) {
+        VPU_REF_Y    = ref_y;                               /* +0x120 */
+        VPU_REF_CB   = ref_cb;                              /* +0x124 */
+        VPU_REF_CR   = ref_cr;                              /* +0x128 */
+        VPU_REF_FLAG = 1;                                   /* +0x12C */
+    }
 
-    poc_log("  regs: +E0=%08lx +E4=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
+    /* Step 12: Write L0 ref list to +0x00+ (Apple: DPB iterator loop) */
+    if (has_ref) {
+        base[0] = ref_y;
+        base[1] = ref_cb;
+        base[2] = ref_cr;
+        poc_log("  refs: +00=%08lx +04=%08lx +08=%08lx +12C=%d",
+                (unsigned long)ref_y, (unsigned long)ref_cb,
+                (unsigned long)ref_cr, has_ref);
+    }
+
+    poc_log("  regs: +E0=%08lx +E4=%08lx +E8=%08lx +CC=%08lx +D0=%08lx +D4=%08lx",
             (unsigned long)VPU_DIMS, (unsigned long)VPU_STRIDES,
+            (unsigned long)VPU_CTRL,
             (unsigned long)VPU_OUT_Y, (unsigned long)VPU_OUT_CB,
             (unsigned long)VPU_OUT_CR);
 
-    /* Slice count */
+    /* Step 13: Slice count */
     val = VPU_CTRL;
     val = (val & ~0x07FF0000) | ((num_slices & 0x7FF) << 16);
     VPU_CTRL = val;
 
-    /* TRIGGER DECODE */
+    /* Step 14: TRIGGER DECODE */
     VPU_CTRL = VPU_CTRL | VPU_TRIGGER_BITS;
 
-    /* Wait for decode completion.
-     * Apple uses IRQ semaphore (event 0x23) with 0x84ms timeout.
-     * STATUS0 bit 0 is unreliable for polling, so we sleep instead. */
+    /* Step 15: Wait for decode completion (Apple: IRQ semaphore, 0x84ms) */
     rb->sleep(HZ/5);  /* 200ms */
 
     val = VPU_STATUS1;
     poc_log("  done: +F0=%08lx +F4=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)val);
 
+    ret = 0;
     if ((val << 3) >> 21)
-        return -2;  /* HW error bits [28:18] set */
+        ret = -2;  /* HW error bits [28:18] set */
 
-    return 0;
+    /* Step 18: Disable VPU-B clock (Apple: thunk_EXT_FUN_22000318(0x20000,0,0)) */
+    PWRCON(0) = PWRCON(0) | (1 << 17);
+
+    return ret;
 }
 
 /* ---- YCbCr to LCD display ---- */
@@ -583,10 +587,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42 VPU-B P-frame");
+    rb->splash(HZ/2, "v42b VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42 — H.264 HW decode I+P via VPU-B (0x39800000) ===");
+    poc_log("=== v42b — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -904,9 +908,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42 done ===");
+    poc_log("=== v42b done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42b: %d frames", frame_count);
     return PLUGIN_OK;
 }
