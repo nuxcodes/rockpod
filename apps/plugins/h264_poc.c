@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v42d
+ * S5L8702 H.264 Hardware Video Decoder — v42e
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v42d fix: Apple cycles VPU-B clock gate between every frame (disable
+ * v42e fix: Apple cycles VPU-B clock gate between every frame (disable
  * after each decode, re-enable before next). Apple also calls vtable+0x48
  * before every decode (unresolvable — vtable is in runtime RAM). We
  * substitute with VPU_MODE pulse + register zeroing.
@@ -584,10 +584,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v42d VPU-B P-frame");
+    rb->splash(HZ/2, "v42e VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v42d — H.264 HW I+P via VPU-B (clock gate per frame) ===");
+    poc_log("=== v42e — H.264 HW I+P via VPU-B (clock gate per frame) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -962,6 +962,81 @@ enum plugin_status plugin_start(const void *parameter)
                                                     frame_y_size);
                         poc_log("  diag Y crc32=%08lx", (unsigned long)crc2);
                     }
+                    /* DIAG B: Same I-frame RBSP but descriptor says type=0 (P).
+                     * Tests if HW rejects P-mode setup vs bitstream content. */
+                    poc_log("--- DIAG-B: I-RBSP with P-descriptor (type=0) ---");
+                    {
+                        uint32_t *dd = (uint32_t *)slice_desc;
+                        uint32_t saved_w0 = dd[0];
+                        /* Change slice_type from 2(I) to 0(P) in word 0 */
+                        dd[0] = (saved_w0 & ~(0xF << 6)) | (0 << 6);
+                        poc_log("  desc[0]: %08lx (was %08lx)",
+                                (unsigned long)dd[0], (unsigned long)saved_w0);
+
+                        rb->memset(frame_y[diag_buf], 0, frame_y_size);
+                        rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
+                        rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
+                        rb->commit_dcache();
+
+                        int ret3 = vpub_decode(
+                            PHYS(ctrl_buf), PHYS(slice_desc),
+                            PHYS(frame_y[diag_buf]),
+                            PHYS(frame_cb[diag_buf]),
+                            PHYS(frame_cr[diag_buf]),
+                            0, 0, 0, 0,
+                            pic_wmb, pic_hmb, pic_w, 1);
+
+                        rb->commit_discard_dcache();
+                        poc_log("  DIAG-B result: %d  STATUS1=%08lx",
+                                ret3, (unsigned long)VPU_STATUS1);
+                        {
+                            int nz = 0, ii;
+                            for (ii = 0; ii < frame_y_size; ii++)
+                                if (frame_y[diag_buf][ii] != 0) nz++;
+                            poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
+                        }
+
+                        /* Restore descriptor for subsequent use */
+                        dd[0] = saved_w0;
+                        rb->commit_dcache();
+                    }
+
+                    /* DIAG C: Same I-frame RBSP, type=0, WITH ref addrs at +0x00 */
+                    poc_log("--- DIAG-C: I-RBSP + P-desc + refs at +0x00 ---");
+                    {
+                        uint32_t *dd = (uint32_t *)slice_desc;
+                        uint32_t saved_w0 = dd[0];
+                        dd[0] = (saved_w0 & ~(0xF << 6)) | (0 << 6);
+
+                        rb->memset(frame_y[diag_buf], 0, frame_y_size);
+                        rb->memset(frame_cb[diag_buf], 0x80, frame_cb_size);
+                        rb->memset(frame_cr[diag_buf], 0x80, frame_cr_size);
+                        rb->commit_dcache();
+
+                        int ret4 = vpub_decode(
+                            PHYS(ctrl_buf), PHYS(slice_desc),
+                            PHYS(frame_y[diag_buf]),
+                            PHYS(frame_cb[diag_buf]),
+                            PHYS(frame_cr[diag_buf]),
+                            PHYS(frame_y[cur_buf]),
+                            PHYS(frame_cb[cur_buf]),
+                            PHYS(frame_cr[cur_buf]),
+                            1,
+                            pic_wmb, pic_hmb, pic_w, 1);
+
+                        rb->commit_discard_dcache();
+                        poc_log("  DIAG-C result: %d  STATUS1=%08lx",
+                                ret4, (unsigned long)VPU_STATUS1);
+                        {
+                            int nz = 0, ii;
+                            for (ii = 0; ii < frame_y_size; ii++)
+                                if (frame_y[diag_buf][ii] != 0) nz++;
+                            poc_log("  diag_y: %d/%d non-zero", nz, frame_y_size);
+                        }
+
+                        dd[0] = saved_w0;
+                        rb->commit_dcache();
+                    }
                     lflush();
                 }
 
@@ -977,9 +1052,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v42d done ===");
+    poc_log("=== v42e done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v42d: %d frames", frame_count);
+    rb->splashf(HZ*3, "v42e: %d frames", frame_count);
     return PLUGIN_OK;
 }
