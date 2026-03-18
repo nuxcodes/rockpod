@@ -1,9 +1,9 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v43b
+ * S5L8702 H.264 Hardware Video Decoder — v43c
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v43b: 9-agent Ghidra research breakthrough:
+ * v43c: 9-agent Ghidra research breakthrough:
  * - Apple's "DPB loop" (0x1c0834) writes SLICE DESCRIPTORS to DRAM
  *   (r7 = param_1[0x1c] = same buffer as +DC), NOT to VPU register space.
  * - We were WRONG to write ref frame addrs to VPU regs +0x00/04/08.
@@ -12,6 +12,9 @@
  *   secret reset. Shadow regs +FC-+114 are HW read-only (writes ignored).
  * - Register +EC is NEVER written by firmware (purely HW-managed).
  * - Apple never zeroes CTRL (+E8) — only uses RMW.
+ * v43c: Clear trigger bits (0x88003001) from CTRL after each decode.
+ * Without Apple's ISR (event 0x23), stale trigger bits cause VPU to
+ * auto-start a phantom decode on clock re-enable, using stale shadow.
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -568,6 +571,14 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     if (ret == 0)
         VPU_CONFIG = VPU_CONFIG_CONST;
 
+    /* Clear trigger bits so VPU doesn't auto-start on next clock enable.
+     * Apple's ISR (event 0x23) acknowledges completion internally; we don't
+     * have that, so manually clear the trigger to leave VPU idle. */
+    val = VPU_CTRL;
+    VPU_CTRL = val & ~VPU_TRIGGER_BITS;
+    poc_log("  CTRL cleared: %08lx -> %08lx",
+            (unsigned long)val, (unsigned long)(val & ~VPU_TRIGGER_BITS));
+
     /* Disable VPU-B clock (IRQ-protected, matching BootROM thunk) */
     old_irq = disable_irq_save();
     PWRCON(0) = PWRCON(0) | (1 << 17);
@@ -625,10 +636,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v43b VPU-B P-frame");
+    rb->splash(HZ/2, "v43c VPU-B P-frame");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v43b — H.264 HW I+P via VPU-B (no +00 writes, RMW only) ===");
+    poc_log("=== v43c — H.264 HW I+P via VPU-B (no +00 writes, RMW only) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1094,9 +1105,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v43b done ===");
+    poc_log("=== v43c done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v43b: %d frames", frame_count);
+    rb->splashf(HZ*3, "v43c: %d frames", frame_count);
     return PLUGIN_OK;
 }
