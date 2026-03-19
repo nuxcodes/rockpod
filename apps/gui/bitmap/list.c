@@ -463,6 +463,29 @@ void list_draw(struct screen *display, struct gui_synclist *list)
         list_info.icon = icon;
         list_info.dsp_text = entry_name;
         list_info.item_offset = item_offset;
+        list_info.x = 0;
+
+        if (list->left_margin_width > 0 && list->callback_draw_margin)
+        {
+            int margin_w = list->left_margin_width;
+
+            /* Draw full-width background + selection decoration */
+            display->put_line(0, list_info.y, &linedes, "");
+
+            /* Draw margin content (thumbnail) on top of the background */
+            list->callback_draw_margin(i, display, 0, list_info.y,
+                                       margin_w, linedes.height,
+                                       is_selected, list->data);
+
+            /* Shift text to the right of the margin */
+            list_info.x = margin_w;
+
+            /* Recompute item_offset with margin-adjusted text position */
+            int text_pos = margin_w + indent
+                         + (list->show_icons ? icon_w : 0);
+            list_info.item_offset = gui_list_get_item_offset(
+                list, item_width, text_pos, display, list_text_vp);
+        }
 
         callback_draw_item(&list_info);
     }

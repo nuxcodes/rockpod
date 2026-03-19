@@ -101,6 +101,21 @@ struct list_putlineinfo_t {
 
 typedef void list_draw_item(struct list_putlineinfo_t *list_info);
 /*
+ * Margin draw callback — draws content (e.g. thumbnails) in a reserved
+ * left margin area.  Called by both skinned and non-skinned list renderers
+ * after the margin background has been filled.
+ *  - item_index : the list item number
+ *  - display    : the screen being drawn to
+ *  - x, y       : top-left corner of the margin area (viewport-relative)
+ *  - width      : margin width in pixels
+ *  - height     : item height in pixels
+ *  - is_selected: true if this item is the current selection
+ *  - data       : the list's user data pointer
+ */
+typedef void list_draw_margin(int item_index, struct screen *display,
+                              int x, int y, int width, int height,
+                              bool is_selected, void *data);
+/*
  * Voice callback
  *  - selected_item : an integer that tells the number of the item to speak
  *  - data : a void pointer to the data you gave to the list when you
@@ -168,6 +183,8 @@ struct gui_synclist
     list_get_name *callback_get_item_name;
     list_speak_item *callback_speak_item;
     list_draw_item *callback_draw_item;
+    list_draw_margin *callback_draw_margin;
+    int left_margin_width;  /* reserved left margin in pixels; 0 = disabled */
 
     /* The data that will be passed to the callback function YOU implement */
     void * data;
@@ -204,6 +221,9 @@ extern void gui_synclist_init(
 extern void gui_synclist_set_nb_items(struct gui_synclist * lists, int nb_items);
 extern void gui_synclist_set_icon_callback(struct gui_synclist * lists, list_get_icon icon_callback);
 extern void gui_synclist_set_voice_callback(struct gui_synclist * lists, list_speak_item voice_callback);
+extern void gui_synclist_set_margin_callback(struct gui_synclist * lists,
+                                             list_draw_margin *margin_callback,
+                                             int margin_width);
 extern void gui_synclist_set_viewport_defaults(struct viewport *vp, enum screen_type screen);
 #ifdef HAVE_LCD_COLOR
 extern void gui_synclist_set_color_callback(struct gui_synclist * lists, list_get_color color_callback);

@@ -167,6 +167,8 @@ void gui_synclist_init(struct gui_synclist * gui_list,
     gui_list->callback_get_item_name = callback_get_item_name;
     gui_list->callback_speak_item = NULL;
     gui_list->callback_draw_item = NULL;
+    gui_list->callback_draw_margin = NULL;
+    gui_list->left_margin_width = 0;
     gui_list->nb_items = 0;
     gui_list->selected_item = 0;
     gui_synclist_init_display_settings(gui_list);
@@ -480,6 +482,14 @@ void gui_synclist_set_voice_callback(struct gui_synclist * lists,
                                      list_speak_item voice_callback)
 {
     lists->callback_speak_item = voice_callback;
+}
+
+void gui_synclist_set_margin_callback(struct gui_synclist * lists,
+                                      list_draw_margin *margin_callback,
+                                      int margin_width)
+{
+    lists->callback_draw_margin = margin_callback;
+    lists->left_margin_width = margin_width;
 }
 
 void gui_synclist_set_viewport_defaults(struct viewport *vp,

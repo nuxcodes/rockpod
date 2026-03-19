@@ -141,7 +141,7 @@ int skinlist_get_line_count(enum screen_type screen, struct gui_synclist *list)
         return rows*cols;
     }
     else
-        return  (parent->height / listcfg[screen]->height);
+        return (parent->height / listcfg[screen]->height);
 }
 
 static int current_item;
@@ -222,16 +222,26 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
     {
         struct skin_element* viewport;
         struct skin_viewport* skin_viewport = NULL;
+        int margin_w = list->left_margin_width;
+        bool has_margin = !listcfg[screen]->tile
+            && margin_w > 0
+            && list->callback_draw_margin != NULL;
+        unsigned margin_fill_color = 0;
+        bool margin_color_set = false;
+        bool margin_painted = false;
+
         if (list_start_item+cur_line+1 > list->nb_items)
             break;
         current_drawing_line = list_start_item+cur_line;
         is_selected = list_start_item+cur_line == list->selected_item;
 
+        /* Inner loop: render each skin viewport for this item */
         for (viewport = SKINOFFSETTOPTR(get_skin_buffer(wps.data), listcfg[screen]->data->tree);
              viewport;
              viewport = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->next))
         {
             int original_x, original_y;
+            int skin_orig_width;
             skin_viewport = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->data);
             char *viewport_label = NULL;
             if (skin_viewport)
@@ -247,6 +257,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             }
             original_x = skin_viewport->vp.x;
             original_y = skin_viewport->vp.y;
+            skin_orig_width = skin_viewport->vp.width;
             if (listcfg[screen]->tile)
             {
                 int cols = (parent->width / listcfg[screen]->width);
@@ -264,6 +275,17 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 skin_viewport->vp.y = parent->y + original_y +
                                    (listcfg[screen]->height*cur_line);
             }
+            if (has_margin)
+            {
+                int shift = margin_w - original_x;
+                if (shift > 0)
+                {
+                    skin_viewport->vp.x += shift;
+                    skin_viewport->vp.width -= shift;
+                }
+                if (skin_viewport->vp.width < 0)
+                    skin_viewport->vp.width = 0;
+            }
             display->set_viewport(&skin_viewport->vp);
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
             /* Dynamic colors: resolve from stored originals */
@@ -274,6 +296,62 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             display->set_foreground(skin_viewport->vp.fg_pattern);
             display->set_background(skin_viewport->vp.bg_pattern);
 #endif
+            if (has_margin && !margin_color_set)
+            {
+                margin_fill_color = is_selected
+                    ? skin_viewport->vp.fg_pattern
+                    : skin_viewport->vp.bg_pattern;
+                margin_color_set = true;
+            }
+
+            /* Paint margin fill between decoration VP and content VPs.
+             * Decoration VP (original_x==0) renders first with corner
+             * glyph; the fill covers it before text VP renders on top. */
+            if (has_margin && !margin_painted && original_x > 0)
+            {
+                int item_h = listcfg[screen]->height;
+                int fill_w = margin_w + 8;
+                struct viewport margin_vp;
+
+                viewport_set_defaults(&margin_vp, screen);
+                margin_vp.x = parent->x;
+                margin_vp.y = parent->y + item_h * cur_line;
+                margin_vp.width = fill_w;
+                margin_vp.height = item_h;
+                display->set_viewport(&margin_vp);
+                display->set_drawmode(DRMODE_SOLID);
+                display->set_foreground(margin_fill_color);
+                display->fillrect(0, 0, fill_w, item_h);
+
+                list->callback_draw_margin(
+                    current_drawing_line, display,
+                    0, 0, margin_w, item_h,
+                    is_selected, list->data);
+
+                /* Rounded left corners — simple binary mask */
+                {
+                    static const int cmask[] = {4, 3, 2, 1, 1, 0};
+                    int r;
+                    display->set_foreground(parent->bg_pattern);
+                    for (r = 0; r < 6 && r < item_h / 2; r++)
+                    {
+                        if (cmask[r] > 0)
+                        {
+                            display->hline(0, cmask[r] - 1, r);
+                            display->hline(0, cmask[r] - 1,
+                                           item_h - 1 - r);
+                        }
+                    }
+                }
+
+                margin_painted = true;
+                display->set_viewport(&skin_viewport->vp);
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+                display->set_foreground(skin_viewport->vp.fg_pattern);
+                display->set_background(skin_viewport->vp.bg_pattern);
+#endif
+            }
+
             /* Set images to not to be displayed */
             struct skin_token_list *imglist = SKINOFFSETTOPTR(get_skin_buffer(wps.data), wps.data->images);
             while (imglist)
@@ -286,18 +364,45 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                     img->display = -1;
                 imglist = SKINOFFSETTOPTR(get_skin_buffer(wps.data), imglist->next);
             }
-            struct skin_element** children = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->children);
-            if (children && *children)
-                skin_render_viewport(SKINOFFSETTOPTR(get_skin_buffer(wps.data), (intptr_t)children[0]),
-                                     &wps, skin_viewport, SKIN_REFRESH_ALL);
-            wps_display_images(&wps, &skin_viewport->vp);
+            if (skin_viewport->vp.width > 0)
+            {
+                struct skin_element** children = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->children);
+                if (children && *children)
+                    skin_render_viewport(SKINOFFSETTOPTR(get_skin_buffer(wps.data), (intptr_t)children[0]),
+                                         &wps, skin_viewport, SKIN_REFRESH_ALL);
+                wps_display_images(&wps, &skin_viewport->vp);
+            }
             /* force disableing scroll because it breaks later */
             if (!is_selected)
             {
                 display->scroll_stop_viewport(&skin_viewport->vp);
                 skin_viewport->vp.x = original_x;
                 skin_viewport->vp.y = original_y;
+                if (has_margin)
+                    skin_viewport->vp.width = skin_orig_width;
             }
+        }
+
+        /* Fallback: paint margin if no VP with original_x > 0 was seen */
+        if (has_margin && !margin_painted)
+        {
+            int item_h = listcfg[screen]->height;
+            struct viewport margin_vp;
+
+            viewport_set_defaults(&margin_vp, screen);
+            margin_vp.x = parent->x;
+            margin_vp.y = parent->y + item_h * cur_line;
+            margin_vp.width = margin_w;
+            margin_vp.height = item_h;
+            display->set_viewport(&margin_vp);
+            display->set_drawmode(DRMODE_SOLID);
+            display->set_foreground(margin_fill_color);
+            display->fillrect(0, 0, margin_w, item_h);
+
+            list->callback_draw_margin(
+                current_drawing_line, display,
+                0, 0, margin_w, item_h,
+                is_selected, list->data);
         }
     }
     current_column = -1;
