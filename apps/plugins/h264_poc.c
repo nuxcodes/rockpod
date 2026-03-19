@@ -595,7 +595,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Acknowledge VPU-B IRQ 35 (VIC1 bit 3, edge-triggered).
      * Apple's ISR at SRAM 0x08035bb8 does this after each decode.
      * Without ack, VPU internal state may block next decode. */
-    REG32(0x38E02008) = (1 << 3);   /* VIC1 edge latch clear */
+    REG32(0x38E0200C) = (1 << 3);   /* VIC1EDGE1: clear IRQ 35 edge latch (was VIC0EDGE1!) */
 
     val = VPU_STATUS1;
     poc_log("  done: +F0=%08lx +F4=%08lx",
