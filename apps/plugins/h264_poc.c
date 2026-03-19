@@ -1,22 +1,15 @@
 /***************************************************************************
- * S5L8702 H.264 Hardware Video Decoder — v44
+ * S5L8702 H.264 Hardware Video Decoder — v47
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v44: 9-agent deep-dive (3 batches) CORRECTED previous research:
- *   FUN_001c06ac has TWO loops:
- *   - Loop 1 (0x1c0834): Builds SLICE DESCRIPTORS in DRAM (r7=param_1[0x1c])
- *   - Loop 2 (0x1c08f0): Writes DPB ref Y/Cb/Cr to VPU MMIO +0x00/04/08
- *     (r7 reloaded from param_1[0x38] = VPU base 0x39800000)
- *   Previous research only saw Loop 1 and wrongly concluded Apple never
- *   writes +0x00/04/08. Loop 2 writes the DPB reference frame table there.
+ * v49b: Zero all regs WITHOUT VPU_MODE toggle — test if MODE was incidental.
+ *   v47 proved STATUS0 is NOT W1C. Only VPU_MODE toggle clears it.
+ *   This matches vpub_power_on() — the only proven reset method.
  *
- *   Three bugs masked each other across v43a-v43d:
- *   - v43a: had DPB writes but ALSO zeroed CTRL (+E8)
- *   - v43b-d: fixed CTRL but REMOVED DPB writes
- *   - All versions: wrote +0x120/124/128 unconditionally, but Apple only
- *     writes those when disable_deblocking_filter_idc != 0
- *   v44 combines: DPB writes + RMW CTRL + conditional +0x120
+ *   +0x120/124/128 definitively resolved: alternate output for MBAFF/field
+ *   pictures (param_1[0xC] = disable_deblocking_filter_idc). NOT reference
+ *   frame addresses. Irrelevant for Baseline profile — removed entirely.
  *
  * See jpeg_poc.c for the VPU-A JPEG IDCT engine (album art decoding).
  ****************************************************************************/
@@ -488,7 +481,7 @@ static void build_slice_descriptor(uint32_t *desc,
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
                         uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
-                        int has_ref, int deblk_disabled,
+                        int has_ref,
                         int width_mbs, int height_mbs,
                         int pic_w, int num_slices)
 {
@@ -500,9 +493,23 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    dump_vpu_regs("after clock enable");
+    /* v49b: Zero all regs WITHOUT VPU_MODE toggle.
+     * v49 proved: STATUS0 is immune to writes (always 1 after decode).
+     * But STATUS0=1 doesn't block decode (v47b decoded I-frames with F0=1).
+     * The VPU_MODE toggle in v47b was incidental — the real fix was zeroing
+     * all registers. Test: zero 0x00-0x12C without MODE toggle to preserve
+     * internal pipeline state needed for P-frame inter-prediction. */
+    {
+        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+        int i;
+        base[0xE8/4] = 0;  /* kill trigger bits first */
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
 
-    /* Steps 3-9: Program registers via RMW (Apple's order) */
+    dump_vpu_regs("after zero-all (no MODE toggle)");
+
+    /* Program registers via RMW (Apple's order) */
     VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
 
     val = VPU_DIMS;                                         /* +0xE0 RMW */
@@ -542,14 +549,9 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                 (unsigned long)ref_cr);
     }
 
-    /* +0x120/124/128/12C: alternate ref mechanism.
-     * Apple writes ONLY when disable_deblocking_filter_idc != 0. */
-    if (has_ref && deblk_disabled) {
-        VPU_REF_Y    = ref_y;                               /* +0x120 */
-        VPU_REF_CB   = ref_cb;                              /* +0x124 */
-        VPU_REF_CR   = ref_cr;                              /* +0x128 */
-        VPU_REF_FLAG = 1;                                   /* +0x12C */
-    }
+    /* +0x120/124/128/12C: alternate output for MBAFF/field pictures.
+     * Only written when disable_deblocking_filter_idc != 0.
+     * Irrelevant for Baseline profile — removed (v47). */
 
     dump_vpu_regs("after programming");
 
@@ -577,9 +579,9 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     if (ret == 0)
         VPU_CONFIG = VPU_CONFIG_CONST;
 
-    /* Clear trigger bits so VPU doesn't auto-start on next clock enable.
-     * Apple's ISR (event 0x23) acknowledges completion internally; we don't
-     * have that, so manually clear the trigger to leave VPU idle. */
+    /* Clear trigger/mode bits from +E8. The per-frame reset at the START
+     * of the next decode will also zero +E8, but clearing here too ensures
+     * the VPU is in a clean idle state when the clock is disabled. */
     val = VPU_CTRL;
     VPU_CTRL = val & ~VPU_TRIGGER_BITS;
     poc_log("  CTRL cleared: %08lx -> %08lx",
@@ -642,10 +644,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v44 VPU-B DPB fix");
+    rb->splash(HZ/2, "v49b zero-all no MODE");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v44 — H.264 HW I+P via VPU-B (DPB at +00, no +120 for deblk=0) ===");
+    poc_log("=== v49b — zero all regs, NO VPU_MODE toggle ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -875,7 +877,7 @@ enum plugin_status plugin_start(const void *parameter)
                     (uint32_t *)UNCACHED(slice_desc),
                     0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
-                    has_ref ? (sh.num_ref_idx_l0_active_minus1 + 1) : 0,
+                    sh.num_ref_idx_l0_active_minus1,
                     sh.disable_deblocking_filter_idc,
                     sh.alpha_c0_offset_div2, sh.beta_offset_div2,
                     bit_off, PHYS(bs_dma), dma_len);
@@ -909,7 +911,6 @@ enum plugin_status plugin_start(const void *parameter)
                     has_ref ? PHYS(frame_cb[ref_buf]) : 0,
                     has_ref ? PHYS(frame_cr[ref_buf]) : 0,
                     has_ref,
-                    sh.disable_deblocking_filter_idc != 0,
                     pic_wmb, pic_hmb, pic_w, 1);
 
                 rb->commit_discard_dcache();
@@ -1027,7 +1028,7 @@ enum plugin_status plugin_start(const void *parameter)
       rb->memset(UNCACHED(frame_cr[out_idx]), 0x80, frame_cr_size); \
       { int _r = vpub_decode(PHYS(ctrl_buf), PHYS(slice_desc), \
             PHYS(frame_y[out_idx]), PHYS(frame_cb[out_idx]), \
-            PHYS(frame_cr[out_idx]), 0, 0, 0, 0, 0, \
+            PHYS(frame_cr[out_idx]), 0, 0, 0, 0, \
             pic_wmb, pic_hmb, pic_w, 1); \
         rb->commit_discard_dcache(); \
         uint32_t _crc = crc32_calc(frame_y[out_idx], frame_y_size); \
@@ -1053,7 +1054,7 @@ enum plugin_status plugin_start(const void *parameter)
       build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
           0, 0, sh.slice_type, _qp, \
           pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
-          sh.num_ref_idx_l0_active_minus1 + 1, \
+          sh.num_ref_idx_l0_active_minus1, \
           sh.disable_deblocking_filter_idc, \
           sh.alpha_c0_offset_div2, sh.beta_offset_div2, \
           _bo, PHYS(bs_dma), _dl); \
@@ -1065,7 +1066,7 @@ enum plugin_status plugin_start(const void *parameter)
             PHYS(frame_cr[out_idx]), \
             PHYS(frame_y[ref_idx]), PHYS(frame_cb[ref_idx]), \
             PHYS(frame_cr[ref_idx]), \
-            1, 0, pic_wmb, pic_hmb, pic_w, 1); \
+            1, pic_wmb, pic_hmb, pic_w, 1); \
         rb->commit_discard_dcache(); \
         int _nz = 0, _i; \
         for (_i = 0; _i < frame_y_size; _i++) \
@@ -1076,6 +1077,16 @@ enum plugin_status plugin_start(const void *parameter)
       } \
     } \
 } while(0)
+
+        /* v45: I-I-P diagnostic — confirms inter-frame state is not an issue */
+        if (idr_nalu_start >= 0 && p_nalu_start >= 0) {
+            poc_log("--- Experiment: I-I-P ---");
+            lflush();
+            RUN_EXP_IDR("exp_I1", 0);
+            RUN_EXP_IDR("exp_I2", 0);
+            RUN_EXP_P("exp_P_after_II", 1, 0);
+            lflush();
+        }
 
         /* v42z: probe VPU-B register space beyond 0x12C */
         {
@@ -1112,9 +1123,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v44 done ===");
+    poc_log("=== v49b done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v44: %d frames", frame_count);
+    rb->splashf(HZ*3, "v49b: %d frames", frame_count);
     return PLUGIN_OK;
 }
