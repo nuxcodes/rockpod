@@ -3,7 +3,7 @@
  *
  * P-FRAME SUPPORT: Decodes I+P frame sequences via VPU-B (0x39800000).
  *
- * v49b: Zero all regs WITHOUT VPU_MODE toggle — test if MODE was incidental.
+ * v51: Add +0x120/124/128/12C writes for P-frames (reconstruction output).
  *   v47 proved STATUS0 is NOT W1C. Only VPU_MODE toggle clears it.
  *   This matches vpub_power_on() — the only proven reset method.
  *
@@ -18,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_ip_hiqp.264"
+#define H264_TEST_PATH "/test_skip.264"
 
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -493,24 +493,14 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    /* v49b: Zero all regs WITHOUT VPU_MODE toggle.
-     * v49 proved: STATUS0 is immune to writes (always 1 after decode).
-     * But STATUS0=1 doesn't block decode (v47b decoded I-frames with F0=1).
-     * The VPU_MODE toggle in v47b was incidental — the real fix was zeroing
-     * all registers. Test: zero 0x00-0x12C without MODE toggle to preserve
-     * internal pipeline state needed for P-frame inter-prediction. */
-    {
-        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-        int i;
-        base[0xE8/4] = 0;  /* kill trigger bits first */
-        for (i = 0; i < 0x130/4; i++)
-            base[i] = 0;
-    }
+    /* v52b: NO zeroing at all — matching Apple's exact approach.
+     * vtable[0x48] does NO hardware access (confirmed at 0x1c1434).
+     * Apple does zero per-frame hardware reset between decodes. */
 
     dump_vpu_regs("after zero-all (no MODE toggle)");
 
     /* Program registers via RMW (Apple's order) */
-    VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8 */
+    VPU_CTRL_BUF = ctrl_phys | 0x80000000;                 /* +0xD8: bit 31 SET (Apple) */
 
     val = VPU_DIMS;                                         /* +0xE0 RMW */
     val = (val & ~0x3F00) | ((height_mbs & 0x3F) << 8);
@@ -523,7 +513,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
     VPU_CTRL = val;
 
-    VPU_SLICE_DESC = desc_phys;                             /* +0xDC */
+    VPU_SLICE_DESC = desc_phys | 0x80000000;                /* +0xDC: bit 31 SET (Apple) */
 
     val = VPU_STRIDES;                                      /* +0xE4 RMW */
     val = (val & ~0x01FF0000) | (((pic_w / 2) & 0x1FF) << 16);
@@ -549,9 +539,18 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                 (unsigned long)ref_cr);
     }
 
-    /* +0x120/124/128/12C: alternate output for MBAFF/field pictures.
-     * Only written when disable_deblocking_filter_idc != 0.
-     * Irrelevant for Baseline profile — removed (v47). */
+    /* +0x120/124/128/12C: reconstruction/alternate output.
+     * v51: Multiple agents say these are needed for ALL P-frames, not just
+     * MBAFF/deblk_disabled. Try writing current output addresses here. */
+    if (has_ref) {
+        VPU_REF_Y    = y_phys;                               /* +0x120 */
+        VPU_REF_CB   = cb_phys;                              /* +0x124 */
+        VPU_REF_CR   = cr_phys;                              /* +0x128 */
+        VPU_REF_FLAG = 1;                                    /* +0x12C */
+        poc_log("  ALT: +120=%08lx +124=%08lx +128=%08lx",
+                (unsigned long)y_phys, (unsigned long)cb_phys,
+                (unsigned long)cr_phys);
+    }
 
     dump_vpu_regs("after programming");
 
@@ -644,10 +643,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v49b zero-all no MODE");
+    rb->splash(HZ/2, "v52b skip+nozero");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v49b — zero all regs, NO VPU_MODE toggle ===");
+    poc_log("=== v52b — test_skip.264 + NO zeroing (Apple approach) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1123,9 +1122,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v49b done ===");
+    poc_log("=== v52b done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v49b: %d frames", frame_count);
+    rb->splashf(HZ*3, "v52b: %d frames", frame_count);
     return PLUGIN_OK;
 }
