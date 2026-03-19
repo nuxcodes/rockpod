@@ -18,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_skip.264"
+#define H264_TEST_PATH "/test_halfcoded.264"
 
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -493,11 +493,19 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    /* v52b: NO zeroing at all — matching Apple's exact approach.
-     * vtable[0x48] does NO hardware access (confirmed at 0x1c1434).
-     * Apple does zero per-frame hardware reset between decodes. */
+    /* v54: Per-frame zero-all reset (v49b/v50b proved required).
+     * STATUS0 (+F0) persists after decode and blocks re-trigger.
+     * VPU treats contiguous zero-write of all 76 regs as HW reset.
+     * Must zero +E8 first to kill any stale trigger bits. */
+    {
+        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
+        int i;
+        base[0xE8/4] = 0;
+        for (i = 0; i < 0x130/4; i++)
+            base[i] = 0;
+    }
 
-    dump_vpu_regs("after zero-all (no MODE toggle)");
+    dump_vpu_regs("after zero-all");
 
     /* Program registers via RMW (Apple's order) */
     VPU_CTRL_BUF = ctrl_phys | 0x80000000;                 /* +0xD8: bit 31 SET (Apple) */
@@ -643,10 +651,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v52b skip+nozero");
+    rb->splash(HZ/2, "v54 zero-all");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v52b — test_skip.264 + NO zeroing (Apple approach) ===");
+    poc_log("=== v54 — per-frame zero-all reset (v49b/v50b proven) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1122,9 +1130,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v52b done ===");
+    poc_log("=== v53e done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v52b: %d frames", frame_count);
+    rb->splashf(HZ*3, "v53e: %d frames", frame_count);
     return PLUGIN_OK;
 }
