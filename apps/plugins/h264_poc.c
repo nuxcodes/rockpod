@@ -422,6 +422,9 @@ static void vpub_power_on(void)
             base[i] = 0;
     }
     PWRCON(0) = PWRCON(0) | (1 << 17);
+
+    /* v55h: IRQ 35 enable CRASHED iPod (no handler registered).
+     * Needs proper ISR + semaphore before enabling. Removed. */
 }
 
 static void vpub_power_off(void)
@@ -435,7 +438,7 @@ static void vpub_power_off(void)
 
 static void build_slice_descriptor(uint32_t *desc,
                                     int slice_index,
-                                    int first_mb_in_slice,
+                                    int mb_count,
                                     int slice_type,
                                     int slice_qp_y,
                                     int chroma_qp_off,
@@ -448,8 +451,11 @@ static void build_slice_descriptor(uint32_t *desc,
                                     uint32_t bs_phys_addr,
                                     int bs_length)
 {
+    /* Word 0 bits [20:10] = mb_count for this slice (NOT first_mb_in_slice!).
+     * Apple computes: total_mbs - first_mb_in_slice (for last/only slice).
+     * Agent traced through h264_parse_nals → entry+0x02 (halfword) << 10. */
     desc[0] = ((slice_index & 0x7FF) << 21)
-            | ((first_mb_in_slice & 0x7FF) << 10)
+            | ((mb_count & 0x7FF) << 10)
             | ((slice_type & 0xF) << 6)
             | (slice_qp_y & 0x3F);
 
@@ -488,12 +494,24 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     uint32_t val;
     int ret, old_irq;
 
-    /* Enable VPU-B clock with IRQ protection. */
+    /* v55g: Match h264_decode_frame (0x001c0b68) pre-decode sequence.
+     * Apple does THREE things before vtable[0x48]:
+     * 1. clock_gate(0x20000, 0, 1) TWICE (0x1c0b94, 0x1c0ba4)
+     * 2. VPU_MODE |= 1 at 0x38100314 (0x1c0bac-0x1c0bb4)
+     * 3. FUN_00086250 init call */
+
+    /* Double clock enable (Apple: two identical calls) */
+    old_irq = disable_irq_save();
+    PWRCON(0) = PWRCON(0) & ~(1 << 17);
+    restore_irq(old_irq);
     old_irq = disable_irq_save();
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    /* v55c: Match Apple's COMPLETE vtable[0x48] sequence.
+    /* Re-set VPU_MODE every frame (Apple: 0x38100314 |= 1) */
+    VPU_MODE_REG |= 1;
+
+    /* vtable[0x48] = h264_vpu_stop_and_reset (0x001c0b4c).
      * vtable[0x48] = h264_vpu_stop_and_reset (0x001c0b4c):
      *   1. Read +EC, clear bit 0, write back → STOP VPU
      *   2. Tail-call vtable[0x4C] = h264_vpu_reset (0x001c0afc):
@@ -518,7 +536,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     dump_vpu_regs("after apple-reset");
 
     /* Program registers via RMW (Apple's order) */
-    VPU_CTRL_BUF = ctrl_phys | 0x80000000;                 /* +0xD8: bit 31 SET (Apple) */
+    VPU_CTRL_BUF = ctrl_phys;                              /* +0xD8: raw (Apple only sets bit31 if bit27 set) */
 
     val = VPU_DIMS;                                         /* +0xE0 RMW */
     val = (val & ~0x3F00) | ((height_mbs & 0x3F) << 8);
@@ -531,7 +549,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     val = (val & ~0x0FFE) | ((width_mbs * height_mbs * 2) & 0xFFE);
     VPU_CTRL = val;
 
-    VPU_SLICE_DESC = desc_phys | 0x80000000;                /* +0xDC: bit 31 SET (Apple) */
+    VPU_SLICE_DESC = desc_phys;                             /* +0xDC: raw (Apple only sets bit31 if bit27 set) */
 
     val = VPU_STRIDES;                                      /* +0xE4 RMW */
     val = (val & ~0x01FF0000) | (((pic_w / 2) & 0x1FF) << 16);
@@ -557,18 +575,9 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                 (unsigned long)ref_cr);
     }
 
-    /* +0x120/124/128/12C: reconstruction/alternate output.
-     * v51: Multiple agents say these are needed for ALL P-frames, not just
-     * MBAFF/deblk_disabled. Try writing current output addresses here. */
-    if (has_ref) {
-        VPU_REF_Y    = y_phys;                               /* +0x120 */
-        VPU_REF_CB   = cb_phys;                              /* +0x124 */
-        VPU_REF_CR   = cr_phys;                              /* +0x128 */
-        VPU_REF_FLAG = 1;                                    /* +0x12C */
-        poc_log("  ALT: +120=%08lx +124=%08lx +128=%08lx",
-                (unsigned long)y_phys, (unsigned long)cb_phys,
-                (unsigned long)cr_phys);
-    }
+    /* +0x120/124/128/12C: Apple ONLY writes these when deblk_disabled != 0.
+     * Our test files have deblk=0. Zero-all already cleared them to 0.
+     * v55e: Remove these writes to match Apple for deblk=0. */
 
     dump_vpu_regs("after programming");
 
@@ -660,10 +669,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v55c stop+reset");
+    rb->splash(HZ/2, "v56 mb_count fix");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v55c — +EC stop + zero-all (exact vtable[0x48] match) ===");
+    poc_log("=== v56 — desc word 0 mb_count fix (was first_mb=0, now mb_count=300) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -889,9 +898,11 @@ enum plugin_status plugin_start(const void *parameter)
 
                 /* Build descriptor through uncached alias */
                 rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE);
+                /* mb_count = total_mbs - first_mb (for single-slice) */
+                int mb_count = pic_wmb * pic_hmb - sh.first_mb_in_slice;
                 build_slice_descriptor(
                     (uint32_t *)UNCACHED(slice_desc),
-                    0, sh.first_mb_in_slice, sh.slice_type, slice_qp,
+                    0, mb_count, sh.slice_type, slice_qp,
                     pps.chroma_qp_index_offset, pps.weighted_pred_flag,
                     sh.num_ref_idx_l0_active_minus1,
                     sh.disable_deblocking_filter_idc,
@@ -942,6 +953,16 @@ enum plugin_status plugin_start(const void *parameter)
                                 (unsigned long)cb_unc[1],
                                 (unsigned long)cb_unc[2],
                                 (unsigned long)cb_unc[3]);
+                    }
+                    /* v55e: Scan ENTIRE ctrl_buf for VPU-written data */
+                    {
+                        volatile uint8_t *cb_u8 =
+                            (volatile uint8_t *)UNCACHED(ctrl_buf);
+                        int cb_nz = 0, ci;
+                        for (ci = 0; ci < CTRL_BUF_SIZE; ci++)
+                            if (cb_u8[ci] != 0) cb_nz++;
+                        poc_log("  ctrl_buf: %d/%d non-zero",
+                                cb_nz, CTRL_BUF_SIZE);
                     }
                 } else if (ret == -1)
                     poc_log("  VPU-B decode TIMEOUT");
@@ -1034,7 +1055,7 @@ enum plugin_status plugin_start(const void *parameter)
       rb->memcpy(UNCACHED(bs_dma), nalu_buf + _hb, _dl); \
       rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE); \
       build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
-          0, 0, sh.slice_type, _qp, \
+          0, pic_wmb * pic_hmb, sh.slice_type, _qp, \
           pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
           0, sh.disable_deblocking_filter_idc, \
           sh.alpha_c0_offset_div2, sh.beta_offset_div2, \
@@ -1068,7 +1089,7 @@ enum plugin_status plugin_start(const void *parameter)
       rb->memcpy(UNCACHED(bs_dma), nalu_buf + _hb, _dl); \
       rb->memset(UNCACHED(slice_desc), 0, SLICE_DESC_SIZE); \
       build_slice_descriptor((uint32_t *)UNCACHED(slice_desc), \
-          0, 0, sh.slice_type, _qp, \
+          0, pic_wmb * pic_hmb, sh.slice_type, _qp, \
           pps.chroma_qp_index_offset, pps.weighted_pred_flag, \
           sh.num_ref_idx_l0_active_minus1, \
           sh.disable_deblocking_filter_idc, \
@@ -1139,9 +1160,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v55c done ===");
+    poc_log("=== v56 done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v55c: %d frames", frame_count);
+    rb->splashf(HZ*3, "v56: %d frames", frame_count);
     return PLUGIN_OK;
 }
