@@ -493,16 +493,24 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    /* v55b: Match Apple's vtable[0x48] = h264_vpu_reset (FUN_001c0afc).
-     * Apple reads +EC first, then zeros all regs 0x00-0x12F.
-     * VIC ack (after prev decode sleep) commits state before this. */
+    /* v55c: Match Apple's COMPLETE vtable[0x48] sequence.
+     * vtable[0x48] = h264_vpu_stop_and_reset (0x001c0b4c):
+     *   1. Read +EC, clear bit 0, write back → STOP VPU
+     *   2. Tail-call vtable[0x4C] = h264_vpu_reset (0x001c0afc):
+     *      a. Read +EC (sync barrier)
+     *      b. Zero regs 0x00-0xCB (loop1: 17×3)
+     *      c. Zero regs 0xCC-0x12F (loop2: 5×5) */
     {
         volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-        volatile uint32_t ec_val;
+        uint32_t ec_val;
         int i;
-        ec_val = base[0xEC/4];  /* Apple reads +EC before zeroing */
+        /* Step 1: STOP VPU (h264_vpu_stop_and_reset) */
+        ec_val = base[0xEC/4];
+        base[0xEC/4] = ec_val & ~1u;
+        /* Step 2: Sync read (h264_vpu_reset prologue) */
+        ec_val = base[0xEC/4];
         (void)ec_val;
-        base[0xE8/4] = 0;      /* kill trigger bits first */
+        /* Step 3: Zero all 0x00-0x12F (76 words) */
         for (i = 0; i < 0x130/4; i++)
             base[i] = 0;
     }
@@ -652,10 +660,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v55b vic+reset");
+    rb->splash(HZ/2, "v55c stop+reset");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v55b — VIC ack + Apple zero-all (vtable[0x48] match) ===");
+    poc_log("=== v55c — +EC stop + zero-all (exact vtable[0x48] match) ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -1131,9 +1139,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     vpub_power_off();
-    poc_log("=== v53e done ===");
+    poc_log("=== v55c done ===");
     lflush();
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v53e: %d frames", frame_count);
+    rb->splashf(HZ*3, "v55c: %d frames", frame_count);
     return PLUGIN_OK;
 }
