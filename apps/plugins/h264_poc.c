@@ -108,7 +108,7 @@ enum plugin_status plugin_start(const void *parameter)
     size_t dec_size = vpu_h264_buf_size(320, 240);
     poc_log("Decoder needs %lu bytes", (unsigned long)dec_size);
 
-    if (dec_size + MAX_FILE_SIZE > buf_size)
+    if (dec_size + MAX_FILE_SIZE + 4096 > buf_size)
     {
         poc_log("ERROR: buffer too small");
         if (log_fd >= 0) rb->close(log_fd);
@@ -116,7 +116,9 @@ enum plugin_status plugin_start(const void *parameter)
         return PLUGIN_ERROR;
     }
 
-    file_buf = buf + dec_size + 4096;
+    /* Allocate file_buf from the END of the audio buffer to avoid
+     * overlap with decoder's ALIGN4K internal allocations */
+    file_buf = buf + buf_size - MAX_FILE_SIZE;
 
     /* Open decoder */
     dec = vpu_h264_open(buf, dec_size, 320, 240);
@@ -151,6 +153,7 @@ enum plugin_status plugin_start(const void *parameter)
         /* Feed NALUs one at a time (Annex B) */
         int pos = 0;
         int sc_len;
+        int nalu_idx = 0;
 
         while (pos < fsize && frame_count < 16)
         {
@@ -166,12 +169,16 @@ enum plugin_status plugin_start(const void *parameter)
 
             int nal_type = file_buf[nalu_start] & 0x1F;
             poc_log("  NALU type=%d len=%d", nal_type, nalu_len);
+            nalu_idx++;
 
-            /* Feed to decoder */
+            /* Feed to decoder — measure decode time */
+            long t0 = *rb->current_tick;
             int ret = vpu_h264_decode_nalu(dec, file_buf + nalu_start, nalu_len);
+            long t1 = *rb->current_tick;
 
             if (ret == 1)
             {
+                long ms = (t1 - t0) * 1000 / HZ;
                 /* Frame decoded — get output and verify */
                 const uint8_t *y, *cb, *cr;
                 int w, h;
@@ -182,12 +189,13 @@ enum plugin_status plugin_start(const void *parameter)
                     if (y[i] != 0) nz++;
                 uint32_t crc = crc32_calc(y, w * h);
 
-                poc_log("--- Frame %d: %dx%d nz=%d/%d crc=%08lx ---",
-                        frame_count, w, h, nz, w * h, (unsigned long)crc);
+                poc_log("--- Frame %d: %dx%d nz=%d/%d crc=%08lx %ldms ---",
+                        frame_count, w, h, nz, w * h, (unsigned long)crc, ms);
 
-                /* Display on LCD */
+                /* Display on LCD — use END of file_buf as tile scratch
+                 * (320*16*2 = 10240 bytes, won't overlap file data) */
                 {
-                    fb_data *tile = (fb_data *)(void *)file_buf;
+                    fb_data *tile = (fb_data *)(void *)(file_buf + MAX_FILE_SIZE - 10240);
                     int ty, py, px;
                     rb->lcd_clear_display();
                     for (ty = 0; ty < h; ty += 16)
@@ -221,15 +229,8 @@ enum plugin_status plugin_start(const void *parameter)
                 frame_count++;
                 lflush();
 
-                /* Brief pause to see each frame */
-                {
-                    int btn = 10;
-                    while (--btn > 0)
-                    {
-                        if (rb->button_get(false) != BUTTON_NONE) break;
-                        rb->sleep(HZ/10);
-                    }
-                }
+                /* Brief pause (press any button to skip) */
+                rb->sleep(HZ/5);
             }
             else if (ret < 0)
             {
