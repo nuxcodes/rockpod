@@ -86,7 +86,7 @@ static int find_start_code(const uint8_t *buf, int len, int *sc_len)
 
 enum plugin_status plugin_start(const void *parameter)
 {
-    (void)parameter;
+    const char *test_path = parameter ? (const char *)parameter : H264_TEST_PATH;
     size_t buf_size;
     uint8_t *buf;
     uint8_t *file_buf;
@@ -94,18 +94,16 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_count = 0;
     int errors = 0;
 
-    rb->splash(HZ/2, "v57 clean API test");
+    rb->splashf(HZ/2, "v58 %s", test_path);
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v57 — clean vpu_h264 API + IRQ completion ===");
+    poc_log("=== v58 — edge case test: %s ===", test_path);
 
     /* Allocate from audio buffer */
     buf = rb->plugin_get_audio_buffer(&buf_size);
-    poc_log("Audio buffer: %08lx size=%lu",
-            (unsigned long)(uintptr_t)buf, (unsigned long)buf_size);
 
-    /* Split: first part for decoder, rest for file I/O */
-    size_t dec_size = vpu_h264_buf_size(320, 240);
+    /* Open decoder with max 640x480 to handle all resolutions */
+    size_t dec_size = vpu_h264_buf_size(640, 480);
     poc_log("Decoder needs %lu bytes", (unsigned long)dec_size);
 
     if (dec_size + MAX_FILE_SIZE + 4096 > buf_size)
@@ -116,12 +114,10 @@ enum plugin_status plugin_start(const void *parameter)
         return PLUGIN_ERROR;
     }
 
-    /* Allocate file_buf from the END of the audio buffer to avoid
-     * overlap with decoder's ALIGN4K internal allocations */
     file_buf = buf + buf_size - MAX_FILE_SIZE;
 
-    /* Open decoder */
-    dec = vpu_h264_open(buf, dec_size, 320, 240);
+    /* Open decoder (640x480 max — handles 176x144 through 640x480) */
+    dec = vpu_h264_open(buf, dec_size, 640, 480);
     if (!dec)
     {
         poc_log("ERROR: vpu_h264_open failed");
@@ -133,9 +129,9 @@ enum plugin_status plugin_start(const void *parameter)
     lflush();
 
     /* Read test file */
-    poc_log("--- Parsing %s ---", H264_TEST_PATH);
+    poc_log("--- Parsing %s ---", test_path);
     {
-        int fd = rb->open(H264_TEST_PATH, O_RDONLY);
+        int fd = rb->open(test_path, O_RDONLY);
         if (fd < 0)
         {
             poc_log("ERROR: file not found");
@@ -192,45 +188,8 @@ enum plugin_status plugin_start(const void *parameter)
                 poc_log("--- Frame %d: %dx%d nz=%d/%d crc=%08lx %ldms ---",
                         frame_count, w, h, nz, w * h, (unsigned long)crc, ms);
 
-                /* Display on LCD — use END of file_buf as tile scratch
-                 * (320*16*2 = 10240 bytes, won't overlap file data) */
-                {
-                    fb_data *tile = (fb_data *)(void *)(file_buf + MAX_FILE_SIZE - 10240);
-                    int ty, py, px;
-                    rb->lcd_clear_display();
-                    for (ty = 0; ty < h; ty += 16)
-                    {
-                        int rows = (ty + 16 <= h) ? 16 : h - ty;
-                        for (py = 0; py < rows; py++)
-                        {
-                            for (px = 0; px < w; px++)
-                            {
-                                uint8_t yv = y[(ty+py)*w+px];
-                                uint8_t cbv = cb[((ty+py)/2)*(w/2)+px/2];
-                                uint8_t crv = cr[((ty+py)/2)*(w/2)+px/2];
-                                int r = yv + (((int)crv-128)*359>>8);
-                                int g = yv - (((int)cbv-128)*88>>8)
-                                          - (((int)crv-128)*183>>8);
-                                int bv = yv + (((int)cbv-128)*454>>8);
-                                if (r < 0) r = 0;
-                                if (r > 255) r = 255;
-                                if (g < 0) g = 0;
-                                if (g > 255) g = 255;
-                                if (bv < 0) bv = 0;
-                                if (bv > 255) bv = 255;
-                                tile[py*w+px] = ((r>>3)<<11)|((g>>2)<<5)|(bv>>3);
-                            }
-                        }
-                        rb->lcd_bitmap(tile, 0, ty, w, rows);
-                    }
-                    rb->lcd_update();
-                }
-
                 frame_count++;
                 lflush();
-
-                /* Brief pause (press any button to skip) */
-                rb->sleep(HZ/5);
             }
             else if (ret < 0)
             {
@@ -249,7 +208,7 @@ enum plugin_status plugin_start(const void *parameter)
     vpu_h264_close(dec);
 
     if (log_fd >= 0) rb->close(log_fd);
-    rb->splashf(HZ*3, "v57: %d frames %d err", frame_count, errors);
+    rb->splashf(HZ*3, "v58: %d frames %d err", frame_count, errors);
     return PLUGIN_OK;
 }
 
