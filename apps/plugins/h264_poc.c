@@ -18,7 +18,7 @@
 #include "s5l87xx.h"
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_halfcoded.264"
+#define H264_TEST_PATH "/test_1coded.264"
 
 #define FRAME_DUMP_PATH "/vdec_framey_%d.bin"
 #define REG32(addr) (*(volatile uint32_t *)(addr))
@@ -493,19 +493,10 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     PWRCON(0) = PWRCON(0) & ~(1 << 17);
     restore_irq(old_irq);
 
-    /* v54: Per-frame zero-all reset (v49b/v50b proved required).
-     * STATUS0 (+F0) persists after decode and blocks re-trigger.
-     * VPU treats contiguous zero-write of all 76 regs as HW reset.
-     * Must zero +E8 first to kill any stale trigger bits. */
-    {
-        volatile uint32_t *base = (volatile uint32_t *)VPU_B_BASE;
-        int i;
-        base[0xE8/4] = 0;
-        for (i = 0; i < 0x130/4; i++)
-            base[i] = 0;
-    }
+    /* v55: NO zeroing (Apple never zeroes between frames).
+     * VIC ack after decode provides the lighter reset. */
 
-    dump_vpu_regs("after zero-all");
+    dump_vpu_regs("pre-program (no zeroing)");
 
     /* Program registers via RMW (Apple's order) */
     VPU_CTRL_BUF = ctrl_phys | 0x80000000;                 /* +0xD8: bit 31 SET (Apple) */
@@ -573,6 +564,11 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     /* Wait for decode completion (Apple: IRQ semaphore, 0x84 = 132ms) */
     rb->sleep(HZ/5);  /* 200ms */
 
+    /* Acknowledge VPU-B IRQ 35 (VIC1 bit 3, edge-triggered).
+     * Apple's ISR at SRAM 0x08035bb8 does this after each decode.
+     * Without ack, VPU internal state may block next decode. */
+    REG32(0x38E02008) = (1 << 3);   /* VIC1 edge latch clear */
+
     val = VPU_STATUS1;
     poc_log("  done: +F0=%08lx +F4=%08lx",
             (unsigned long)VPU_STATUS0, (unsigned long)val);
@@ -586,13 +582,7 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     if (ret == 0)
         VPU_CONFIG = VPU_CONFIG_CONST;
 
-    /* Clear trigger/mode bits from +E8. The per-frame reset at the START
-     * of the next decode will also zero +E8, but clearing here too ensures
-     * the VPU is in a clean idle state when the clock is disabled. */
-    val = VPU_CTRL;
-    VPU_CTRL = val & ~VPU_TRIGGER_BITS;
-    poc_log("  CTRL cleared: %08lx -> %08lx",
-            (unsigned long)val, (unsigned long)(val & ~VPU_TRIGGER_BITS));
+    /* v55: NO trigger clearing (Apple doesn't clear +E8 between frames) */
 
     /* Disable VPU-B clock (IRQ-protected, matching BootROM thunk) */
     old_irq = disable_irq_save();
@@ -651,10 +641,10 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_y_size, frame_cb_size, frame_cr_size;
     int cur_buf = 0, frame_count = 0;
 
-    rb->splash(HZ/2, "v54 zero-all");
+    rb->splash(HZ/2, "v55 vic-ack");
 
     log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    poc_log("=== v54 — per-frame zero-all reset (v49b/v50b proven) ===");
+    poc_log("=== v55 — VIC ack, no zeroing, no trigger clearing ===");
 
     /* ---- Allocate buffers ---- */
     buf = rb->plugin_get_audio_buffer(&buf_size);
