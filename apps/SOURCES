@@ -56,6 +56,7 @@ videos.c
 mp4_demux.c
 video_thumb.c
 video_playback.c
+vpu_h264.c
 #endif
 screens.c
 settings.c

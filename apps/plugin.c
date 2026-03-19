@@ -45,6 +45,9 @@
 #include "diacritic.h"
 #include "pathfuncs.h"
 #include "load_code.h"
+#ifdef IPOD_6G
+#include "target/arm/s5l8702/ipod6g/vpu-6g.h"
+#endif
 #include "file.h"
 #include "core_keymap.h"
 #include "language.h"
@@ -880,6 +883,13 @@ static const struct plugin_api rockbox_api = {
        the API gets incompatible */
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
     dynamic_colors_resolve,
+#endif
+
+#ifdef IPOD_6G
+    vpu_irq_init,
+    vpu_irq_arm,
+    vpu_irq_wait,
+    vpu_irq_status1,
 #endif
 };
 

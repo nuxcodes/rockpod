@@ -178,7 +178,7 @@ int plugin_open(const char *plugin, const char *parameter);
  * when this happens please take the opportunity to sort in
  * any new functions "waiting" at the end of the list.
  */
-#define PLUGIN_API_VERSION 280
+#define PLUGIN_API_VERSION 281
 
 /* 239 Marks the removal of ARCHOS HWCODEC and CHARCELL */
 
@@ -1034,6 +1034,13 @@ struct plugin_api {
        the API gets incompatible */
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
     unsigned int (*dynamic_colors_resolve)(unsigned int original);
+#endif
+
+#ifdef IPOD_6G
+    void (*vpu_irq_init)(void);
+    void (*vpu_irq_arm)(void);
+    int  (*vpu_irq_wait)(int timeout_ticks);
+    uint32_t (*vpu_irq_status1)(void);
 #endif
 };
 
