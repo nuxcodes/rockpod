@@ -8,14 +8,14 @@
  *
  * Copyright (C) 2025
  *
- * Full-screen video player UI with semi-transparent OSD overlay.
+ * Full-screen video player with H.264 hardware decode via VPU-B.
  * Replicates stock iPod video playback experience:
  *  - Video plays full-screen with no OSD on start
  *  - SELECT toggles OSD (title bar + transport bar)
  *  - Scroll wheel adjusts volume and shows OSD
  *  - OSD auto-hides after 4 seconds
  *
- * Currently displays a test frame; decode pipeline will be integrated later.
+ * Decode pipeline: MP4 demux -> VPU H.264 -> lcd_blit_yuv
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,6 +42,9 @@
 #include "backlight.h"
 #include "mp4_demux.h"
 #include "video_playback.h"
+#include "vpu_h264.h"
+#include "core_alloc.h"
+#include "audio.h"
 #include "file.h"
 #include "string-extra.h"
 #include "splash.h"
@@ -95,7 +98,7 @@ static struct {
     uint16_t video_w, video_h;
     uint32_t duration_ms;
 
-    /* Display rect (letterboxed within LCD) */
+    /* Display rect (centered within LCD, no scaling) */
     int disp_x, disp_y, disp_w, disp_h;
 
     /* Playback */
@@ -103,6 +106,16 @@ static struct {
     uint32_t curr_time_ms;
     long play_start_tick;
     uint32_t play_start_time;
+
+    /* Decode state */
+    struct vpu_h264 *decoder;
+    int vid_fd;
+    uint32_t cur_sample;
+    uint32_t num_samples;
+    uint32_t nalu_len_size;
+    const struct mp4v_demux_res *demux;
+    uint8_t *read_buf;
+    int read_buf_size;
 
     /* OSD */
     bool osd_visible;
@@ -129,9 +142,9 @@ static struct {
     long vol_show_until;
 } ps;
 
-/* Minimal demux buffers — just enough for metadata */
-static uint32_t pb_sample_buf[1];
-static uint32_t pb_chunk_buf[1];
+/* Tiny buffers for initial metadata-only demux pass */
+static uint32_t pb_tmp_sample[1];
+static uint32_t pb_tmp_chunk[1];
 
 /* ------------------------------------------------------------------ */
 /* Utility: FNV-1a hash                                               */
@@ -152,36 +165,6 @@ static uint32_t fnv1a_hash(const char *str)
  * adjust_volume() from misc.h: adjusts system volume by N steps. */
 
 /* ------------------------------------------------------------------ */
-/* Letterbox calculation                                              */
-/* ------------------------------------------------------------------ */
-
-static void calc_letterbox(uint16_t vid_w, uint16_t vid_h)
-{
-    int scale_w, scale_h, scale;
-
-    if (vid_w == 0 || vid_h == 0)
-    {
-        ps.disp_x = 0;
-        ps.disp_y = 0;
-        ps.disp_w = LCD_WIDTH;
-        ps.disp_h = LCD_HEIGHT;
-        return;
-    }
-
-    scale_w = (LCD_WIDTH  * 1000) / vid_w;
-    scale_h = (LCD_HEIGHT * 1000) / vid_h;
-    scale = (scale_w < scale_h) ? scale_w : scale_h;
-
-    ps.disp_w = (vid_w * scale) / 1000;
-    ps.disp_h = (vid_h * scale) / 1000;
-    if (ps.disp_w > LCD_WIDTH)  ps.disp_w = LCD_WIDTH;
-    if (ps.disp_h > LCD_HEIGHT) ps.disp_h = LCD_HEIGHT;
-
-    ps.disp_x = (LCD_WIDTH  - ps.disp_w) / 2;
-    ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
-}
-
-/* ------------------------------------------------------------------ */
 /* Duration from stts table                                           */
 /* ------------------------------------------------------------------ */
 
@@ -199,24 +182,182 @@ static uint32_t calc_duration_ms(const struct mp4v_demux_res *d)
 }
 
 /* ------------------------------------------------------------------ */
-/* Test frame: SMPTE color bars                                       */
+/* Decode: feed one MP4 sample to VPU                                 */
 /* ------------------------------------------------------------------ */
 
-static void draw_test_frame(void)
+/* Returns: 1 = frame decoded, 0 = no frame yet (SPS/PPS), -1 = error/EOF */
+static int decode_one_frame(bool display)
 {
-    static const unsigned short bars[] = {
-        0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F
-    };
-    int bar_w = ps.disp_w / 7;
-    int i;
+    uint32_t offset, size;
+    int pos, ret;
 
-    for (i = 0; i < 7; i++)
+    if (ps.cur_sample >= ps.num_samples)
+        return -1;
+
+    if (mp4v_get_sample_offset(ps.demux, ps.cur_sample, &offset, &size) < 0)
+        return -1;
+
+    if ((int)size > ps.read_buf_size)
+        size = (uint32_t)ps.read_buf_size;
+
+    lseek(ps.vid_fd, offset, SEEK_SET);
+    if (read(ps.vid_fd, ps.read_buf, size) != (ssize_t)size)
+        return -1;
+
+    ps.cur_sample++;
+
+    /* Each MP4 sample contains 1+ length-prefixed NALUs */
+    pos = 0;
+    while (pos + (int)ps.nalu_len_size <= (int)size)
     {
-        int x = ps.disp_x + i * bar_w;
-        int w = (i == 6) ? (ps.disp_w - 6 * bar_w) : bar_w;
-        lcd_set_foreground(bars[i]);
-        lcd_fillrect(x, ps.disp_y, w, ps.disp_h);
+        uint32_t nalu_len = 0;
+        int i;
+        for (i = 0; i < (int)ps.nalu_len_size; i++)
+            nalu_len = (nalu_len << 8) | ps.read_buf[pos + i];
+        pos += ps.nalu_len_size;
+
+        if (nalu_len == 0 || pos + (int)nalu_len > (int)size)
+            break;
+
+        ret = vpu_h264_decode_nalu(ps.decoder, ps.read_buf + pos, nalu_len);
+        pos += nalu_len;
+
+        if (ret == 1)
+        {
+            if (display)
+            {
+                const uint8_t *y, *cb, *cr;
+                int w, h;
+                unsigned char *src[3];
+
+                vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+
+                src[0] = (unsigned char *)y;
+                src[1] = (unsigned char *)cb;
+                src[2] = (unsigned char *)cr;
+
+                int blit_w = MIN(w, ps.disp_w) & ~1;
+                int blit_h = MIN(h, ps.disp_h) & ~1;
+                lcd_blit_yuv(src, 0, 0, w,
+                             ps.disp_x, ps.disp_y, blit_w, blit_h);
+            }
+            return 1;
+        }
+        else if (ret < 0)
+        {
+            return -1;
+        }
     }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Decode: re-blit last decoded frame (for OSD hide, pause, etc.)     */
+/* ------------------------------------------------------------------ */
+
+static void blit_last_frame(void)
+{
+    const uint8_t *y, *cb, *cr;
+    int w, h;
+    unsigned char *src[3];
+
+    if (!ps.decoder) return;
+
+    vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    if (!y || w == 0 || h == 0) return;
+
+    src[0] = (unsigned char *)y;
+    src[1] = (unsigned char *)cb;
+    src[2] = (unsigned char *)cr;
+
+    int blit_w = MIN(w, ps.disp_w) & ~1;
+    int blit_h = MIN(h, ps.disp_h) & ~1;
+    lcd_blit_yuv(src, 0, 0, w, ps.disp_x, ps.disp_y, blit_w, blit_h);
+}
+
+/* ------------------------------------------------------------------ */
+/* Decode: update current time from sample position                   */
+/* ------------------------------------------------------------------ */
+
+static void update_frame_time(void)
+{
+    uint64_t ticks = 0;
+    uint32_t remaining = ps.cur_sample > 0 ? ps.cur_sample - 1 : 0;
+    uint32_t i;
+
+    for (i = 0; i < ps.demux->num_stts && remaining > 0; i++)
+    {
+        uint32_t count = ps.demux->stts[i].sample_count;
+        if (remaining <= count)
+        {
+            ticks += (uint64_t)remaining * ps.demux->stts[i].sample_delta;
+            break;
+        }
+        ticks += (uint64_t)count * ps.demux->stts[i].sample_delta;
+        remaining -= count;
+    }
+
+    if (ps.demux->timescale > 0)
+        ps.curr_time_ms = (uint32_t)(ticks * 1000 / ps.demux->timescale);
+}
+
+/* ------------------------------------------------------------------ */
+/* Decode: seek to time (keyframe + decode forward)                   */
+/* ------------------------------------------------------------------ */
+
+static void seek_to_time(uint32_t target_ms)
+{
+    uint64_t target_ticks;
+    uint64_t acc = 0;
+    uint32_t sample = 0;
+    uint32_t key = 0;
+    uint32_t i;
+
+    if (!ps.demux || ps.num_samples == 0) return;
+
+    /* Convert target_ms to sample index via stts */
+    target_ticks = (uint64_t)target_ms * ps.demux->timescale / 1000;
+
+    for (i = 0; i < ps.demux->num_stts && sample < ps.num_samples; i++)
+    {
+        uint64_t run = (uint64_t)ps.demux->stts[i].sample_count
+                       * ps.demux->stts[i].sample_delta;
+        if (acc + run > target_ticks)
+        {
+            sample += (uint32_t)((target_ticks - acc)
+                                  / ps.demux->stts[i].sample_delta);
+            break;
+        }
+        acc += run;
+        sample += ps.demux->stts[i].sample_count;
+    }
+    if (sample >= ps.num_samples)
+        sample = ps.num_samples - 1;
+
+    /* Walk backward to nearest keyframe */
+    for (i = 0; i < ps.demux->num_stss; i++)
+    {
+        uint32_t s = ps.demux->stss[i] - 1; /* stss is 1-based */
+        if (s <= sample)
+            key = s;
+        else
+            break;
+    }
+    if (ps.demux->num_stss == 0)
+        key = sample; /* no stss = all sync */
+
+    /* Decode from keyframe to target — display only the last frame */
+    ps.cur_sample = key;
+    while (ps.cur_sample <= sample)
+    {
+        bool is_last = (ps.cur_sample >= sample);
+        int ret = decode_one_frame(is_last);
+        if (ret < 0) break;
+    }
+
+    ps.curr_time_ms = target_ms;
+    ps.play_start_tick = current_tick;
+    ps.play_start_time = target_ms;
 }
 
 /* ------------------------------------------------------------------ */
@@ -298,7 +439,6 @@ static void draw_progress_bar(int x, int y, int w,
 
 static void draw_speaker_icon(int x, int y, int h)
 {
-    /* Speaker shape: rectangle body + expanding cone (megaphone) */
     int body_w = 3;
     int body_h = h * 2 / 5;
     int cone_w = h * 3 / 7;
@@ -314,10 +454,8 @@ static void draw_speaker_icon(int x, int y, int h)
 
     lcd_set_foreground(LCD_WHITE);
 
-    /* Body rectangle */
     lcd_fillrect(x, y + body_top, body_w, body_h);
 
-    /* Cone: wide at body rows, narrows toward top/bottom */
     for (i = 0; i < h; i++)
     {
         int dist = (i < half_h) ? (half_h - i) : (i - half_h);
@@ -355,25 +493,20 @@ static void draw_volume_overlay(void)
 
     lcd_set_drawmode(DRMODE_SOLID);
 
-    /* Solid black box */
     lcd_set_foreground(LCD_BLACK);
     lcd_set_background(LCD_BLACK);
     lcd_fillrect(box_x, box_y, box_w, box_h);
 
-    /* Border */
     lcd_set_foreground(LCD_DARKGRAY);
     lcd_drawrect(box_x, box_y, box_w, box_h);
 
-    /* Speaker icon */
     draw_speaker_icon(box_x + VOL_BOX_PAD,
                       box_y + (box_h - VOL_ICON_W) / 2,
                       VOL_ICON_W);
 
-    /* Track background */
     lcd_set_foreground(LCD_DARKGRAY);
     lcd_fillrect(bar_x, bar_y, VOL_BAR_W, VOL_BAR_H);
 
-    /* Filled portion */
     if (fill_w > 0)
     {
         lcd_set_foreground(LCD_WHITE);
@@ -449,11 +582,9 @@ static void draw_transport_bar(void)
     lcd_set_background(LCD_BLACK);
     lcd_fillrect(0, bar_top, LCD_WIDTH, ps.transport_bar_h);
 
-    /* Separator line at top */
     lcd_set_foreground(LCD_DARKGRAY);
     lcd_hline(0, LCD_WIDTH - 1, bar_top);
 
-    /* Status icon */
     icon_x = OSD_PAD;
     icon_y = bar_top + (ps.transport_bar_h - ps.icon_size) / 2;
 
@@ -464,7 +595,6 @@ static void draw_transport_bar(void)
 
     x_cur = icon_x + ps.icon_size + OSD_PAD;
 
-    /* Elapsed time */
     lcd_set_foreground(LCD_WHITE);
     format_time(e_str, sizeof(e_str), (long)ps.curr_time_ms);
     lcd_getstringsize(e_str, &ew, &th);
@@ -472,7 +602,6 @@ static void draw_transport_bar(void)
     lcd_putsxy(x_cur, text_y, e_str);
     x_cur += ew + 8;
 
-    /* Remaining time (negative) at far right */
     remain = (ps.duration_ms > ps.curr_time_ms) ?
              (ps.duration_ms - ps.curr_time_ms) : 0;
     format_time(r_str, sizeof(r_str), -(long)remain);
@@ -481,7 +610,6 @@ static void draw_transport_bar(void)
     remain_x = LCD_WIDTH - OSD_PAD - rw;
     lcd_putsxy(remain_x, text_y, r_str);
 
-    /* Progress bar fills the center gap */
     prog_x = x_cur;
     prog_w = remain_x - 8 - prog_x;
     prog_y = bar_top + ps.transport_bar_h / 2;
@@ -523,7 +651,7 @@ static void osd_toggle(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* OSD: full redraw                                                   */
+/* OSD: draw overlay (uses lcd_update_rect, not lcd_update)           */
 /* ------------------------------------------------------------------ */
 
 static void osd_draw(void)
@@ -533,35 +661,32 @@ static void osd_draw(void)
     draw_title_bar();
     draw_transport_bar();
 
-    if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
-        draw_volume_overlay();
+    /* Update only the OSD bar regions — lcd_update() would overwrite
+     * the YUV-blitted video with stale framebuffer data */
+    lcd_update_rect(0, 0, LCD_WIDTH, ps.title_bar_h);
+    lcd_update_rect(0, LCD_HEIGHT - ps.transport_bar_h,
+                    LCD_WIDTH, ps.transport_bar_h);
 
-    lcd_update();
+    if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
+    {
+        int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
+        int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
+        draw_volume_overlay();
+        lcd_update_rect((LCD_WIDTH - box_w) / 2, (LCD_HEIGHT - box_h) / 2,
+                        box_w, box_h);
+    }
 }
 
 /* ------------------------------------------------------------------ */
-/* Full screen redraw                                                 */
+/* Full screen redraw (re-blit last decoded frame + OSD if visible)   */
 /* ------------------------------------------------------------------ */
 
 static void full_redraw(void)
 {
-    lcd_set_viewport(NULL);
-    lcd_set_foreground(LCD_BLACK);
-    lcd_set_background(LCD_BLACK);
-    lcd_clear_display();
-
-    draw_test_frame();
+    blit_last_frame();
 
     if (ps.osd_visible)
-    {
-        draw_title_bar();
-        draw_transport_bar();
-    }
-
-    if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
-        draw_volume_overlay();
-
-    lcd_update();
+        osd_draw();
 }
 
 /* ------------------------------------------------------------------ */
@@ -572,26 +697,7 @@ static void do_adjust_volume(int steps)
 {
     adjust_volume(steps);
     ps.vol_show_until = current_tick + VOL_SHOW_TICKS;
-}
-
-/* ------------------------------------------------------------------ */
-/* Simulated time update                                              */
-/* ------------------------------------------------------------------ */
-
-static void update_sim_time(void)
-{
-    if (ps.state == PB_PLAYING)
-    {
-        long elapsed = current_tick - ps.play_start_tick;
-        uint32_t ms = (uint32_t)((uint64_t)elapsed * 1000 / HZ);
-        ps.curr_time_ms = ps.play_start_time + ms;
-
-        if (ps.curr_time_ms >= ps.duration_ms)
-        {
-            ps.curr_time_ms = ps.duration_ms;
-            ps.state = PB_STOPPED;
-        }
-    }
+    ps.need_osd_redraw = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -602,13 +708,15 @@ static void play_pause(void)
 {
     if (ps.state == PB_PLAYING)
     {
-        update_sim_time();
         ps.state = PB_PAUSED;
     }
     else
     {
         if (ps.curr_time_ms >= ps.duration_ms)
+        {
             ps.curr_time_ms = 0;
+            ps.cur_sample = 0;
+        }
 
         ps.play_start_tick = current_tick;
         ps.play_start_time = ps.curr_time_ms;
@@ -616,7 +724,6 @@ static void play_pause(void)
     }
 
     osd_show();
-    ps.need_osd_redraw = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -627,22 +734,12 @@ static void do_seek(int delta_ms)
 {
     int32_t t;
 
-    update_sim_time();
-
     t = (int32_t)ps.curr_time_ms + delta_ms;
     if (t < 0) t = 0;
     if ((uint32_t)t > ps.duration_ms) t = (int32_t)ps.duration_ms;
 
-    ps.curr_time_ms = (uint32_t)t;
-
-    if (ps.state == PB_PLAYING)
-    {
-        ps.play_start_tick = current_tick;
-        ps.play_start_time = ps.curr_time_ms;
-    }
-
+    seek_to_time((uint32_t)t);
     osd_show();
-    ps.need_osd_redraw = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -771,7 +868,6 @@ static uint32_t resume_load(const char *filepath)
 
 static int resume_dialog(uint32_t resume_ms)
 {
-    /* Returns: 1 = resume, 0 = start over, -1 = cancel */
     char tbuf[16];
     int btn;
 
@@ -803,43 +899,88 @@ static int resume_dialog(uint32_t resume_ms)
 }
 
 /* ------------------------------------------------------------------ */
-/* Main button loop                                                   */
+/* Main button loop — frame-driven decode                             */
 /* ------------------------------------------------------------------ */
 
 static void button_loop(const char *filepath)
 {
-    uint32_t last_sec = 0xFFFFFFFF;
     bool exit_loop = false;
+    int no_frame_count = 0;
 
     while (!exit_loop)
     {
-        long btn = button_get_w_tmo(HZ / 10);
+        long btn;
 
-        /* Update simulated playback time */
-        update_sim_time();
+        if (ps.state == PB_PLAYING)
+        {
+            /* Decode and display one frame */
+            int ret = decode_one_frame(true);
+            if (ret < 0)
+            {
+                ps.state = PB_STOPPED;
+                ps.curr_time_ms = ps.duration_ms;
+                osd_show();
+            }
+            else if (ret == 0)
+            {
+                /* SPS/PPS consumed, no frame yet — decode next immediately.
+                 * Limit retries to prevent infinite loop on malformed files. */
+                if (++no_frame_count > 16)
+                {
+                    no_frame_count = 0;
+                    yield();
+                }
+                else
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                update_frame_time();
+                no_frame_count = 0;
+            }
+
+            /* OSD overlay on top of decoded frame — must redraw every frame
+             * because lcd_blit_yuv overwrites the OSD regions */
+            if (ps.osd_visible)
+                osd_draw();
+
+            /* Accurate frame pacing using absolute tick targets.
+             * This avoids cumulative rounding error from integer division. */
+            {
+                long target_tick = ps.play_start_tick +
+                    (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
+                           * HZ / 1000);
+                long wait = target_tick - current_tick;
+                if (wait < 0) wait = 0;
+                if (wait > HZ) wait = HZ;
+
+                btn = button_get_w_tmo(wait > 0 ? wait : 1);
+            }
+        }
+        else
+        {
+            /* Paused or stopped — poll at 10Hz */
+            btn = button_get_w_tmo(HZ / 10);
+        }
 
         /* Auto-hide OSD */
         if (ps.osd_visible && TIME_AFTER(current_tick, ps.osd_hide_tick))
+        {
             osd_hide();
+            blit_last_frame();
+            ps.need_full_redraw = false;
+        }
 
         /* Auto-hide volume overlay */
         if (ps.vol_show_until && TIME_AFTER(current_tick, ps.vol_show_until))
         {
             ps.vol_show_until = 0;
-            ps.need_full_redraw = true;
+            blit_last_frame();
         }
 
-        /* Check if displayed second changed */
-        if (ps.osd_visible && ps.state == PB_PLAYING)
-        {
-            uint32_t sec = ps.curr_time_ms / 1000;
-            if (sec != last_sec)
-            {
-                last_sec = sec;
-                ps.need_osd_redraw = true;
-            }
-        }
-
+        /* Handle buttons */
         switch (btn)
         {
             case BUTTON_NONE:
@@ -919,7 +1060,7 @@ static void button_loop(const char *filepath)
                 break;
         }
 
-        /* Redraw */
+        /* Redraw for state changes (OSD toggle while paused, etc.) */
         if (ps.need_full_redraw)
         {
             full_redraw();
@@ -934,15 +1075,16 @@ static void button_loop(const char *filepath)
         else if (ps.vol_show_until &&
                  TIME_BEFORE(current_tick, ps.vol_show_until))
         {
-            /* Volume overlay without OSD — redraw frame + overlay */
-            lcd_set_viewport(NULL);
-            full_redraw();
-            ps.need_full_redraw = false;
+            /* Volume overlay without OSD — draw independently */
+            int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
+            int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
+            draw_volume_overlay();
+            lcd_update_rect((LCD_WIDTH - box_w) / 2,
+                            (LCD_HEIGHT - box_h) / 2, box_w, box_h);
         }
     }
 
     /* Save resume position */
-    update_sim_time();
     resume_save(filepath);
 }
 
@@ -953,13 +1095,20 @@ static void button_loop(const char *filepath)
 void video_playback_start(const char *filepath, const char *title)
 {
     static struct mp4v_demux_res demux;
-    int ret;
+    int mem_handle = -1;
+    bool theme_disabled = false;
     uint32_t resume_time;
+    int max_w, max_h;
+    size_t dec_size, alloc_size;
+    uint8_t *mem, *p;
+    uint32_t *sample_buf, *chunk_buf;
+    uint8_t *dec_buf;
 
     if (!filepath)
         return;
 
     memset(&ps, 0, sizeof(ps));
+    ps.vid_fd = -1;
 
     /* Set title */
     if (title && title[0])
@@ -968,36 +1117,108 @@ void video_playback_start(const char *filepath, const char *title)
     }
     else
     {
-        const char *p = strrchr(filepath, '/');
-        if (p) p++; else p = filepath;
-        strmemccpy(ps.title, p, sizeof(ps.title));
+        const char *sl = strrchr(filepath, '/');
+        if (sl) sl++; else sl = filepath;
+        strmemccpy(ps.title, sl, sizeof(ps.title));
         char *dot = strrchr(ps.title, '.');
         if (dot) *dot = '\0';
     }
 
-    /* Parse MP4 for metadata */
-    ret = mp4v_demux_open(filepath, &demux,
-                          pb_sample_buf, 1, pb_chunk_buf, 1);
-    if (ret < 0)
+    /* Step 1: Quick metadata parse to get dimensions */
+    if (mp4v_demux_open(filepath, &demux,
+                        pb_tmp_sample, 1, pb_tmp_chunk, 1) < 0)
     {
         splashf(HZ * 2, "Cannot open:\n%s", filepath);
         return;
     }
 
+    max_w = (demux.width + 15) & ~15;
+    max_h = (demux.height + 15) & ~15;
+    dec_size = vpu_h264_buf_size(max_w, max_h);
+
+    /* Stop audio playback to free core memory for decode buffers */
+    audio_hard_stop();
+
+    alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
+               + MP4V_MAX_STCO * sizeof(uint32_t) + 32
+               + dec_size + 4096
+               + 128 * 1024 + 32;
+
+    mem_handle = core_alloc(alloc_size);
+    if (mem_handle < 0)
+    {
+        splashf(HZ * 2, "Not enough memory");
+        return;
+    }
+    core_pin(mem_handle);
+    mem = core_get_data(mem_handle);
+    p = mem;
+
+    /* Bump-allocate from core block */
+    sample_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(sample_buf + MP4V_MAX_SAMPLES);
+
+    chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(chunk_buf + MP4V_MAX_STCO);
+
+    dec_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 4096);
+    p = dec_buf + dec_size;
+
+    ps.read_buf_size = 128 * 1024;
+    ps.read_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = ps.read_buf + ps.read_buf_size;
+
+    /* Step 2: Re-parse MP4 with full sample tables */
+    if (mp4v_demux_open(filepath, &demux,
+                        sample_buf, MP4V_MAX_SAMPLES,
+                        chunk_buf, MP4V_MAX_STCO) < 0)
+    {
+        splashf(HZ * 2, "MP4 parse failed");
+        goto cleanup;
+    }
+
+    /* Open VPU decoder */
+    ps.decoder = vpu_h264_open(dec_buf, dec_size, max_w, max_h);
+    if (!ps.decoder)
+    {
+        splashf(HZ * 2, "Decoder init failed");
+        goto cleanup;
+    }
+
+    /* Configure with avcC from MP4 */
+    if (vpu_h264_configure(ps.decoder, demux.codecdata,
+                            (int)demux.codecdata_len) < 0)
+    {
+        splashf(HZ * 2, "avcC config failed");
+        goto cleanup;
+    }
+
+    /* Open file for sample reads */
+    ps.vid_fd = open(filepath, O_RDONLY);
+    if (ps.vid_fd < 0)
+    {
+        splashf(HZ * 2, "Cannot open file");
+        goto cleanup;
+    }
+
+    /* Set up decode state */
+    ps.demux = &demux;
+    ps.num_samples = demux.num_samples;
+    ps.nalu_len_size = demux.nalu_len_size;
     ps.video_w = demux.width;
     ps.video_h = demux.height;
     ps.duration_ms = calc_duration_ms(&demux);
-    if (ps.duration_ms == 0)
-        ps.duration_ms = 60000;
+    if (ps.duration_ms == 0) ps.duration_ms = 60000;
 
-    calc_letterbox(ps.video_w, ps.video_h);
+    /* Display rect: no scaling, center on LCD */
+    ps.disp_w = MIN(demux.width, LCD_WIDTH) & ~1;
+    ps.disp_h = MIN(demux.height, LCD_HEIGHT) & ~1;
+    ps.disp_x = (LCD_WIDTH - ps.disp_w) / 2;
+    ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
+
     load_theme_colors();
 
-    /* Resolve the actual UI font ID before disabling the theme.
-     * FONT_UI is a virtual ID (12) that lcd_setfont() doesn't resolve;
-     * font_get() walks backward from slot 11 and may find an SBS icon
-     * font instead of the user's text font. getuifont() returns the
-     * real slot number from global_status.font_id[]. */
+    /* Resolve font ID before disabling theme */
     ps.osd_font_id = screens[SCREEN_MAIN].getuifont();
     osd_layout_init();
 
@@ -1007,33 +1228,48 @@ void video_playback_start(const char *filepath, const char *title)
     {
         int choice = resume_dialog(resume_time);
         if (choice < 0)
-            return;
+            goto cleanup;
         if (choice == 1)
             ps.curr_time_ms = resume_time;
     }
 
     /* Take over the screen */
     viewportmanager_theme_enable(SCREEN_MAIN, false, NULL);
+    theme_disabled = true;
 
     lcd_set_viewport(NULL);
     lcd_set_foreground(LCD_BLACK);
     lcd_set_background(LCD_BLACK);
     lcd_clear_display();
+    lcd_update();
 
-    /* Start playing (simulated) */
+    backlight_on();
+    backlight_set_timeout(0); /* keep backlight on during playback */
+
+    /* If resuming, seek to the saved position */
+    if (ps.curr_time_ms > 0)
+        seek_to_time(ps.curr_time_ms);
+
+    /* Start playing */
     ps.state = PB_PLAYING;
     ps.play_start_tick = current_tick;
     ps.play_start_time = ps.curr_time_ms;
     ps.osd_visible = false;
-    ps.need_full_redraw = true;
-
-    backlight_on();
+    ps.need_full_redraw = false;
 
     button_loop(filepath);
 
-    /* Restore UI */
+cleanup:
+    if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
+    if (ps.vid_fd >= 0) { close(ps.vid_fd); ps.vid_fd = -1; }
+    ps.demux = NULL;
+    if (mem_handle >= 0) { core_unpin(mem_handle); core_free(mem_handle); }
+
+    /* Restore backlight timeout and UI */
+    backlight_set_timeout(global_settings.backlight_timeout);
     lcd_set_viewport(NULL);
-    viewportmanager_theme_undo(SCREEN_MAIN, true);
+    if (theme_disabled)
+        viewportmanager_theme_undo(SCREEN_MAIN, true);
 }
 
 #endif /* IPOD_6G */
