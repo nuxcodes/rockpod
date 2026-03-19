@@ -47,6 +47,7 @@
 #include "load_code.h"
 #ifdef IPOD_6G
 #include "target/arm/s5l8702/ipod6g/vpu-6g.h"
+#include "vpu_h264.h"
 #endif
 #include "file.h"
 #include "core_keymap.h"
@@ -890,6 +891,12 @@ static const struct plugin_api rockbox_api = {
     vpu_irq_arm,
     vpu_irq_wait,
     vpu_irq_status1,
+    vpu_h264_buf_size,
+    vpu_h264_open,
+    vpu_h264_configure,
+    vpu_h264_decode_nalu,
+    vpu_h264_get_frame,
+    vpu_h264_close,
 #endif
 };
 

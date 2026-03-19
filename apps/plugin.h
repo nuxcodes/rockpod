@@ -182,6 +182,10 @@ int plugin_open(const char *plugin, const char *parameter);
 
 /* 239 Marks the removal of ARCHOS HWCODEC and CHARCELL */
 
+#ifdef IPOD_6G
+struct vpu_h264;  /* forward declaration for plugin API */
+#endif
+
 /* plugin return codes */
 /* internal returns start at 0x100 to make exit(1..255) work */
 #define INTERNAL_PLUGIN_RETVAL_START 0x100
@@ -1041,6 +1045,17 @@ struct plugin_api {
     void (*vpu_irq_arm)(void);
     int  (*vpu_irq_wait)(int timeout_ticks);
     uint32_t (*vpu_irq_status1)(void);
+    size_t (*vpu_h264_buf_size)(int max_w, int max_h);
+    struct vpu_h264 *(*vpu_h264_open)(void *buf, size_t buf_size,
+                                       int max_w, int max_h);
+    int (*vpu_h264_configure)(struct vpu_h264 *v,
+                               const uint8_t *avcc, int avcc_len);
+    int (*vpu_h264_decode_nalu)(struct vpu_h264 *v,
+                                 const uint8_t *nalu, int nalu_len);
+    void (*vpu_h264_get_frame)(const struct vpu_h264 *v,
+                                const uint8_t **y, const uint8_t **cb,
+                                const uint8_t **cr, int *w, int *h);
+    void (*vpu_h264_close)(struct vpu_h264 *v);
 #endif
 };
 
