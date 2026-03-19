@@ -22,19 +22,20 @@
 #define vpu_h264_close       rb->vpu_h264_close
 
 #define LOG_PATH "/vdec_poc.log"
-#define H264_TEST_PATH "/test_16frames.264"
+#define H264_TEST_PATH "/test_lowqp.264"
 #define MAX_FILE_SIZE   500000
 
 /* ---- Logging ---- */
 
 static int log_fd = -1;
+static char log_path_buf[64];
 
 static void lflush(void)
 {
     if (log_fd >= 0)
     {
         rb->close(log_fd);
-        log_fd = rb->open(LOG_PATH, O_WRONLY|O_APPEND, 0666);
+        log_fd = rb->open(log_path_buf, O_WRONLY|O_APPEND, 0666);
     }
 }
 
@@ -96,7 +97,13 @@ enum plugin_status plugin_start(const void *parameter)
 
     rb->splashf(HZ/2, "v58 %s", test_path);
 
-    log_fd = rb->open(LOG_PATH, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+    /* Generate per-file log: /vdec_<basename>.log */
+    {
+        const char *slash = rb->strrchr(test_path, '/');
+        const char *base = slash ? slash + 1 : test_path;
+        rb->snprintf(log_path_buf, sizeof(log_path_buf), "/vdec_%s.log", base);
+        log_fd = rb->open(log_path_buf, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+    }
     poc_log("=== v58 — edge case test: %s ===", test_path);
 
     /* Allocate from audio buffer */
