@@ -380,12 +380,12 @@ static int huff_decode(struct jpeg_hw_state *j, struct huff_table *ht)
     }
 
     /* Slow path for codes > 8 bits */
-    code = get_bits(j, 1);
-    for (l = 2; l <= 16; l++)
+    code = 0;
+    for (l = 1; l <= 16; l++)
     {
+        code = (code << 1) | get_bits(j, 1);
         if (code < ht->maxcode[l])
             return ht->vals[ht->valptr[l] + code - (ht->maxcode[l] - ht->bits[l])];
-        code = (code << 1) | get_bits(j, 1);
     }
     return 0; /* error */
 }

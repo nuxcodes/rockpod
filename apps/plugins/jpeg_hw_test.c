@@ -328,13 +328,13 @@ static int tj_huff_decode(struct test_jpeg *j, struct huff_table *ht)
         nb = ht->look_len[look];
         if (nb) { j->bits_left -= nb; return ht->look_sym[look]; }
     }
-    code = tj_get_bits(j, 1);
-    for (l = 2; l <= 16; l++)
+    code = 0;
+    for (l = 1; l <= 16; l++)
     {
+        code = (code << 1) | tj_get_bits(j, 1);
         if (code < ht->maxcode[l])
             return ht->vals[ht->valptr[l] + code
                             - (ht->maxcode[l] - ht->bits[l])];
-        code = (code << 1) | tj_get_bits(j, 1);
     }
     return 0;
 }
@@ -723,18 +723,39 @@ enum plugin_status plugin_start(const void *parameter)
                     tj_decode_block(&tj, 1, blocks[4]);
                     tj_decode_block(&tj, 2, blocks[5]);
 
-                    /* Diagnostic: dump first MCU coefficients */
+                    /* Diagnostic: dump first MCU — all 64 Y0 coeffs + stream pos */
                     if (restart_count == 0)
                     {
                         int bi, ci;
                         const char *bnames[] = {"Y0","Y1","Y2","Y3","Cb","Cr"};
+
+                        /* Full Y0 dump */
+                        tlog("Y0 all 64 (zigzag):");
+                        for (ci = 0; ci < 64; ci += 8)
+                            tlog(" [%d]: %d %d %d %d %d %d %d %d",
+                                 ci,
+                                 blocks[0][ci], blocks[0][ci+1],
+                                 blocks[0][ci+2], blocks[0][ci+3],
+                                 blocks[0][ci+4], blocks[0][ci+5],
+                                 blocks[0][ci+6], blocks[0][ci+7]);
+
+                        /* Stream position after all 6 blocks */
+                        tlog("After MCU0: pos=%lu bits_left=%d",
+                             (unsigned long)tj.pos, tj.bits_left);
+
+                        /* DC values for all blocks */
                         for (bi = 0; bi < 6; bi++)
-                        {
-                            tlog("%s DC=%d nz:", bnames[bi], blocks[bi][0]);
-                            for (ci = 1; ci < 16; ci++)
-                                if (blocks[bi][ci])
-                                    tlog("  [%d]=%d", ci, blocks[bi][ci]);
-                        }
+                            tlog("%s DC=%d", bnames[bi], blocks[bi][0]);
+
+                        /* Cr full dump (the broken channel) */
+                        tlog("Cr all 64:");
+                        for (ci = 0; ci < 64; ci += 8)
+                            tlog(" [%d]: %d %d %d %d %d %d %d %d",
+                                 ci,
+                                 blocks[5][ci], blocks[5][ci+1],
+                                 blocks[5][ci+2], blocks[5][ci+3],
+                                 blocks[5][ci+4], blocks[5][ci+5],
+                                 blocks[5][ci+6], blocks[5][ci+7]);
                         lflush();
                     }
 
