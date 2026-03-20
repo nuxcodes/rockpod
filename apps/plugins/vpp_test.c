@@ -674,15 +674,19 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  MIXER+0x008 = 0x%08lx (expect 0x100FF)",
          (unsigned long)MIXER_REG(0x008));
 
-    /* Step B: Release MCU LCD bus before ENVID takes over LCD pins.
-     * LCD_CON bit 31 = MCU parallel bus output enable. While set, the MCU
-     * controller at 0x38300000 drives LCD data pins D[17:0], causing bus
-     * contention with VPP's CLCD RGB output. Apple's FW has LCD clock gate
-     * already disabled (PWRCON bit 1) so this isn't an issue for them.
-     * RE evidence: ROM 0x000d16a8 clears bit 31 when transitioning. */
-    while (!(LCD_STATUS & 0x2));  /* wait for MCU LCD idle */
-    LCD_CON = LCD_CON & ~(1u << 31);  /* tri-state MCU bus */
-    vlog("  LCD_CON bit31 cleared (MCU bus released)");
+    /* Step B: Disable MCU LCD controller before ENVID takes over LCD pins.
+     * Apple's PWRCON(0) at boot = 0xfdffffd5: bit 1 SET = LCD clock DISABLED.
+     * Apple's VPP runs with MCU LCD already clock-gated off.
+     * Rockbox re-enables it during lcd_init_device(). We must disable it
+     * before VPP's CLCD drives the shared LCD data pins.
+     *
+     * Verification note: ROM 0xd16a8 AND mask 0x80000007 PRESERVES bit 31
+     * (does NOT clear it). Apple uses clock gating, not LCD_CON bit 31. */
+    while (!(LCD_STATUS & 0x2))
+        ;  /* wait for MCU LCD idle */
+    vlog("  LCD_CON before=0x%08lx", (unsigned long)LCD_CON);
+    PWRCON(0) |= (1 << 1);  /* disable MCU LCD clock gate (matches Apple's boot state) */
+    vlog("  MCU LCD clock disabled (PWRCON bit 1 set)");
 
     /* Step C: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
     CLCD_CTRL |= 1;          /* input enable (starts reading YUV) */
@@ -805,9 +809,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* === Phase 10: Restore Rockbox LCD === */
     vlog("Phase 10: Restoring LCD");
 
-    /* Re-enable MCU LCD bus output (restore bit 31 cleared in Phase 6) */
-    LCD_CON = LCD_CON | (1u << 31);
-    vlog("  LCD_CON bit31 restored (MCU bus re-enabled)");
+    /* Re-enable MCU LCD clock gate (disabled in Phase 6) */
+    PWRCON(0) &= ~(1 << 1);  /* clear bit 1 = enable LCD clock */
+    vlog("  MCU LCD clock re-enabled (PWRCON bit 1 cleared)");
 
     vlog("=== Test complete ===");
     log_close();
