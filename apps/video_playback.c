@@ -1376,8 +1376,10 @@ static void button_loop(const char *filepath)
             ps.vol_show_until = 0;
             if (ps.osd_visible && ps.osd_anim_step == 0)
                 osd_draw();
-            else
+            else if (ps.state != PB_PLAYING)
             {
+                /* Paused/stopped: repaint to erase volume overlay.
+                 * During playback, next decode_one_frame covers it. */
                 blit_last_frame();
                 clear_letterbox_bars();
             }
