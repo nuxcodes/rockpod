@@ -66,7 +66,7 @@
 #define PHYS(x)     ((uint32_t)((uintptr_t)(x) & 0x7FFFFFFF))
 #define UNCACHED(x) ((typeof(x))((uintptr_t)(x) + 0x40000000))
 
-#define BS_DMA_SIZE     131072
+#define BS_DMA_SIZE     262144
 #define SLICE_DESC_SIZE 320
 
 #ifndef MIN
@@ -105,6 +105,7 @@ static uint32_t bs_ue(struct bs *b)
     int lz = 0;
     while (bs_u1(b) == 0 && lz < 31) lz++;
     if (lz == 0) return 0;
+    if (b->bit_offset >= b->bit_length) return 0;
     return (1 << lz) - 1 + bs_un(b, lz);
 }
 
@@ -293,7 +294,7 @@ static void parse_slice_header(const struct sps *sps, const struct pps *pps,
                 idc = bs_ue(b);
                 if (idc == 0 || idc == 1) bs_ue(b);
                 else if (idc == 2) bs_ue(b);
-            } while (idc != 3);
+            } while (idc != 3 && b->bit_offset < b->bit_length);
         }
         if (sh->slice_type == 1)
         {
@@ -304,7 +305,7 @@ static void parse_slice_header(const struct sps *sps, const struct pps *pps,
                     idc = bs_ue(b);
                     if (idc == 0 || idc == 1) bs_ue(b);
                     else if (idc == 2) bs_ue(b);
-                } while (idc != 3);
+                } while (idc != 3 && b->bit_offset < b->bit_length);
             }
         }
     }
@@ -435,8 +436,8 @@ static void vpub_power_off(void)
 
 static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
                         uint32_t y_phys, uint32_t cb_phys, uint32_t cr_phys,
-                        uint32_t ref_y, uint32_t ref_cb, uint32_t ref_cr,
-                        int has_ref,
+                        const uint32_t *dpb_y, const uint32_t *dpb_cb,
+                        const uint32_t *dpb_cr, int dpb_count,
                         int width_mbs, int height_mbs,
                         int pic_w, int num_slices)
 {
@@ -490,12 +491,22 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
     VPU_OUT_CR = cr_phys;
     VPU_CONFIG = VPU_CONFIG_CONST;
 
-    /* DPB reference frame table */
-    if (has_ref)
+    /* DPB reference frame table — fill slots with reference frames
+     * (newest at slot 0). Remaining slots get slot 0's data. */
     {
-        VPU_DPB_Y(0)  = ref_y;
-        VPU_DPB_CB(0) = ref_cb;
-        VPU_DPB_CR(0) = ref_cr;
+        int dpb;
+        for (dpb = 0; dpb < dpb_count && dpb < 17; dpb++)
+        {
+            VPU_DPB_Y(dpb)  = dpb_y[dpb];
+            VPU_DPB_CB(dpb) = dpb_cb[dpb];
+            VPU_DPB_CR(dpb) = dpb_cr[dpb];
+        }
+        for (; dpb < 17; dpb++)
+        {
+            VPU_DPB_Y(dpb)  = dpb_count > 0 ? dpb_y[0] : 0;
+            VPU_DPB_CB(dpb) = dpb_count > 0 ? dpb_cb[0] : 0;
+            VPU_DPB_CR(dpb) = dpb_count > 0 ? dpb_cr[0] : 0;
+        }
     }
 
     /* Slice count + trigger */
@@ -534,20 +545,24 @@ static int vpub_decode(uint32_t ctrl_phys, uint32_t desc_phys,
 
 /* ---- Internal context structure ---- */
 
+#define MAX_DPB_FRAMES 5  /* up to 4 reference frames + 1 output */
+
 struct vpu_h264 {
     int max_w, max_h;
     int pic_w, pic_h, pic_wmb, pic_hmb;
     struct sps sps;
     struct pps pps;
     int have_sps, have_pps;
-    int cur_buf;
+    int cur_out;                        /* next output buffer index */
+    int dpb_count;                      /* valid references in dpb_order */
+    int dpb_order[MAX_DPB_FRAMES];      /* buffer indices, oldest first */
     uint8_t *ctrl_buf;
     uint8_t *slice_desc;
     uint8_t *bs_dma;
     uint8_t *nalu_buf;
-    uint8_t *frame_y[2];
-    uint8_t *frame_cb[2];
-    uint8_t *frame_cr[2];
+    uint8_t *frame_y[MAX_DPB_FRAMES];
+    uint8_t *frame_cb[MAX_DPB_FRAMES];
+    uint8_t *frame_cr[MAX_DPB_FRAMES];
     int frame_y_size;
     int frame_cb_size;
     int frame_cr_size;
@@ -559,13 +574,13 @@ size_t vpu_h264_buf_size(int max_w, int max_h)
 {
     size_t sz = 0;
     sz += sizeof(struct vpu_h264) + 32;
-    sz += (size_t)max_w * max_h * 3 / 2 + 4096;    /* ctrl_buf */
+    sz += (size_t)max_w * max_h * 3 / 2 + 4096;                    /* ctrl_buf */
     sz += SLICE_DESC_SIZE + 32;
     sz += BS_DMA_SIZE + 32;
-    sz += BS_DMA_SIZE + 32;                          /* nalu_buf */
-    sz += (size_t)max_w * max_h * 2 + 4096 * 2;     /* frame_y x2 */
-    sz += (size_t)max_w * max_h / 4 * 2 + 32 * 2;   /* frame_cb x2 */
-    sz += (size_t)max_w * max_h / 4 * 2 + 32 * 2;   /* frame_cr x2 */
+    sz += BS_DMA_SIZE + 32;                                         /* nalu_buf */
+    sz += ((size_t)max_w * max_h + 4096) * MAX_DPB_FRAMES;         /* frame_y */
+    sz += ((size_t)max_w * max_h / 4 + 32) * MAX_DPB_FRAMES;       /* frame_cb */
+    sz += ((size_t)max_w * max_h / 4 + 32) * MAX_DPB_FRAMES;       /* frame_cr */
     return sz;
 }
 
@@ -596,20 +611,37 @@ struct vpu_h264 *vpu_h264_open(void *buf, size_t buf_size,
     v->slice_desc = (uint8_t *)ALIGN32(p);  p = v->slice_desc + SLICE_DESC_SIZE;
     v->bs_dma     = (uint8_t *)ALIGN32(p);  p = v->bs_dma + BS_DMA_SIZE;
     v->nalu_buf   = (uint8_t *)ALIGN32(p);  p = v->nalu_buf + BS_DMA_SIZE;
-    v->frame_y[0]  = (uint8_t *)ALIGN4K(p); p = v->frame_y[0] + fy_sz;
-    v->frame_cb[0] = (uint8_t *)ALIGN32(p); p = v->frame_cb[0] + fc_sz;
-    v->frame_cr[0] = (uint8_t *)ALIGN32(p); p = v->frame_cr[0] + fc_sz;
-    v->frame_y[1]  = (uint8_t *)ALIGN4K(p); p = v->frame_y[1] + fy_sz;
-    v->frame_cb[1] = (uint8_t *)ALIGN32(p); p = v->frame_cb[1] + fc_sz;
-    v->frame_cr[1] = (uint8_t *)ALIGN32(p); p = v->frame_cr[1] + fc_sz;
+
+    {
+        int i;
+        for (i = 0; i < MAX_DPB_FRAMES; i++)
+        {
+            v->frame_y[i]  = (uint8_t *)ALIGN4K(p); p = v->frame_y[i] + fy_sz;
+            v->frame_cb[i] = (uint8_t *)ALIGN32(p); p = v->frame_cb[i] + fc_sz;
+            v->frame_cr[i] = (uint8_t *)ALIGN32(p); p = v->frame_cr[i] + fc_sz;
+        }
+    }
 
     v->frame_y_size = fy_sz;
     v->frame_cb_size = fc_sz;
     v->frame_cr_size = fc_sz;
+    v->cur_out = 0;
+    v->dpb_count = 0;
 
-    /* Zero all buffers */
+    /* Zero control buffers */
     memset(v->ctrl_buf, 0, ctrl_sz);
     memset(v->bs_dma, 0, BS_DMA_SIZE);
+
+    /* Pre-fill frame buffers with neutral YCbCr (black) */
+    {
+        int i;
+        for (i = 0; i < MAX_DPB_FRAMES; i++)
+        {
+            memset(v->frame_y[i],  0x10, fy_sz);
+            memset(v->frame_cb[i], 0x80, fc_sz);
+            memset(v->frame_cr[i], 0x80, fc_sz);
+        }
+    }
 
     vpub_power_on();
     return v;
@@ -696,8 +728,9 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
     if (!v || !nalu || nalu_len < 1)
         return -1;
 
-    /* Convert EBSP to RBSP for header parsing */
-    rbsp_len = ebsp_to_rbsp(v->nalu_buf, nalu, MIN(nalu_len, BS_DMA_SIZE));
+    /* Convert EBSP to RBSP for header parsing only (first 256 bytes).
+     * The VPU handles EPBs internally for the slice body. */
+    rbsp_len = ebsp_to_rbsp(v->nalu_buf, nalu, MIN(nalu_len, 256));
 
     nal_hdr = v->nalu_buf[0];
     nal_type = nal_hdr & 0x1F;
@@ -735,10 +768,12 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
     if ((nal_type == 5 || nal_type == 1) && v->have_sps && v->have_pps)
     {
         int is_idr = (nal_type == 5);
-        int has_ref = !is_idr;
-        int ref_buf = v->cur_buf ^ 1;
         int slice_qp, hdr_bytes, bit_off, dma_len, mb_count;
-        int ret;
+        int ret, i;
+        int out_buf = v->cur_out;
+        uint32_t dpb_y[MAX_DPB_FRAMES], dpb_cb[MAX_DPB_FRAMES],
+                 dpb_cr[MAX_DPB_FRAMES];
+        int dpb_fill = 0;
 
         parse_slice_header(&v->sps, &v->pps, &b, nal_type, nal_ref_idc, &sh);
 
@@ -746,6 +781,20 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
         hdr_bytes = sh.bits_consumed / 8;
         bit_off = sh.bits_consumed & 7;
         mb_count = v->pic_wmb * v->pic_hmb - sh.first_mb_in_slice;
+
+        /* IDR resets the reference picture list */
+        if (is_idr)
+            v->dpb_count = 0;
+
+        /* Build DPB arrays: newest reference = slot 0 */
+        for (i = v->dpb_count - 1; i >= 0 && dpb_fill < MAX_DPB_FRAMES; i--)
+        {
+            int bi = v->dpb_order[i];
+            dpb_y[dpb_fill]  = PHYS(v->frame_y[bi]);
+            dpb_cb[dpb_fill] = PHYS(v->frame_cb[bi]);
+            dpb_cr[dpb_fill] = PHYS(v->frame_cr[bi]);
+            dpb_fill++;
+        }
 
         /* Map RBSP header offset to EBSP offset in the original NALU.
          * The VPU expects EBSP data (handles EPBs internally). */
@@ -757,7 +806,8 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
             if (dma_len <= 0 || dma_len > BS_DMA_SIZE)
                 return -1;
 
-            commit_discard_dcache();
+            /* No full dcache flush needed here — bs_dma and slice_desc
+             * are written via UNCACHED pointers which bypass cache. */
 
             memcpy(UNCACHED(v->bs_dma), nalu + ebsp_hdr_offset,
                    MIN(dma_len, BS_DMA_SIZE));
@@ -773,26 +823,38 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
             sh.alpha_c0_offset_div2, sh.beta_offset_div2,
             bit_off, PHYS(v->bs_dma), dma_len);
 
-        /* Frame buffer pre-fill removed: the VPU writes all pixels for
-         * full-frame slices (single slice per frame). Saves ~14ms at
-         * 216 MHz (~56ms at 54 MHz unboosted) per frame. */
-
         ret = vpub_decode(
             PHYS(v->ctrl_buf), PHYS(v->slice_desc),
-            PHYS(v->frame_y[v->cur_buf]),
-            PHYS(v->frame_cb[v->cur_buf]),
-            PHYS(v->frame_cr[v->cur_buf]),
-            has_ref ? PHYS(v->frame_y[ref_buf]) : 0,
-            has_ref ? PHYS(v->frame_cb[ref_buf]) : 0,
-            has_ref ? PHYS(v->frame_cr[ref_buf]) : 0,
-            has_ref, v->pic_wmb, v->pic_hmb, v->pic_w, 1);
+            PHYS(v->frame_y[out_buf]),
+            PHYS(v->frame_cb[out_buf]),
+            PHYS(v->frame_cr[out_buf]),
+            dpb_y, dpb_cb, dpb_cr, dpb_fill,
+            v->pic_wmb, v->pic_hmb, v->pic_w, 1);
 
         commit_discard_dcache();
 
         if (ret != 0)
             return -1;
 
-        v->cur_buf ^= 1;
+        /* Add decoded frame to DPB sliding window */
+        {
+            int max_ref = v->sps.max_num_ref_frames;
+            if (max_ref < 1) max_ref = 1;
+            if (max_ref > MAX_DPB_FRAMES - 1)
+                max_ref = MAX_DPB_FRAMES - 1;
+
+            /* Evict oldest if DPB is full */
+            while (v->dpb_count >= max_ref)
+            {
+                for (i = 0; i < v->dpb_count - 1; i++)
+                    v->dpb_order[i] = v->dpb_order[i + 1];
+                v->dpb_count--;
+            }
+            v->dpb_order[v->dpb_count++] = out_buf;
+        }
+
+        /* Advance output to next buffer (round-robin) */
+        v->cur_out = (out_buf + 1) % MAX_DPB_FRAMES;
         return 1;
     }
 
@@ -804,8 +866,8 @@ void vpu_h264_get_frame(const struct vpu_h264 *v,
                          const uint8_t **y, const uint8_t **cb,
                          const uint8_t **cr, int *w, int *h)
 {
-    /* cur_buf was toggled after decode, so last frame is cur_buf ^ 1 */
-    int last = v->cur_buf ^ 1;
+    /* Most recently decoded frame is the last entry in dpb_order */
+    int last = (v->dpb_count > 0) ? v->dpb_order[v->dpb_count - 1] : 0;
     if (y)  *y  = v->frame_y[last];
     if (cb) *cb = v->frame_cb[last];
     if (cr) *cr = v->frame_cr[last];

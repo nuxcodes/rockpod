@@ -110,6 +110,8 @@ struct mp4_parse_ctx {
     struct mp4v_demux_res *res;
     bool found_video;   /* set when we find a video track */
     bool in_video_trak; /* currently inside a video trak */
+    uint16_t tkhd_dw;   /* tkhd display width (pending video confirm) */
+    uint16_t tkhd_dh;   /* tkhd display height (pending video confirm) */
 };
 
 /* Parse avcC box - H.264 decoder configuration record.
@@ -689,9 +691,9 @@ static bool read_chunk_tkhd(struct mp4_parse_ctx *ctx, size_t chunk_len)
     dh_fp = stream_read_uint32(&ctx->stream); /* height in 16.16 */
     size_remaining -= 8;
 
-    /* Store integer part of display dimensions (for later PAR use) */
-    ctx->res->display_width = (uint16_t)(dw_fp >> 16);
-    ctx->res->display_height = (uint16_t)(dh_fp >> 16);
+    /* Save temporarily — commit to res only after mdia confirms video */
+    ctx->tkhd_dw = (uint16_t)(dw_fp >> 16);
+    ctx->tkhd_dh = (uint16_t)(dh_fp >> 16);
 
     if (size_remaining > 0)
         stream_skip(&ctx->stream, size_remaining);
@@ -733,9 +735,14 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
         size_remaining -= sub_len;
     }
 
-    /* If this trak had a video track with avcC data, mark as found */
+    /* If this trak had a video track with avcC data, mark as found
+     * and commit the tkhd display dimensions (for PAR letterboxing) */
     if (ctx->in_video_trak && ctx->res->format != 0)
+    {
         ctx->found_video = true;
+        ctx->res->display_width = ctx->tkhd_dw;
+        ctx->res->display_height = ctx->tkhd_dh;
+    }
 
     return true;
 }

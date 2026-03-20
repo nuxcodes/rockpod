@@ -130,7 +130,13 @@ static bool mp4_parse(int fd, struct mp4_info *info, uint8_t *scan_buf,
 {
     int n, i;
 
-    rb->memset(info, 0, sizeof(*info));
+    /* Zero scalar fields only — sample_sizes/chunk_offsets are caller-owned */
+    info->avcc_len = 0;
+    info->nalu_len_size = 0;
+    info->width = 0;
+    info->height = 0;
+    info->num_samples = 0;
+    info->num_chunks = 0;
 
     /* Read first chunk for metadata scanning */
     rb->lseek(fd, 0, SEEK_SET);
@@ -341,6 +347,7 @@ static int decode_mp4(struct vpu_h264 *dec, int fd, struct mp4_info *info,
     }
     poc_log("avcC configured: %dx%d nalu_len=%d",
             info->width, info->height, info->nalu_len_size);
+    lflush();
 
     /* Decode samples (1 sample per chunk for simple stco layout) */
     for (s = 0; s < info->num_samples && s < info->num_chunks
@@ -350,6 +357,17 @@ static int decode_mp4(struct vpu_h264 *dec, int fd, struct mp4_info *info,
         uint32_t size = info->sample_sizes[s];
         int pos;
 
+        /* Button abort */
+        if (rb->button_get(false) & BUTTON_MENU)
+        {
+            poc_log("--- Aborted by user ---");
+            lflush();
+            break;
+        }
+
+        rb->splashf(0, "Sample %lu/%lu", (unsigned long)s,
+                     (unsigned long)info->num_samples);
+
         if ((int)size > READ_BUF_SIZE)
             size = READ_BUF_SIZE;
 
@@ -358,6 +376,7 @@ static int decode_mp4(struct vpu_h264 *dec, int fd, struct mp4_info *info,
         {
             poc_log("  Sample %lu: read error", (unsigned long)s);
             errors++;
+            lflush();
             continue;
         }
 
@@ -386,14 +405,37 @@ static int decode_mp4(struct vpu_h264 *dec, int fd, struct mp4_info *info,
                 const uint8_t *y, *cb, *cr;
                 int w, h, nz;
                 vpu_h264_get_frame(dec, &y, &cb, &cr, &w, &h);
+
+                /* Blit top-left corner directly to LCD (no scaler) */
+                {
+                    unsigned char *blit_src[3];
+                    int bw = (w < LCD_WIDTH) ? w : LCD_WIDTH;
+                    int bh = (h < LCD_HEIGHT) ? h : LCD_HEIGHT;
+                    bw &= ~1;
+                    bh &= ~1;
+                    blit_src[0] = (unsigned char *)y;
+                    blit_src[1] = (unsigned char *)cb;
+                    blit_src[2] = (unsigned char *)cr;
+                    rb->lcd_blit_yuv(blit_src, 0, 0, w,
+                                     0, 0, bw, bh);
+                }
+
                 nz = 0;
                 for (i = 0; i < w * h; i++)
                     if (y[i] != 0) nz++;
+                int csz = (w/2) * (h/2);
+                int cb_nz = 0, cr_nz = 0;
+                for (i = 0; i < csz; i++)
+                {
+                    if (cb[i] != 0x80) cb_nz++;
+                    if (cr[i] != 0x80) cr_nz++;
+                }
                 uint32_t crc_y = crc32_calc(y, w * h);
-                uint32_t crc_cb = crc32_calc(cb, (w/2) * (h/2));
-                uint32_t crc_cr = crc32_calc(cr, (w/2) * (h/2));
-                poc_log("--- Frame %d (s%lu): %dx%d nz=%d/%d Y=%08lx Cb=%08lx Cr=%08lx %ldms type=%d ---",
-                        frame_count, (unsigned long)s, w, h, nz, w * h,
+                uint32_t crc_cb = crc32_calc(cb, csz);
+                uint32_t crc_cr = crc32_calc(cr, csz);
+                poc_log("--- Frame %d (s%lu): %dx%d Ynz=%d Cbnz=%d Crnz=%d Y=%08lx Cb=%08lx Cr=%08lx %ldms t=%d ---",
+                        frame_count, (unsigned long)s, w, h,
+                        nz, cb_nz, cr_nz,
                         (unsigned long)crc_y, (unsigned long)crc_cb,
                         (unsigned long)crc_cr, ms, nal_type);
                 frame_count++;
@@ -426,7 +468,7 @@ enum plugin_status plugin_start(const void *parameter)
     int frame_count = 0;
 
     rb->cpu_boost(true);
-    rb->splashf(HZ/2, "v59 %s", test_path);
+    rb->splashf(HZ/2, "v65 %s", test_path);
 
     /* Generate per-file log */
     {
@@ -435,7 +477,7 @@ enum plugin_status plugin_start(const void *parameter)
         rb->snprintf(log_path_buf, sizeof(log_path_buf), "/vdec_%s.log", base);
         log_fd = rb->open(log_path_buf, O_WRONLY|O_CREAT|O_TRUNC, 0666);
     }
-    poc_log("=== v59 — MP4+AnnexB diagnostic: %s ===", test_path);
+    poc_log("=== v65 — MP4+AnnexB diagnostic: %s ===", test_path);
 
     /* Allocate from audio buffer */
     buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -487,16 +529,20 @@ enum plugin_status plugin_start(const void *parameter)
             scan_size = 5 * 1024 * 1024;
 
         poc_log("--- MP4 mode: scan_size=%d ---", scan_size);
+        lflush();
 
         fd = rb->open(test_path, O_RDONLY);
         if (fd < 0)
         {
             poc_log("ERROR: file not found");
+            lflush();
             vpu_h264_close(dec);
             if (log_fd >= 0) rb->close(log_fd);
             rb->splash(HZ*3, "File not found!");
             return PLUGIN_ERROR;
         }
+        poc_log("File opened, parsing...");
+        lflush();
 
         if (!mp4_parse(fd, &info, scan_buf, scan_size))
         {
@@ -513,6 +559,7 @@ enum plugin_status plugin_start(const void *parameter)
                 (unsigned long)info.num_samples,
                 (unsigned long)info.num_chunks,
                 info.avcc_len);
+        lflush();
 
         frame_count = decode_mp4(dec, fd, &info, read_buf);
         rb->close(fd);
@@ -549,7 +596,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     if (log_fd >= 0) rb->close(log_fd);
     rb->cpu_boost(false);
-    rb->splashf(HZ*3, "v59: %d frames", frame_count);
+    rb->splashf(HZ*3, "v65: %d frames", frame_count);
     return PLUGIN_OK;
 }
 
