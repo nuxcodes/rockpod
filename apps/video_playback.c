@@ -60,10 +60,6 @@ extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
                                    int width,
                                    int stride);
 
-/* Direct DMA buffer access for compositing (lcd-s5l8702.c) */
-extern uint16_t *lcd_begin_frame(void);
-extern void lcd_end_frame(void);
-
 /* ------------------------------------------------------------------ */
 /* Constants                                                          */
 /* ------------------------------------------------------------------ */
@@ -162,9 +158,6 @@ static struct {
     /* OSD animation (non-blocking, advances per frame) */
     int osd_anim_step;    /* 0 = idle, 1..OSD_ANIM_STEPS = in progress */
     bool osd_anim_show;   /* true = fly-in, false = fly-out */
-
-    /* Direct DMA buffer (non-NULL during lcd_begin_frame/lcd_end_frame) */
-    uint16_t *dma_buf;
 } ps;
 
 /* Tiny buffers for initial metadata-only demux pass */
@@ -237,9 +230,8 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
 {
     uint32_t x_step, y_step;
     int r, c;
-    /* Precomputed X tables — avoid per-pixel multiply in inner loop */
-    uint16_t xtab[LCD_WIDTH];   /* x0 | (x1 << 8) packed */
-    uint8_t  xftab[LCD_WIDTH];  /* fractional weight */
+    uint16_t xtab[LCD_WIDTH];
+    uint8_t  xftab[LCD_WIDTH];
 
     if (dst_w < 1 || dst_h < 1 || src_w < 1 || src_h < 1)
         return;
@@ -248,7 +240,6 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
     x_step = ((uint32_t)src_w << 16) / (unsigned)dst_w;
     y_step = ((uint32_t)src_h << 16) / (unsigned)dst_h;
 
-    /* Precompute source X positions + weights for the entire row */
     for (c = 0; c < dst_w; c++)
     {
         int32_t sx = (int32_t)((uint32_t)c * x_step + (x_step >> 1))
@@ -322,11 +313,11 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
         else
         {
             scale_plane_downscale(y, w, h, w,
-                                 ps.scale_y, ps.dst_w, ps.dst_h);
+                                  ps.scale_y, ps.dst_w, ps.dst_h);
             scale_plane_downscale(cb, w / 2, h / 2, w / 2,
-                                 ps.scale_cb, cdst_w, cdst_h);
+                                  ps.scale_cb, cdst_w, cdst_h);
             scale_plane_downscale(cr, w / 2, h / 2, w / 2,
-                                 ps.scale_cr, cdst_w, cdst_h);
+                                  ps.scale_cr, cdst_w, cdst_h);
         }
         src[0] = (unsigned char *)ps.scale_y;
         src[1] = (unsigned char *)ps.scale_cb;
@@ -345,14 +336,13 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
 }
 
 /* ------------------------------------------------------------------ */
-/* Blit YUV420 to arbitrary RGB565 buffer                             */
-/* Used for compositing to either framebuffer or DMA staging buffer   */
+/* Blit YUV420 to main LCD framebuffer (no LCD push)                  */
+/* Used for compositing: video + OSD drawn to FB, then lcd_update()   */
 /* ------------------------------------------------------------------ */
 
-static void blit_yuv_to_buf(const uint8_t *y, const uint8_t *cb,
-                             const uint8_t *cr, int stride,
-                             uint16_t *buf, int buf_stride,
-                             int x, int y_pos, int w, int h)
+static void blit_yuv_to_fb(const uint8_t *y, const uint8_t *cb,
+                            const uint8_t *cr, int stride,
+                            int x, int y_pos, int w, int h)
 {
     unsigned char const *yuv_src[3];
     int pairs = h >> 1;
@@ -362,17 +352,19 @@ static void blit_yuv_to_buf(const uint8_t *y, const uint8_t *cb,
     yuv_src[1] = cb;
     yuv_src[2] = cr;
 
-    if (x == 0 && w == buf_stride)
+    lcd_set_viewport(NULL);
+
+    if (x == 0 && w == LCD_WIDTH)
     {
-        /* Fast path: video width == buffer stride, write directly */
-        uint16_t *out = buf + y_pos * buf_stride;
+        /* Fast path: video width == LCD stride, write directly */
+        uint16_t *out = (uint16_t *)FBADDR(0, y_pos);
         while (pairs-- > 0)
         {
             lcd_write_yuv420_lines(yuv_src, out, w, stride);
             yuv_src[0] += stride << 1;
             yuv_src[1] += stride >> 1;
             yuv_src[2] += stride >> 1;
-            out += buf_stride << 1;
+            out += LCD_WIDTH << 1;
         }
     }
     else
@@ -383,8 +375,8 @@ static void blit_yuv_to_buf(const uint8_t *y, const uint8_t *cb,
         while (pairs-- > 0)
         {
             lcd_write_yuv420_lines(yuv_src, line_buf, w, stride);
-            memcpy(buf + row * buf_stride + x, line_buf, w * 2);
-            memcpy(buf + (row + 1) * buf_stride + x, line_buf + w, w * 2);
+            memcpy(FBADDR(x, row), line_buf, w * sizeof(uint16_t));
+            memcpy(FBADDR(x, row + 1), line_buf + w, w * sizeof(uint16_t));
             yuv_src[0] += stride << 1;
             yuv_src[1] += stride >> 1;
             yuv_src[2] += stride >> 1;
@@ -393,10 +385,9 @@ static void blit_yuv_to_buf(const uint8_t *y, const uint8_t *cb,
     }
 }
 
-/* Scale + blit to a caller-provided buffer (dblbuf or framebuffer) */
-static void scale_and_blit_to(const uint8_t *y, const uint8_t *cb,
-                               const uint8_t *cr, int w, int h,
-                               uint16_t *buf, int buf_stride)
+/* Like scale_and_blit() but writes to framebuffer for compositing */
+static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
+                               const uint8_t *cr, int w, int h)
 {
     if (ps.need_scale)
     {
@@ -420,24 +411,15 @@ static void scale_and_blit_to(const uint8_t *y, const uint8_t *cb,
             scale_plane_downscale(cr, w / 2, h / 2, w / 2,
                                   ps.scale_cr, cdst_w, cdst_h);
         }
-        blit_yuv_to_buf(ps.scale_y, ps.scale_cb, ps.scale_cr,
-                         ps.dst_w, buf, buf_stride,
-                         ps.disp_x, ps.disp_y, ps.dst_w, ps.dst_h);
+        blit_yuv_to_fb(ps.scale_y, ps.scale_cb, ps.scale_cr,
+                        ps.dst_w,
+                        ps.disp_x, ps.disp_y, ps.dst_w, ps.dst_h);
     }
     else
     {
-        blit_yuv_to_buf(y, cb, cr, w, buf, buf_stride,
-                         ps.disp_x, ps.disp_y, ps.disp_w, ps.disp_h);
+        blit_yuv_to_fb(y, cb, cr, w,
+                        ps.disp_x, ps.disp_y, ps.disp_w, ps.disp_h);
     }
-}
-
-/* Scale + blit to framebuffer (paused/fallback path) */
-static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
-                               const uint8_t *cr, int w, int h)
-{
-    lcd_set_viewport(NULL);
-    scale_and_blit_to(y, cb, cr, w, h,
-                      (uint16_t *)FBADDR(0, 0), LCD_WIDTH);
 }
 
 /* ------------------------------------------------------------------ */
@@ -517,10 +499,7 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                if (ps.dma_buf)
-                    scale_and_blit_to(y, cb, cr, w, h,
-                                      ps.dma_buf, LCD_WIDTH);
-                else if (ps.osd_visible)
+                if (ps.osd_visible)
                     scale_and_blit_fb(y, cb, cr, w, h);
                 else
                     scale_and_blit(y, cb, cr, w, h);
@@ -1025,89 +1004,21 @@ static void osd_draw(void)
 
     lcd_set_viewport(NULL);
 
-    /* Draw OSD elements to main framebuffer */
+    /* Composite: letterbox + bars + volume all to framebuffer,
+     * then push entire frame to LCD in a single DMA transfer.
+     * Video is already in the framebuffer (from scale_and_blit_fb
+     * or blit_last_frame_fb). */
+    clear_letterbox_bars(false);
+
     if (title_vis > 0)
         draw_title_bar(title_y);
     if (trans_vis > 0)
         draw_transport_bar(trans_y);
+
     if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
         draw_volume_overlay();
 
-    if (ps.dma_buf)
-    {
-        /* Fast path: video already in dma_buf from decode.
-         * Copy ONLY bar/letterbox regions from framebuffer (~28KB). */
-        int top_h = title_vis;
-        int bot_start = trans_y;
-
-        /* Extend to cover letterbox if needed */
-        if (ps.disp_y > top_h)
-            top_h = ps.disp_y;
-        if (ps.disp_y + ps.disp_h < bot_start)
-            bot_start = ps.disp_y + ps.disp_h;
-
-        /* Clear letterbox areas in dblbuf (before bar copy) */
-        if (ps.disp_y > 0)
-        {
-            memset(ps.dma_buf, 0,
-                   ps.disp_y * LCD_WIDTH * sizeof(uint16_t));
-            memset(ps.dma_buf + (ps.disp_y + ps.disp_h) * LCD_WIDTH, 0,
-                   (LCD_HEIGHT - ps.disp_y - ps.disp_h)
-                   * LCD_WIDTH * sizeof(uint16_t));
-        }
-        if (ps.disp_x > 0)
-        {
-            int right_x = ps.disp_x + ps.disp_w;
-            int r;
-            for (r = ps.disp_y; r < ps.disp_y + ps.disp_h; r++)
-            {
-                memset(ps.dma_buf + r * LCD_WIDTH, 0,
-                       ps.disp_x * sizeof(uint16_t));
-                memset(ps.dma_buf + r * LCD_WIDTH + right_x, 0,
-                       (LCD_WIDTH - right_x) * sizeof(uint16_t));
-            }
-        }
-
-        /* Copy top region (title bar + letterbox above video) */
-        if (top_h > 0)
-        {
-            memcpy(ps.dma_buf, FBADDR(0, 0),
-                   top_h * LCD_WIDTH * sizeof(uint16_t));
-            /* Clear any gap between title bar bottom and video top */
-            if (title_vis < top_h && title_vis > 0)
-                memset(ps.dma_buf + title_vis * LCD_WIDTH, 0,
-                       (top_h - title_vis) * LCD_WIDTH * sizeof(uint16_t));
-        }
-
-        /* Copy bottom region (transport bar + letterbox below video) */
-        if (bot_start < LCD_HEIGHT)
-            memcpy(ps.dma_buf + bot_start * LCD_WIDTH,
-                   FBADDR(0, bot_start),
-                   (LCD_HEIGHT - bot_start) * LCD_WIDTH * sizeof(uint16_t));
-
-        /* Copy volume overlay region if active */
-        if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
-        {
-            int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
-            int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
-            int box_x = (LCD_WIDTH - box_w) / 2;
-            int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
-            int r;
-            for (r = 0; r < box_h; r++)
-                memcpy(ps.dma_buf + (box_y + r) * LCD_WIDTH + box_x,
-                       FBADDR(box_x, box_y + r),
-                       box_w * sizeof(uint16_t));
-        }
-
-        lcd_end_frame();
-        ps.dma_buf = NULL;
-    }
-    else
-    {
-        /* Fallback: full framebuffer compositing (paused states) */
-        clear_letterbox_bars(false);
-        lcd_update();
-    }
+    lcd_update();
 
     /* Advance animation */
     if (ps.osd_anim_step > 0)
@@ -1373,11 +1284,6 @@ static void button_loop(const char *filepath)
 
         if (ps.state == PB_PLAYING)
         {
-            /* Acquire DMA buffer before decode if OSD visible.
-             * decode_one_frame will write YUV->RGB directly to dblbuf. */
-            if (ps.osd_visible && !ps.dma_buf)
-                ps.dma_buf = lcd_begin_frame();
-
             /* Decode and display one frame */
             int ret = decode_one_frame(true);
 
@@ -1408,34 +1314,15 @@ static void button_loop(const char *filepath)
                 no_frame_count = 0;
             }
 
-            /* OSD overlay: video is in dma_buf (direct path) or needs
-             * framebuffer fallback. osd_draw handles both via ps.dma_buf. */
+            /* OSD overlay: video is already in framebuffer (from
+             * scale_and_blit_fb in decode_one_frame). Draw bars on top
+             * and push entire composited frame via lcd_update(). */
             if (ps.osd_visible)
             {
-                if (ret != 1 && ps.dma_buf)
-                {
-                    /* No frame decoded (EOF/SPS). Render last frame to dblbuf. */
-                    const uint8_t *fy, *fcb, *fcr;
-                    int fw, fh;
-                    vpu_h264_get_frame(ps.decoder, &fy, &fcb, &fcr, &fw, &fh);
-                    if (fy && fw > 0 && fh > 0)
-                        scale_and_blit_to(fy, fcb, fcr, fw, fh,
-                                          ps.dma_buf, LCD_WIDTH);
-                }
-                else if (ret != 1 && !ps.dma_buf)
-                {
+                if (ret != 1)
                     blit_last_frame_fb();
-                }
                 osd_draw();
                 ps.need_osd_redraw = false;
-            }
-            else if (ps.dma_buf)
-            {
-                /* OSD was hidden between lcd_begin_frame and here.
-                 * Release the DMA buffer without using it — video
-                 * wasn't rendered to it (decode used lcd_blit_yuv). */
-                lcd_end_frame();
-                ps.dma_buf = NULL;
             }
 
             /* Accurate frame pacing using absolute tick targets.
@@ -1468,7 +1355,7 @@ static void button_loop(const char *filepath)
                 if (wait < 0) wait = 0;
                 if (wait > HZ) wait = HZ;
 
-                btn = button_get_w_tmo(wait > 0 ? wait : 0);
+                btn = button_get_w_tmo(wait > 0 ? wait : 1);
             }
         }
         else
@@ -1791,12 +1678,10 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Compute display rect with aspect-preserving downscale.
-     * Use display dimensions from tkhd (PAR-adjusted) for aspect ratio,
-     * but coded dimensions (video_w/h) for VPU output stride. */
+    /* Compute display rect with aspect-preserving downscale. */
     {
-        uint16_t ar_w = demux.display_width ? demux.display_width : ps.video_w;
-        uint16_t ar_h = demux.display_height ? demux.display_height : ps.video_h;
+        uint16_t ar_w = ps.video_w;
+        uint16_t ar_h = ps.video_h;
 
         if (ar_w > LCD_WIDTH || ar_h > LCD_HEIGHT)
         {

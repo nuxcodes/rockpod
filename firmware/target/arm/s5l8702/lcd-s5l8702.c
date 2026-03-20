@@ -467,33 +467,6 @@ void lcd_blit_yuv(unsigned char * const src[3],
     mutex_unlock(&lcd_mutex);
 }
 
-/* Acquire DMA buffer for direct rendering.
- * Waits for any in-progress DMA, sets up panel region,
- * returns pointer to lcd_dblbuf for direct pixel writes.
- * Caller MUST call lcd_end_frame() when done.
- * No lcd_update/lcd_update_rect/lcd_blit_yuv calls allowed
- * between lcd_begin_frame() and lcd_end_frame(). */
-uint16_t *lcd_begin_frame(void)
-{
-    mutex_lock(&lcd_mutex);
-    if (!lcd_ispowered)
-    {
-        mutex_unlock(&lcd_mutex);
-        return NULL;
-    }
-    displaylcd_wait_dma();
-    displaylcd_setup(0, 0, LCD_WIDTH, LCD_HEIGHT);
-    return lcd_dblbuf[0];
-}
-
-/* Commit DMA buffer to LCD and release mutex. */
-void lcd_end_frame(void)
-{
-    commit_dcache();
-    displaylcd_dma(LCD_WIDTH * LCD_HEIGHT);
-    mutex_unlock(&lcd_mutex);
-}
-
 
 /*** hardware configuration ***/
 
