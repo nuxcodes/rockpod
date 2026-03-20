@@ -322,7 +322,8 @@ static void build_huff_lut(struct huff_table *ht)
  * 5. Bitstream reader
  * ================================================================ */
 
-/* Fill bit buffer, handling JPEG byte stuffing (FF 00) */
+/* Fill bit buffer, handling JPEG byte stuffing (FF 00).
+ * Stops at RST/EOI markers — caller handles restart logic. */
 static void fill_bits(struct jpeg_hw_state *j)
 {
     while (j->bits_left <= 24 && j->pos < j->data_len)
@@ -335,14 +336,9 @@ static void fill_bits(struct jpeg_hw_state *j)
             {
                 j->pos++; /* stuffed zero — keep 0xFF */
             }
-            else if (next >= 0xD0 && next <= 0xD7)
-            {
-                j->pos++; /* restart marker — skip */
-                continue;
-            }
             else
             {
-                /* Other marker — stop feeding */
+                /* Any marker (RST, EOI, etc) — back up and stop */
                 j->pos--;
                 return;
             }

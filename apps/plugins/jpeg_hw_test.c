@@ -304,8 +304,7 @@ static void tj_fill_bits(struct test_jpeg *j)
         {
             uint8_t next = (j->pos < j->len) ? j->data[j->pos] : 0;
             if (next == 0x00) { j->pos++; }
-            else if (next >= 0xD0 && next <= 0xD7) { j->pos++; continue; }
-            else { j->pos--; return; }
+            else { j->pos--; return; } /* stop at any marker */
         }
         j->bitbuf = (j->bitbuf << 8) | b;
         j->bits_left += 8;
