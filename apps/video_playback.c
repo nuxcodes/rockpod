@@ -461,12 +461,14 @@ static void seek_to_time(uint32_t target_ms)
     if (ps.demux->num_stss == 0)
         key = sample; /* no stss = all sync */
 
-    /* Decode from keyframe to target — display only the last frame */
+    /* Decode from keyframe to target — show every 8th frame for
+     * visual fast-forward feedback during long seeks */
     ps.cur_sample = key;
     while (ps.cur_sample <= sample)
     {
         bool is_last = (ps.cur_sample >= sample);
-        int ret = decode_one_frame(is_last);
+        bool show = is_last || ((ps.cur_sample - key) % 8 == 0);
+        int ret = decode_one_frame(show);
         if (ret < 0) break;
     }
 
@@ -848,19 +850,18 @@ static void osd_draw(void)
 
     lcd_set_viewport(NULL);
 
-    /* Draw bars to framebuffer, push only visible regions to LCD.
+    /* Draw both bars to framebuffer first, then push both to LCD.
+     * Minimizes the gap between video DMA and OSD DMA (~400us vs ~800us).
      * lcd_update() would overwrite video with stale framebuffer data. */
     if (title_vis > 0)
-    {
         draw_title_bar(title_y);
-        lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
-    }
-
     if (trans_vis > 0)
-    {
         draw_transport_bar(trans_y);
+
+    if (title_vis > 0)
+        lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
+    if (trans_vis > 0)
         lcd_update_rect(0, trans_y, LCD_WIDTH, trans_vis);
-    }
 
     if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
     {
@@ -1179,8 +1180,8 @@ static void button_loop(const char *filepath)
         }
         else
         {
-            /* Paused or stopped — fast poll during animation */
-            btn = button_get_w_tmo(ps.osd_anim_step > 0 ? 1 : HZ / 10);
+            /* Paused or stopped — ~180ms animation, 10Hz idle */
+            btn = button_get_w_tmo(ps.osd_anim_step > 0 ? 3 : HZ / 10);
         }
 
         /* Auto-hide OSD (guard: don't re-trigger during fly-out) */
@@ -1193,8 +1194,8 @@ static void button_loop(const char *filepath)
         {
             ps.vol_show_until = 0;
             blit_last_frame();
-            if (ps.osd_visible)
-                ps.need_osd_redraw = true;
+            if (ps.osd_visible && ps.osd_anim_step == 0)
+                osd_draw();
         }
 
         /* Handle buttons */
