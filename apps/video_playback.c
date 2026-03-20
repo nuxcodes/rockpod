@@ -67,6 +67,8 @@
 #define VOL_BAR_H        6
 #define VOL_BOX_PAD      10
 #define VOL_ICON_W       14
+#define VOL_FADE_TICKS   (HZ / 2)
+#define OSD_ANIM_STEPS   6
 
 /* Resume file */
 #define RESUME_PATH      ROCKBOX_DIR "/video_resume.dat"
@@ -543,10 +545,24 @@ static void draw_progress_bar(int x, int y, int w,
 }
 
 /* ------------------------------------------------------------------ */
-/* Volume overlay (centered bar, independent of OSD)                  */
+/* Color dimming for fade effects                                     */
 /* ------------------------------------------------------------------ */
 
-static void draw_speaker_icon(int x, int y, int h)
+static unsigned dim_color(unsigned rgb565, int alpha)
+{
+    /* alpha: 0 = black, 15 = fully opaque (identity) */
+    unsigned a;
+    if (alpha <= 0) return 0;
+    a = (unsigned)(alpha + 1);
+    return (((rgb565 & 0xF81F) * a >> 4) & 0xF81F)
+         | (((rgb565 & 0x07E0) * a >> 4) & 0x07E0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Volume overlay (lower third, independent of OSD)                   */
+/* ------------------------------------------------------------------ */
+
+static void draw_speaker_icon(int x, int y, int h, unsigned color)
 {
     int body_w = 3;
     int body_h = h * 2 / 5;
@@ -561,7 +577,7 @@ static void draw_speaker_icon(int x, int y, int h)
     if (cone_w < 3) cone_w = 3;
     if (half_h <= half_bh) half_bh = half_h - 1;
 
-    lcd_set_foreground(LCD_WHITE);
+    lcd_set_foreground(color);
 
     lcd_fillrect(x, y + body_top, body_w, body_h);
 
@@ -586,12 +602,13 @@ static void draw_volume_overlay(void)
     int vol = global_status.volume;
     int vol_min = sound_min(SOUND_VOLUME);
     int vol_max = sound_max(SOUND_VOLUME);
-    int fill_w;
+    int fill_w, alpha;
+    long remaining;
     int icon_space = VOL_ICON_W + 6;
     int box_w = icon_space + VOL_BAR_W + 2 * VOL_BOX_PAD;
     int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
     int box_x = (LCD_WIDTH - box_w) / 2;
-    int box_y = (LCD_HEIGHT - box_h) / 2;
+    int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
     int bar_x = box_x + VOL_BOX_PAD + icon_space;
     int bar_y = box_y + (box_h - VOL_BAR_H) / 2;
 
@@ -600,25 +617,39 @@ static void draw_volume_overlay(void)
     if (fill_w < 0) fill_w = 0;
     if (fill_w > VOL_BAR_W) fill_w = VOL_BAR_W;
 
+    /* Fade-out during last 500ms */
+    remaining = ps.vol_show_until - current_tick;
+    alpha = 15;
+    if (remaining < VOL_FADE_TICKS)
+    {
+        alpha = (int)(remaining * 15 / VOL_FADE_TICKS);
+        if (alpha < 1) alpha = 1;
+    }
+
     lcd_set_drawmode(DRMODE_SOLID);
 
+    /* Black box background (stays black during fade) */
     lcd_set_foreground(LCD_BLACK);
     lcd_set_background(LCD_BLACK);
     lcd_fillrect(box_x, box_y, box_w, box_h);
 
-    lcd_set_foreground(LCD_DARKGRAY);
+    /* Border */
+    lcd_set_foreground(dim_color(LCD_DARKGRAY, alpha));
     lcd_drawrect(box_x, box_y, box_w, box_h);
 
+    /* Speaker icon */
     draw_speaker_icon(box_x + VOL_BOX_PAD,
                       box_y + (box_h - VOL_ICON_W) / 2,
-                      VOL_ICON_W);
+                      VOL_ICON_W, dim_color(LCD_WHITE, alpha));
 
-    lcd_set_foreground(LCD_DARKGRAY);
+    /* Track background */
+    lcd_set_foreground(dim_color(LCD_DARKGRAY, alpha));
     lcd_fillrect(bar_x, bar_y, VOL_BAR_W, VOL_BAR_H);
 
+    /* Filled portion */
     if (fill_w > 0)
     {
-        lcd_set_foreground(LCD_WHITE);
+        lcd_set_foreground(dim_color(LCD_WHITE, alpha));
         lcd_fillrect(bar_x, bar_y, fill_w, VOL_BAR_H);
     }
 }
@@ -627,7 +658,7 @@ static void draw_volume_overlay(void)
 /* OSD: title bar (top)                                               */
 /* ------------------------------------------------------------------ */
 
-static void draw_title_bar(void)
+static void draw_title_bar(int y_off)
 {
     int tw, th, ty;
     int max_tw = LCD_WIDTH - 2 * (OSD_PAD + 2);
@@ -636,12 +667,12 @@ static void draw_title_bar(void)
     lcd_set_drawmode(DRMODE_SOLID);
     lcd_set_foreground(LCD_BLACK);
     lcd_set_background(LCD_BLACK);
-    lcd_fillrect(0, 0, LCD_WIDTH, ps.title_bar_h);
+    lcd_fillrect(0, y_off, LCD_WIDTH, ps.title_bar_h);
 
     lcd_set_foreground(LCD_WHITE);
     lcd_getstringsize(ps.title, &tw, &th);
 
-    ty = (ps.title_bar_h - 1 - th) / 2;
+    ty = (ps.title_bar_h - 1 - th) / 2 + y_off;
     if (ty < 0) ty = 0;
 
     if (tw > max_tw)
@@ -668,18 +699,18 @@ static void draw_title_bar(void)
     }
 
     lcd_set_foreground(LCD_DARKGRAY);
-    lcd_hline(0, LCD_WIDTH - 1, ps.title_bar_h - 1);
+    lcd_hline(0, LCD_WIDTH - 1, ps.title_bar_h - 1 + y_off);
 }
 
 /* ------------------------------------------------------------------ */
 /* OSD: transport bar (bottom)                                        */
 /* ------------------------------------------------------------------ */
 
-static void draw_transport_bar(void)
+static void draw_transport_bar(int y_off)
 {
     char e_str[16], r_str[16];
     int ew, rw, th;
-    int bar_top = LCD_HEIGHT - ps.transport_bar_h;
+    int bar_top = y_off;
     int icon_x, icon_y, x_cur;
     int text_y, prog_x, prog_w, prog_y;
     int remain_x;
@@ -732,10 +763,35 @@ static void draw_transport_bar(void)
 /* OSD: show / hide / toggle                                          */
 /* ------------------------------------------------------------------ */
 
+static void osd_animate(bool show)
+{
+    int i;
+
+    for (i = 1; i <= OSD_ANIM_STEPS; i++)
+    {
+        int step = show ? i : (OSD_ANIM_STEPS - i);
+        int remain = OSD_ANIM_STEPS - step;
+        int pct = 100 - (remain * remain * 100)
+                        / (OSD_ANIM_STEPS * OSD_ANIM_STEPS);
+
+        int title_y = -ps.title_bar_h + (ps.title_bar_h * pct) / 100;
+        int trans_y = LCD_HEIGHT - (ps.transport_bar_h * pct) / 100;
+
+        blit_last_frame();
+        clear_letterbox_bars();
+        lcd_set_viewport(NULL);
+        draw_title_bar(title_y);
+        draw_transport_bar(trans_y);
+        lcd_update();
+        sleep(1);
+    }
+}
+
 static void osd_show(void)
 {
     if (!ps.osd_visible)
     {
+        osd_animate(true);
         ps.osd_visible = true;
         ps.need_osd_redraw = true;
     }
@@ -746,6 +802,7 @@ static void osd_hide(void)
 {
     if (ps.osd_visible)
     {
+        osd_animate(false);
         ps.osd_visible = false;
         ps.need_full_redraw = true;
     }
@@ -767,8 +824,8 @@ static void osd_draw(void)
 {
     lcd_set_viewport(NULL);
 
-    draw_title_bar();
-    draw_transport_bar();
+    draw_title_bar(0);
+    draw_transport_bar(LCD_HEIGHT - ps.transport_bar_h);
 
     /* Update only the OSD bar regions — lcd_update() would overwrite
      * the YUV-blitted video with stale framebuffer data */
@@ -780,9 +837,9 @@ static void osd_draw(void)
     {
         int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
         int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
+        int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
         draw_volume_overlay();
-        lcd_update_rect((LCD_WIDTH - box_w) / 2, (LCD_HEIGHT - box_h) / 2,
-                        box_w, box_h);
+        lcd_update_rect((LCD_WIDTH - box_w) / 2, box_y, box_w, box_h);
     }
 }
 
@@ -1188,9 +1245,9 @@ static void button_loop(const char *filepath)
             /* Volume overlay without OSD — draw independently */
             int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
             int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
+            int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
             draw_volume_overlay();
-            lcd_update_rect((LCD_WIDTH - box_w) / 2,
-                            (LCD_HEIGHT - box_h) / 2, box_w, box_h);
+            lcd_update_rect((LCD_WIDTH - box_w) / 2, box_y, box_w, box_h);
         }
     }
 
