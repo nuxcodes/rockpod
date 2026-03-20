@@ -230,8 +230,9 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
 {
     uint32_t x_step, y_step;
     int r, c;
-    uint16_t xtab[LCD_WIDTH];
-    uint8_t  xftab[LCD_WIDTH];
+    int16_t x0tab[LCD_WIDTH];
+    int16_t x1tab[LCD_WIDTH];
+    uint8_t xftab[LCD_WIDTH];
 
     if (dst_w < 1 || dst_h < 1 || src_w < 1 || src_h < 1)
         return;
@@ -249,7 +250,8 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
         x0 = (uint32_t)sx >> 16;
         x1 = x0 + 1;
         if (x1 >= src_w) x1 = src_w - 1;
-        xtab[c] = (uint16_t)(x0 | (x1 << 8));
+        x0tab[c] = (int16_t)x0;
+        x1tab[c] = (int16_t)x1;
         xftab[c] = (uint8_t)(((uint32_t)sx >> 8) & 0xFF);
     }
 
@@ -275,8 +277,8 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
         for (c = 0; c < dst_w; c++)
         {
             uint32_t xf = xftab[c];
-            int x0 = xtab[c] & 0xFF;
-            int x1 = xtab[c] >> 8;
+            int x0 = x0tab[c];
+            int x1 = x1tab[c];
             uint32_t ab, de;
 
             ab = row0[x0] * (256 - xf) + row0[x1] * xf;
@@ -1355,7 +1357,7 @@ static void button_loop(const char *filepath)
                 if (wait < 0) wait = 0;
                 if (wait > HZ) wait = HZ;
 
-                btn = button_get_w_tmo(wait > 0 ? wait : 1);
+                btn = button_get_w_tmo(wait > 0 ? wait : 0);
             }
         }
         else
@@ -1683,10 +1685,12 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Compute display rect with aspect-preserving downscale. */
+    /* Compute display rect with aspect-preserving downscale.
+     * Use display dimensions from tkhd (PAR-adjusted) for aspect ratio,
+     * but coded dimensions (video_w/h) for VPU output stride. */
     {
-        uint16_t ar_w = ps.video_w;
-        uint16_t ar_h = ps.video_h;
+        uint16_t ar_w = demux.display_width ? demux.display_width : ps.video_w;
+        uint16_t ar_h = demux.display_height ? demux.display_height : ps.video_h;
 
         if (ar_w > LCD_WIDTH || ar_h > LCD_HEIGHT)
         {
