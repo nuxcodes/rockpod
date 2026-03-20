@@ -100,7 +100,7 @@ static void vpua_power_on(void)
     REG32(VDEC_SUB  + 0x10) = 0x182;
     REG32(VDEC_DMA + 0x110) = 0x800;
     REG32(VDEC_XFORM + 0x804) = 0x40;
-    REG32(VDEC_DEBLK + 0x10) = 0x14; /* bit 2: disable deblock for JPEG */
+    REG32(VDEC_DEBLK + 0x10) = 0x10;
     REG32(VDEC_SUB  + 0x6C) = 0x10001;
 }
 
@@ -782,9 +782,24 @@ static void ycbcr_to_rgb565_scaled(const uint8_t *fy, const uint8_t *fcb,
             if (sx >= src_w) sx = src_w - 1;
 
             int cw = src_w / 2;
+            int ch = src_h / 2;
             uint8_t yv  = fy[sy * src_w + sx];
-            uint8_t cbv = fcb[(sy / 2) * cw + (sx / 2)];
-            uint8_t crv = fcr[(sy / 2) * cw + (sx / 2)];
+
+            /* Bilinear chroma upsampling (4:2:0 → 4:4:4) */
+            int cx = sx >> 1;
+            int cy = sy >> 1;
+            int fx = sx & 1;
+            int fy2 = sy & 1;
+            int cx1 = (cx + 1 < cw) ? cx + 1 : cx;
+            int cy1 = (cy + 1 < ch) ? cy + 1 : cy;
+            int cbv = (fcb[cy * cw + cx]   * (2 - fx) * (2 - fy2)
+                     + fcb[cy * cw + cx1]  * fx       * (2 - fy2)
+                     + fcb[cy1 * cw + cx]  * (2 - fx) * fy2
+                     + fcb[cy1 * cw + cx1] * fx       * fy2 + 2) >> 2;
+            int crv = (fcr[cy * cw + cx]   * (2 - fx) * (2 - fy2)
+                     + fcr[cy * cw + cx1]  * fx       * (2 - fy2)
+                     + fcr[cy1 * cw + cx]  * (2 - fx) * fy2
+                     + fcr[cy1 * cw + cx1] * fx       * fy2 + 2) >> 2;
 
             int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
             int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)

@@ -106,7 +106,7 @@ static void vpua_power_on(void)
     REG32(VDEC_SUB  + 0x10) = 0x182;
     REG32(VDEC_DMA + 0x110) = 0x800;
     REG32(VDEC_XFORM + 0x804) = 0x40;
-    REG32(VDEC_DEBLK + 0x10)  = 0x14; /* bit 2: disable deblock for JPEG */
+    REG32(VDEC_DEBLK + 0x10)  = 0x10;
     REG32(VDEC_SUB  + 0x6C)   = 0x10001;
 }
 
@@ -906,9 +906,22 @@ decode_done:
                 {
                     int sx = ox * tj.width / dst_w;
                     if (sx >= tj.width) sx = tj.width - 1;
+                    int cw = c_stride;
+                    int ch = tj.height / 2;
                     uint8_t yv  = frame_y[sy * y_stride + sx];
-                    uint8_t cbv = frame_cb[(sy / 2) * c_stride + sx / 2];
-                    uint8_t crv = frame_cr[(sy / 2) * c_stride + sx / 2];
+                    /* Bilinear chroma upsampling */
+                    int cx = sx >> 1, cy = sy >> 1;
+                    int fx = sx & 1, fy2 = sy & 1;
+                    int cx1 = (cx+1 < cw) ? cx+1 : cx;
+                    int cy1 = (cy+1 < ch) ? cy+1 : cy;
+                    int cbv = (frame_cb[cy*cw+cx]  *(2-fx)*(2-fy2)
+                             + frame_cb[cy*cw+cx1] *fx    *(2-fy2)
+                             + frame_cb[cy1*cw+cx] *(2-fx)*fy2
+                             + frame_cb[cy1*cw+cx1]*fx    *fy2 +2)>>2;
+                    int crv = (frame_cr[cy*cw+cx]  *(2-fx)*(2-fy2)
+                             + frame_cr[cy*cw+cx1] *fx    *(2-fy2)
+                             + frame_cr[cy1*cw+cx] *(2-fx)*fy2
+                             + frame_cr[cy1*cw+cx1]*fx    *fy2 +2)>>2;
                     int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
                     int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)
                                       - (((int)crv - 128) * 183 >> 8));
