@@ -675,17 +675,15 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)MIXER_REG(0x008));
 
     /* Step B: Disable MCU LCD controller before ENVID takes over LCD pins.
-     * Apple's PWRCON(0) at boot = 0xfdffffd5: bit 1 SET = LCD clock DISABLED.
-     * Apple's VPP runs with MCU LCD already clock-gated off.
-     * Rockbox re-enables it during lcd_init_device(). We must disable it
-     * before VPP's CLCD drives the shared LCD data pins.
-     *
-     * Verification note: ROM 0xd16a8 AND mask 0x80000007 PRESERVES bit 31
-     * (does NOT clear it). Apple uses clock gating, not LCD_CON bit 31. */
+     * Apple keeps LCD clock gated OFF except when sending commands (ROM
+     * 0x000bf0ec enables temporarily, 0x000c36bc restores = disabled).
+     * Rockbox enables it permanently in lcd_init_device(). We must gate
+     * it off before VPP's CLCD drives the shared LCD data pins.
+     * CLOCKGATE_LCD = 1 → PWRCON(0) bit 1. Set = disabled. */
     while (!(LCD_STATUS & 0x2))
         ;  /* wait for MCU LCD idle */
     vlog("  LCD_CON before=0x%08lx", (unsigned long)LCD_CON);
-    PWRCON(0) |= (1 << 1);  /* disable MCU LCD clock gate (matches Apple's boot state) */
+    PWRCON(0) |= (1 << 1);  /* disable MCU LCD clock gate */
     vlog("  MCU LCD clock disabled (PWRCON bit 1 set)");
 
     /* Step C: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
