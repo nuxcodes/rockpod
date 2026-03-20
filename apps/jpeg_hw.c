@@ -717,7 +717,8 @@ static int decode_scan(struct jpeg_hw_state *j,
                              toggle, 1) < 0)
                 return -1;
             commit_discard_dcache();
-            readback_chroma(active, frame_cb, frame_cr,
+            /* VPU-A outputs block0=Cr, block1=Cb (reversed) */
+            readback_chroma(active, frame_cr, frame_cb,
                             mb_col, mb_row, c_stride);
             toggle ^= 1;
 

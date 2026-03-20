@@ -829,7 +829,8 @@ enum plugin_status plugin_start(const void *parameter)
                                      toggle, 1) < 0)
                         timeouts++;
                     rb->commit_discard_dcache();
-                    readback_chroma(active, frame_cb, frame_cr,
+                    /* VPU-A outputs block0=Cr, block1=Cb */
+                    readback_chroma(active, frame_cr, frame_cb,
                                     mb_col, mb_row, c_stride);
                     toggle ^= 1;
 
