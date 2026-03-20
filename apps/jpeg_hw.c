@@ -687,7 +687,8 @@ static int decode_scan(struct jpeg_hw_state *j,
             /* Sub-call 1: Y-top (Y0, Y1) */
             active = (toggle == 0) ? small_a : small_b;
             pack_coeff_pair(coeff_buf, blocks[0], blocks[1]);
-            memset(active, 0, SMALL_BUF_SIZE);
+            memset(small_a, 0, SMALL_BUF_SIZE);
+            memset(small_b, 0, SMALL_BUF_SIZE);
             commit_dcache();
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
@@ -699,7 +700,8 @@ static int decode_scan(struct jpeg_hw_state *j,
             /* Sub-call 2: Y-bottom (Y2, Y3) */
             active = (toggle == 0) ? small_a : small_b;
             pack_coeff_pair(coeff_buf, blocks[2], blocks[3]);
-            memset(active, 0, SMALL_BUF_SIZE);
+            memset(small_a, 0, SMALL_BUF_SIZE);
+            memset(small_b, 0, SMALL_BUF_SIZE);
             commit_dcache();
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
@@ -711,7 +713,8 @@ static int decode_scan(struct jpeg_hw_state *j,
             /* Sub-call 3: Chroma (Cb, Cr) */
             active = (toggle == 0) ? small_a : small_b;
             pack_coeff_pair(coeff_buf, blocks[4], blocks[5]);
-            memset(active, 0, SMALL_BUF_SIZE);
+            memset(small_a, 0, SMALL_BUF_SIZE);
+            memset(small_b, 0, SMALL_BUF_SIZE);
             commit_dcache();
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 1) < 0)
@@ -782,24 +785,9 @@ static void ycbcr_to_rgb565_scaled(const uint8_t *fy, const uint8_t *fcb,
             if (sx >= src_w) sx = src_w - 1;
 
             int cw = src_w / 2;
-            int ch = src_h / 2;
             uint8_t yv  = fy[sy * src_w + sx];
-
-            /* Bilinear chroma upsampling (4:2:0 → 4:4:4) */
-            int cx = sx >> 1;
-            int cy = sy >> 1;
-            int fx = sx & 1;
-            int fy2 = sy & 1;
-            int cx1 = (cx + 1 < cw) ? cx + 1 : cx;
-            int cy1 = (cy + 1 < ch) ? cy + 1 : cy;
-            int cbv = (fcb[cy * cw + cx]   * (2 - fx) * (2 - fy2)
-                     + fcb[cy * cw + cx1]  * fx       * (2 - fy2)
-                     + fcb[cy1 * cw + cx]  * (2 - fx) * fy2
-                     + fcb[cy1 * cw + cx1] * fx       * fy2 + 2) >> 2;
-            int crv = (fcr[cy * cw + cx]   * (2 - fx) * (2 - fy2)
-                     + fcr[cy * cw + cx1]  * fx       * (2 - fy2)
-                     + fcr[cy1 * cw + cx]  * (2 - fx) * fy2
-                     + fcr[cy1 * cw + cx1] * fx       * fy2 + 2) >> 2;
+            uint8_t cbv = fcb[(sy / 2) * cw + (sx / 2)];
+            uint8_t crv = fcr[(sy / 2) * cw + (sx / 2)];
 
             int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
             int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)

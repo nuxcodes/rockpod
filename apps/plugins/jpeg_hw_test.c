@@ -766,7 +766,8 @@ enum plugin_status plugin_start(const void *parameter)
                         lflush();
                     }
 
-                    rb->memset(active, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_a, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_b, 0, SMALL_BUF_SIZE);
                     rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
@@ -807,7 +808,8 @@ enum plugin_status plugin_start(const void *parameter)
                     /* Y-bottom */
                     active = (toggle == 0) ? small_a : small_b;
                     pack_coeff_pair(coeff_buf, blocks[2], blocks[3]);
-                    rb->memset(active, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_a, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_b, 0, SMALL_BUF_SIZE);
                     rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
@@ -821,7 +823,8 @@ enum plugin_status plugin_start(const void *parameter)
                     /* Chroma */
                     active = (toggle == 0) ? small_a : small_b;
                     pack_coeff_pair(coeff_buf, blocks[4], blocks[5]);
-                    rb->memset(active, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_a, 0, SMALL_BUF_SIZE);
+                    rb->memset(small_b, 0, SMALL_BUF_SIZE);
                     rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
@@ -906,22 +909,9 @@ decode_done:
                 {
                     int sx = ox * tj.width / dst_w;
                     if (sx >= tj.width) sx = tj.width - 1;
-                    int cw = c_stride;
-                    int ch = tj.height / 2;
                     uint8_t yv  = frame_y[sy * y_stride + sx];
-                    /* Bilinear chroma upsampling */
-                    int cx = sx >> 1, cy = sy >> 1;
-                    int fx = sx & 1, fy2 = sy & 1;
-                    int cx1 = (cx+1 < cw) ? cx+1 : cx;
-                    int cy1 = (cy+1 < ch) ? cy+1 : cy;
-                    int cbv = (frame_cb[cy*cw+cx]  *(2-fx)*(2-fy2)
-                             + frame_cb[cy*cw+cx1] *fx    *(2-fy2)
-                             + frame_cb[cy1*cw+cx] *(2-fx)*fy2
-                             + frame_cb[cy1*cw+cx1]*fx    *fy2 +2)>>2;
-                    int crv = (frame_cr[cy*cw+cx]  *(2-fx)*(2-fy2)
-                             + frame_cr[cy*cw+cx1] *fx    *(2-fy2)
-                             + frame_cr[cy1*cw+cx] *(2-fx)*fy2
-                             + frame_cr[cy1*cw+cx1]*fx    *fy2 +2)>>2;
+                    uint8_t cbv = frame_cb[(sy / 2) * c_stride + sx / 2];
+                    uint8_t crv = frame_cr[(sy / 2) * c_stride + sx / 2];
                     int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
                     int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)
                                       - (((int)crv - 128) * 183 >> 8));
