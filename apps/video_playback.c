@@ -53,6 +53,13 @@
 #include <string.h>
 #include <stdio.h>
 
+/* ARM assembly YUV420->RGB565 converter (writes 2 lines to contiguous outbuf).
+ * Global symbol from firmware/target/arm/s5l8702/lcd-asm-s5l8702.S. */
+extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
+                                   uint16_t *outbuf,
+                                   int width,
+                                   int stride);
+
 /* ------------------------------------------------------------------ */
 /* Constants                                                          */
 /* ------------------------------------------------------------------ */
@@ -252,7 +259,7 @@ static void scale_plane_bilinear(const uint8_t *src, int src_w, int src_h,
 /* ------------------------------------------------------------------ */
 
 static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
-                            const uint8_t *cr, int w)
+                            const uint8_t *cr, int w, int h)
 {
     unsigned char *src[3];
 
@@ -263,11 +270,14 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
         if (cdst_w < 2) cdst_w = 2;
         if (cdst_h < 2) cdst_h = 2;
 
-        scale_plane_bilinear(y, ps.video_w, ps.video_h, w,
+        /* Use VPU output dimensions (w, h) not MP4 container dimensions
+         * (ps.video_w/h). Container may have wrong metadata — the SPS
+         * in the bitstream is authoritative. */
+        scale_plane_bilinear(y, w, h, w,
                              ps.scale_y, ps.dst_w, ps.dst_h);
-        scale_plane_bilinear(cb, ps.video_w / 2, ps.video_h / 2, w / 2,
+        scale_plane_bilinear(cb, w / 2, h / 2, w / 2,
                              ps.scale_cb, cdst_w, cdst_h);
-        scale_plane_bilinear(cr, ps.video_w / 2, ps.video_h / 2, w / 2,
+        scale_plane_bilinear(cr, w / 2, h / 2, w / 2,
                              ps.scale_cr, cdst_w, cdst_h);
         src[0] = (unsigned char *)ps.scale_y;
         src[1] = (unsigned char *)ps.scale_cb;
@@ -286,29 +296,108 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
 }
 
 /* ------------------------------------------------------------------ */
+/* Blit YUV420 to main LCD framebuffer (no LCD push)                  */
+/* Used for compositing: video + OSD drawn to FB, then lcd_update()   */
+/* ------------------------------------------------------------------ */
+
+static void blit_yuv_to_fb(const uint8_t *y, const uint8_t *cb,
+                            const uint8_t *cr, int stride,
+                            int x, int y_pos, int w, int h)
+{
+    unsigned char const *yuv_src[3];
+    int pairs = h >> 1;
+
+    w = (w + 1) & ~1;
+    yuv_src[0] = y;
+    yuv_src[1] = cb;
+    yuv_src[2] = cr;
+
+    lcd_set_viewport(NULL);
+
+    if (x == 0 && w == LCD_WIDTH)
+    {
+        /* Fast path: video width == LCD stride, write directly */
+        uint16_t *out = (uint16_t *)FBADDR(0, y_pos);
+        while (pairs-- > 0)
+        {
+            lcd_write_yuv420_lines(yuv_src, out, w, stride);
+            yuv_src[0] += stride << 1;
+            yuv_src[1] += stride >> 1;
+            yuv_src[2] += stride >> 1;
+            out += LCD_WIDTH << 1;
+        }
+    }
+    else
+    {
+        /* Slow path: temp buffer for stride mismatch */
+        uint16_t line_buf[LCD_WIDTH * 2];
+        int row = y_pos;
+        while (pairs-- > 0)
+        {
+            lcd_write_yuv420_lines(yuv_src, line_buf, w, stride);
+            memcpy(FBADDR(x, row), line_buf, w * sizeof(uint16_t));
+            memcpy(FBADDR(x, row + 1), line_buf + w, w * sizeof(uint16_t));
+            yuv_src[0] += stride << 1;
+            yuv_src[1] += stride >> 1;
+            yuv_src[2] += stride >> 1;
+            row += 2;
+        }
+    }
+}
+
+/* Like scale_and_blit() but writes to framebuffer for compositing */
+static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
+                               const uint8_t *cr, int w, int h)
+{
+    if (ps.need_scale)
+    {
+        int cdst_w = ps.dst_w / 2;
+        int cdst_h = ps.dst_h / 2;
+        if (cdst_w < 2) cdst_w = 2;
+        if (cdst_h < 2) cdst_h = 2;
+
+        scale_plane_bilinear(y, w, h, w,
+                             ps.scale_y, ps.dst_w, ps.dst_h);
+        scale_plane_bilinear(cb, w / 2, h / 2, w / 2,
+                             ps.scale_cb, cdst_w, cdst_h);
+        scale_plane_bilinear(cr, w / 2, h / 2, w / 2,
+                             ps.scale_cr, cdst_w, cdst_h);
+        blit_yuv_to_fb(ps.scale_y, ps.scale_cb, ps.scale_cr,
+                        ps.dst_w,
+                        ps.disp_x, ps.disp_y, ps.dst_w, ps.dst_h);
+    }
+    else
+    {
+        blit_yuv_to_fb(y, cb, cr, w,
+                        ps.disp_x, ps.disp_y, ps.disp_w, ps.disp_h);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Clear letterbox bars (black areas outside video rect)              */
 /* ------------------------------------------------------------------ */
 
-static void clear_letterbox_bars(void)
+static void clear_letterbox_bars(bool push)
 {
     lcd_set_foreground(LCD_BLACK);
     if (ps.disp_y > 0)
     {
         int bot_y = ps.disp_y + ps.disp_h;
         lcd_fillrect(0, 0, LCD_WIDTH, ps.disp_y);
-        lcd_update_rect(0, 0, LCD_WIDTH, ps.disp_y);
+        if (push) lcd_update_rect(0, 0, LCD_WIDTH, ps.disp_y);
         lcd_fillrect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
-        lcd_update_rect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
+        if (push) lcd_update_rect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
     }
     if (ps.disp_x > 0)
     {
         int right_x = ps.disp_x + ps.disp_w;
         lcd_fillrect(0, ps.disp_y, ps.disp_x, ps.disp_h);
-        lcd_update_rect(0, ps.disp_y, ps.disp_x, ps.disp_h);
+        if (push) lcd_update_rect(0, ps.disp_y, ps.disp_x, ps.disp_h);
         lcd_fillrect(right_x, ps.disp_y,
                      LCD_WIDTH - right_x, ps.disp_h);
-        lcd_update_rect(right_x, ps.disp_y,
-                        LCD_WIDTH - right_x, ps.disp_h);
+        if (push)
+            lcd_update_rect(right_x, ps.disp_y,
+                            LCD_WIDTH - right_x, ps.disp_h);
     }
 }
 
@@ -361,7 +450,10 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                scale_and_blit(y, cb, cr, w);
+                if (ps.osd_visible)
+                    scale_and_blit_fb(y, cb, cr, w, h);
+                else
+                    scale_and_blit(y, cb, cr, w, h);
             }
             return 1;
         }
@@ -387,7 +479,21 @@ static void blit_last_frame(void)
     vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
     if (!y || w == 0 || h == 0) return;
 
-    scale_and_blit(y, cb, cr, w);
+    scale_and_blit(y, cb, cr, w, h);
+}
+
+/* Like blit_last_frame() but writes to framebuffer for compositing */
+static void blit_last_frame_fb(void)
+{
+    const uint8_t *y, *cb, *cr;
+    int w, h;
+
+    if (!ps.decoder) return;
+
+    vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    if (!y || w == 0 || h == 0) return;
+
+    scale_and_blit_fb(y, cb, cr, w, h);
 }
 
 /* ------------------------------------------------------------------ */
@@ -679,7 +785,6 @@ static void draw_title_bar(int y_off)
     lcd_getstringsize(ps.title, &tw, &th);
 
     ty = (ps.title_bar_h - 1 - th) / 2 + y_off;
-    if (ty < 0) ty = 0;
 
     if (tw > max_tw)
     {
@@ -850,27 +955,21 @@ static void osd_draw(void)
 
     lcd_set_viewport(NULL);
 
-    /* Draw both bars to framebuffer first, then push both to LCD.
-     * Minimizes the gap between video DMA and OSD DMA (~400us vs ~800us).
-     * lcd_update() would overwrite video with stale framebuffer data. */
+    /* Composite: letterbox + bars + volume all to framebuffer,
+     * then push entire frame to LCD in a single DMA transfer.
+     * Video is already in the framebuffer (from scale_and_blit_fb
+     * or blit_last_frame_fb). */
+    clear_letterbox_bars(false);
+
     if (title_vis > 0)
         draw_title_bar(title_y);
     if (trans_vis > 0)
         draw_transport_bar(trans_y);
 
-    if (title_vis > 0)
-        lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
-    if (trans_vis > 0)
-        lcd_update_rect(0, trans_y, LCD_WIDTH, trans_vis);
-
     if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
-    {
-        int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
-        int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
-        int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
         draw_volume_overlay();
-        lcd_update_rect((LCD_WIDTH - box_w) / 2, box_y, box_w, box_h);
-    }
+
+    lcd_update();
 
     /* Advance animation */
     if (ps.osd_anim_step > 0)
@@ -895,11 +994,18 @@ static void osd_draw(void)
 
 static void full_redraw(void)
 {
-    blit_last_frame();
-    clear_letterbox_bars();
-
     if (ps.osd_visible && ps.osd_anim_step == 0)
+    {
+        /* Composite path: video + letterbox + bars -> framebuffer -> lcd_update */
+        blit_last_frame_fb();
         osd_draw();
+    }
+    else
+    {
+        /* Direct path: video straight to LCD */
+        blit_last_frame();
+        clear_letterbox_bars(true);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -921,6 +1027,7 @@ static void play_pause(void)
     if (ps.state == PB_PLAYING)
     {
         ps.state = PB_PAUSED;
+        cpu_boost(false);
     }
     else
     {
@@ -933,6 +1040,7 @@ static void play_pause(void)
         ps.play_start_tick = current_tick;
         ps.play_start_time = ps.curr_time_ms;
         ps.state = PB_PLAYING;
+        cpu_boost(true);
     }
 
     osd_show();
@@ -1128,15 +1236,12 @@ static void button_loop(const char *filepath)
         if (ps.state == PB_PLAYING)
         {
             /* Decode and display one frame */
-            int ret;
-
-            cpu_boost(true);
-            ret = decode_one_frame(true);
-            cpu_boost(false);
+            int ret = decode_one_frame(true);
 
             if (ret < 0)
             {
                 ps.state = PB_STOPPED;
+                cpu_boost(false);
                 ps.curr_time_ms = ps.duration_ms;
                 osd_show();
             }
@@ -1160,10 +1265,16 @@ static void button_loop(const char *filepath)
                 no_frame_count = 0;
             }
 
-            /* OSD overlay on top of decoded frame — must redraw every frame
-             * because lcd_blit_yuv overwrites the OSD regions */
+            /* OSD overlay: video is already in framebuffer (from
+             * scale_and_blit_fb in decode_one_frame). Draw bars on top
+             * and push entire composited frame via lcd_update(). */
             if (ps.osd_visible)
+            {
+                if (ret != 1)
+                    blit_last_frame_fb();
                 osd_draw();
+                ps.need_osd_redraw = false;
+            }
 
             /* Accurate frame pacing using absolute tick targets.
              * This avoids cumulative rounding error from integer division. */
@@ -1172,6 +1283,26 @@ static void button_loop(const char *filepath)
                     (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
                            * HZ / 1000);
                 long wait = target_tick - current_tick;
+
+                /* Frame skip: if >66ms behind, decode without display
+                 * to catch up (max 3 frames). */
+                if (wait < -(long)(HZ / 15))
+                {
+                    int skipped = 0;
+                    while (skipped < 3 && wait < 0)
+                    {
+                        int sr = decode_one_frame(false);
+                        if (sr <= 0) break;
+                        update_frame_time();
+                        skipped++;
+                        target_tick = ps.play_start_tick +
+                            (long)((uint64_t)(ps.curr_time_ms
+                                              - ps.play_start_time)
+                                   * HZ / 1000);
+                        wait = target_tick - current_tick;
+                    }
+                }
+
                 if (wait < 0) wait = 0;
                 if (wait > HZ) wait = HZ;
 
@@ -1193,9 +1324,16 @@ static void button_loop(const char *filepath)
         if (ps.vol_show_until && TIME_AFTER(current_tick, ps.vol_show_until))
         {
             ps.vol_show_until = 0;
-            blit_last_frame();
             if (ps.osd_visible && ps.osd_anim_step == 0)
+            {
+                blit_last_frame_fb();
                 osd_draw();
+            }
+            else
+            {
+                blit_last_frame();
+                clear_letterbox_bars(true);
+            }
         }
 
         /* Handle buttons */
@@ -1281,9 +1419,8 @@ static void button_loop(const char *filepath)
         /* Redraw for state changes (OSD toggle while paused, etc.) */
         if (ps.osd_anim_step > 0 && ps.state != PB_PLAYING)
         {
-            /* Animation frame while paused — restore video then draw bars */
-            blit_last_frame();
-            clear_letterbox_bars();
+            /* Composite: video + letterbox + bars -> framebuffer -> lcd_update */
+            blit_last_frame_fb();
             osd_draw();
         }
         else if (ps.need_full_redraw)
@@ -1295,6 +1432,7 @@ static void button_loop(const char *filepath)
         else if (ps.need_osd_redraw && ps.osd_visible
                  && ps.osd_anim_step == 0)
         {
+            blit_last_frame_fb();
             osd_draw();
             ps.need_osd_redraw = false;
         }
@@ -1393,7 +1531,7 @@ void video_playback_start(const char *filepath, const char *title)
         alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
                    + MP4V_MAX_STCO * sizeof(uint32_t) + 32
                    + dec_size + 4096
-                   + 128 * 1024 + 32
+                   + 256 * 1024 + 32
                    + scale_size;
     }
 
@@ -1417,7 +1555,7 @@ void video_playback_start(const char *filepath, const char *title)
     dec_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 4096);
     p = dec_buf + dec_size;
 
-    ps.read_buf_size = 128 * 1024;
+    ps.read_buf_size = 256 * 1024;
     ps.read_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
     p = ps.read_buf + ps.read_buf_size;
 
@@ -1470,17 +1608,31 @@ void video_playback_start(const char *filepath, const char *title)
     ps.demux = &demux;
     ps.num_samples = demux.num_samples;
     ps.nalu_len_size = demux.nalu_len_size;
-    ps.video_w = demux.width;
-    ps.video_h = demux.height;
     ps.duration_ms = calc_duration_ms(&demux);
     if (ps.duration_ms == 0) ps.duration_ms = 60000;
 
-    /* Compute display rect with aspect-preserving downscale.
-     * Use display dimensions from tkhd (PAR-adjusted) for aspect ratio,
-     * but coded dimensions (width/height) for VPU output stride. */
+    /* Use SPS dimensions (from avcC) as authoritative video size.
+     * MP4 container metadata may have wrong dimensions. */
     {
-        uint16_t ar_w = demux.display_width ? demux.display_width : demux.width;
-        uint16_t ar_h = demux.display_height ? demux.display_height : demux.height;
+        const uint8_t *tmp_y;
+        int sps_w = 0, sps_h = 0;
+        vpu_h264_get_frame(ps.decoder, &tmp_y, NULL, NULL, &sps_w, &sps_h);
+        if (sps_w > 0 && sps_h > 0)
+        {
+            ps.video_w = sps_w;
+            ps.video_h = sps_h;
+        }
+        else
+        {
+            ps.video_w = demux.width;
+            ps.video_h = demux.height;
+        }
+    }
+
+    /* Compute display rect with aspect-preserving downscale. */
+    {
+        uint16_t ar_w = ps.video_w;
+        uint16_t ar_h = ps.video_h;
 
         if (ar_w > LCD_WIDTH || ar_h > LCD_HEIGHT)
         {
@@ -1545,6 +1697,7 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* Start playing */
     ps.state = PB_PLAYING;
+    cpu_boost(true);
     ps.play_start_tick = current_tick;
     ps.play_start_time = ps.curr_time_ms;
     ps.osd_visible = false;
@@ -1553,6 +1706,7 @@ void video_playback_start(const char *filepath, const char *title)
     button_loop(filepath);
 
 cleanup:
+    cpu_boost(false);
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.vid_fd >= 0) { close(ps.vid_fd); ps.vid_fd = -1; }
     ps.demux = NULL;
