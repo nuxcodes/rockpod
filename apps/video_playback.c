@@ -252,12 +252,17 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
 
     if (ps.need_scale)
     {
+        int cdst_w = ps.dst_w / 2;
+        int cdst_h = ps.dst_h / 2;
+        if (cdst_w < 2) cdst_w = 2;
+        if (cdst_h < 2) cdst_h = 2;
+
         scale_plane_bilinear(y, ps.video_w, ps.video_h, w,
                              ps.scale_y, ps.dst_w, ps.dst_h);
         scale_plane_bilinear(cb, ps.video_w / 2, ps.video_h / 2, w / 2,
-                             ps.scale_cb, ps.dst_w / 2, ps.dst_h / 2);
+                             ps.scale_cb, cdst_w, cdst_h);
         scale_plane_bilinear(cr, ps.video_w / 2, ps.video_h / 2, w / 2,
-                             ps.scale_cr, ps.dst_w / 2, ps.dst_h / 2);
+                             ps.scale_cr, cdst_w, cdst_h);
         src[0] = (unsigned char *)ps.scale_y;
         src[1] = (unsigned char *)ps.scale_cb;
         src[2] = (unsigned char *)ps.scale_cr;
@@ -1362,8 +1367,8 @@ void video_playback_start(const char *filepath, const char *title)
         uint32_t s = MIN(sx, sy);
         ps.dst_w = (int)(((uint32_t)demux.width * s) >> 16) & ~1;
         ps.dst_h = (int)(((uint32_t)demux.height * s) >> 16) & ~1;
-        if (ps.dst_w < 2) ps.dst_w = 2;
-        if (ps.dst_h < 2) ps.dst_h = 2;
+        if (ps.dst_w < 4) ps.dst_w = 4;
+        if (ps.dst_h < 4) ps.dst_h = 4;
         ps.need_scale = true;
     }
     else
