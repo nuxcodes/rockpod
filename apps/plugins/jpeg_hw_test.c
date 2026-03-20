@@ -106,7 +106,7 @@ static void vpua_power_on(void)
     REG32(VDEC_SUB  + 0x10) = 0x182;
     REG32(VDEC_DMA + 0x110) = 0x800;
     REG32(VDEC_XFORM + 0x804) = 0x40;
-    REG32(VDEC_DEBLK + 0x10)  = 0x10;
+    REG32(VDEC_DEBLK + 0x10)  = 0x14; /* bit 2: disable deblock for JPEG */
     REG32(VDEC_SUB  + 0x6C)   = 0x10001;
 }
 
