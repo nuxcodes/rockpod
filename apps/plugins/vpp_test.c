@@ -524,7 +524,19 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Bits 14-16 cleared: %s",
          ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
 
-    vlog("GPIO 7.1 SKIPPED (breaks ATA)");
+    /* GPIO 7.1: Apple sets HIGH during VPP power-on (ROM 0x167be4:
+     * FUN_0036d3f0(0x39, 1, 1) → GPIOCMD = 0x7010f). Likely enables
+     * CLCD RGB output driver. On PATA/SSD iPods, port 7 pin 1 = ATA D1.
+     * GPIOCMD is per-pin (verified from ROM), so only pin 1 changes.
+     * Must sleep ATA first to avoid data corruption. */
+    rb->storage_spindown(0);
+    rb->storage_sleep();
+    rb->sleep(HZ / 2);  /* wait for ATA sleep to complete */
+    GPIOCMD = 0x0007010F;  /* port 7 pin 1 = output HIGH (per-pin) */
+    vlog("GPIO 7.1 = output HIGH (ATA sleeping)");
+
+    int panel_type = (PDAT(6) & 0x30) >> 4;
+    vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
     vlog("CG16_SVID = 0x%04x (expect 0x3003 = PLL2/4 = 54MHz)",
          (unsigned)CG16_SVID);
 
@@ -804,12 +816,20 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_svid_enable(false);
     vlog("  Clocks disabled");
 
-    /* === Phase 10: Restore Rockbox LCD === */
-    vlog("Phase 10: Restoring LCD");
+    /* === Phase 10: Restore Rockbox LCD + ATA === */
+    vlog("Phase 10: Restoring LCD and ATA");
+
+    /* Release GPIO 7.1 before re-enabling ATA (per-pin restore) */
+    GPIOCMD = 0x00070104;  /* port 7 pin 1 = function 4 (ATA) */
+    vlog("  GPIO 7.1 restored to ATA function");
+
+    /* Restore ATA spindown timer — next disk access auto-calls
+     * ata_power_up() which blasts PCON(7)=0x44444444 (all pins ATA) */
+    rb->storage_spindown(7);
 
     /* Re-enable MCU LCD clock gate (disabled in Phase 6) */
     PWRCON(0) &= ~(1 << 1);  /* clear bit 1 = enable LCD clock */
-    vlog("  MCU LCD clock re-enabled (PWRCON bit 1 cleared)");
+    vlog("  MCU LCD clock re-enabled");
 
     vlog("=== Test complete ===");
     log_close();
