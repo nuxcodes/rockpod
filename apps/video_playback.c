@@ -426,6 +426,8 @@ static void seek_to_time(uint32_t target_ms)
 
     if (!ps.demux || ps.num_samples == 0) return;
 
+    cpu_boost(true);
+
     /* Convert target_ms to sample index via stts */
     target_ticks = (uint64_t)target_ms * ps.demux->timescale / 1000;
 
@@ -469,6 +471,8 @@ static void seek_to_time(uint32_t target_ms)
     ps.curr_time_ms = target_ms;
     ps.play_start_tick = current_tick;
     ps.play_start_time = target_ms;
+
+    cpu_boost(false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -776,13 +780,29 @@ static void osd_animate(bool show)
 
         int title_y = -ps.title_bar_h + (ps.title_bar_h * pct) / 100;
         int trans_y = LCD_HEIGHT - (ps.transport_bar_h * pct) / 100;
+        int title_vis = ps.title_bar_h + title_y;
+        int trans_vis = LCD_HEIGHT - trans_y;
 
+        /* Restore clean video on LCD (YUV DMA, bypasses framebuffer) */
         blit_last_frame();
         clear_letterbox_bars();
+
         lcd_set_viewport(NULL);
-        draw_title_bar(title_y);
-        draw_transport_bar(trans_y);
-        lcd_update();
+
+        /* Draw bars to framebuffer, push only visible regions to LCD.
+         * lcd_update() would overwrite video with stale framebuffer. */
+        if (title_vis > 0)
+        {
+            draw_title_bar(title_y);
+            lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
+        }
+
+        if (trans_vis > 0)
+        {
+            draw_transport_bar(trans_y);
+            lcd_update_rect(0, trans_y, LCD_WIDTH, trans_vis);
+        }
+
         sleep(1);
     }
 }
@@ -1080,6 +1100,9 @@ static void button_loop(const char *filepath)
 
         if (ps.state == PB_PLAYING)
         {
+            /* Boost CPU for decode+scale work (216 MHz vs 54 MHz idle) */
+            cpu_boost(true);
+
             /* Decode and display one frame */
             int ret = decode_one_frame(true);
             if (ret < 0)
@@ -1112,6 +1135,9 @@ static void button_loop(const char *filepath)
              * because lcd_blit_yuv overwrites the OSD regions */
             if (ps.osd_visible)
                 osd_draw();
+
+            /* Unboost CPU before pacing sleep (low power during idle) */
+            cpu_boost(false);
 
             /* Accurate frame pacing using absolute tick targets.
              * This avoids cumulative rounding error from integer division. */

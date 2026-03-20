@@ -425,6 +425,7 @@ enum plugin_status plugin_start(const void *parameter)
     struct vpu_h264 *dec;
     int frame_count = 0;
 
+    rb->cpu_boost(true);
     rb->splashf(HZ/2, "v59 %s", test_path);
 
     /* Generate per-file log */
@@ -547,6 +548,7 @@ enum plugin_status plugin_start(const void *parameter)
     vpu_h264_close(dec);
 
     if (log_fd >= 0) rb->close(log_fd);
+    rb->cpu_boost(false);
     rb->splashf(HZ*3, "v59: %d frames", frame_count);
     return PLUGIN_OK;
 }
