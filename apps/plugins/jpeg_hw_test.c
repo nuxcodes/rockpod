@@ -478,13 +478,27 @@ static unsigned long tj_parse_markers(struct test_jpeg *j)
 
 /* ---- Pack coefficients for VPU-A ---- */
 
+/* JPEG zigzag → 8×8 raster position (VPU-A expects raster order) */
+static const uint8_t zz_to_raster[64] = {
+     0,  1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63
+};
+
 static void pack_coeff_pair(uint32_t *buf, const int16_t *b0, const int16_t *b1)
 {
     int i;
     for (i = 0; i < 64; i++)
-        buf[i] = __builtin_bswap32((uint32_t)(int32_t)b0[i]);
+        buf[zz_to_raster[i]] =
+            __builtin_bswap32((uint32_t)(int32_t)b0[i]);
     for (i = 0; i < 64; i++)
-        buf[64 + i] = __builtin_bswap32((uint32_t)(int32_t)b1[i]);
+        buf[64 + zz_to_raster[i]] =
+            __builtin_bswap32((uint32_t)(int32_t)b1[i]);
 }
 
 static int clamp8(int v)
@@ -637,8 +651,10 @@ enum plugin_status plugin_start(const void *parameter)
             int i;
             for (i = 0; i < 64; i++)
             {
-                REG32(VDEC_XFORM + 0x200 + i * 4) = tj.qt[tj.qt_sel[0]][i];
-                REG32(VDEC_XFORM + 0x300 + i * 4) = tj.qt[tj.qt_sel[1]][i];
+                REG32(VDEC_XFORM + 0x200 + zz_to_raster[i] * 4) =
+                    tj.qt[tj.qt_sel[0]][i];
+                REG32(VDEC_XFORM + 0x300 + zz_to_raster[i] * 4) =
+                    tj.qt[tj.qt_sel[1]][i];
             }
         }
 
