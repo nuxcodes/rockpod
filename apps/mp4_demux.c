@@ -924,7 +924,7 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
 {
     uint32_t chunk_index = 0;
     uint32_t sample_in_chunk = 0;
-    uint32_t samples_so_far = 0;
+    uint64_t samples_so_far = 0;
     uint32_t i;
     uint32_t chunk_offset;
 
