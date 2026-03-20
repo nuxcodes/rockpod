@@ -1474,7 +1474,12 @@ static void button_loop(const char *filepath)
         }
         else if (ps.need_full_redraw)
         {
-            full_redraw();
+            /* During PB_PLAYING, skip full_redraw — the next iteration's
+             * decode_one_frame will render via lcd_blit_yuv (OSD now hidden).
+             * Calling full_redraw here would redundantly re-blit the same
+             * frame (2-4 extra DMA transfers), causing a frame drop. */
+            if (ps.state != PB_PLAYING)
+                full_redraw();
             ps.need_full_redraw = false;
             ps.need_osd_redraw = false;
         }
