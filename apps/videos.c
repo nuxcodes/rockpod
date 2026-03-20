@@ -236,7 +236,8 @@ static void load_thumbnails(int *indices, int count)
         if (entry->artwork_count >= 1 && entry->has_artwork == 0x01)
             ok = artworkdb_load_thumb(entry->dbid, entry->mhii_link,
                                       thumb_bitmaps[i],
-                                      THUMB_SIZE, THUMB_SIZE);
+                                      THUMB_SIZE, THUMB_SIZE,
+                                      thumb_work_buf, THUMB_WORK_SIZE);
 
         /* 2. Try MP4 embedded covr atom → JPEG decode */
         if (!ok)

@@ -38,6 +38,7 @@
  * Returns true on success, false if ArtworkDB is missing, the track
  * has no artwork entry, or the ithmb file cannot be read. */
 bool artworkdb_load_thumb(uint64_t dbid, uint32_t mhii_link,
-                          fb_data *out, int out_w, int out_h);
+                          fb_data *out, int out_w, int out_h,
+                          void *work_buf, size_t work_size);
 
 #endif /* __ARTWORKDB_H__ */

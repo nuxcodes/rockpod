@@ -127,19 +127,19 @@ static bool parse_mhni(int fd, off_t mhni_offset, struct thumb_info *ti)
     return ti->valid;
 }
 
-/* Scan mhod type 2 children inside an mhii to find the best thumbnail.
- * "Best" = smallest resolution where both dimensions >= target. */
-static bool find_best_thumb(int fd, off_t mhii_offset,
-                            uint32_t mhii_total_len,
-                            uint32_t num_children,
-                            int target_w, int target_h,
-                            struct thumb_info *best)
+#define MAX_THUMB_CANDIDATES 8
+
+/* Collect all thumbnail candidates from mhii children.
+ * Returns count of valid candidates found. */
+static int collect_thumbs(int fd, off_t mhii_offset,
+                          uint32_t mhii_total_len,
+                          uint32_t num_children,
+                          struct thumb_info *candidates, int max_cand)
 {
     off_t pos = mhii_offset + MHII_HEADER_SIZE;
     off_t end = mhii_offset + mhii_total_len;
     uint32_t c;
-
-    memset(best, 0, sizeof(*best));
+    int ncand = 0;
 
     for (c = 0; c < num_children && pos < end; c++)
     {
@@ -157,58 +157,71 @@ static bool find_best_thumb(int fd, off_t mhii_offset,
         od_total_len = adb_get_le32(od_hdr + MHOD_TOTAL_LEN);
         od_type     = adb_get_le16(od_hdr + MHOD_TYPE);
 
-        if (od_type == 2)
+        if (od_type == 2 && ncand < max_cand)
         {
-            /* mhod type 2 contains an mhni child */
-            struct thumb_info ti;
             off_t mhni_off = pos + od_hdr_len;
-
-            if (parse_mhni(fd, mhni_off, &ti))
-            {
-                bool ti_fits = (ti.width >= (uint16_t)target_w
-                             && ti.height >= (uint16_t)target_h);
-                bool best_fits = best->valid
-                    && (best->width >= (uint16_t)target_w
-                     && best->height >= (uint16_t)target_h);
-
-                if (!best->valid)
-                {
-                    *best = ti;
-                }
-                else if (ti_fits && (!best_fits
-                         || ti.pixels < best->pixels))
-                {
-                    *best = ti;
-                }
-                else if (!ti_fits && !best_fits
-                         && ti.pixels > best->pixels)
-                {
-                    *best = ti;
-                }
-            }
+            if (parse_mhni(fd, mhni_off, &candidates[ncand]))
+                ncand++;
         }
 
         pos += od_total_len;
     }
 
-    return best->valid;
+    return ncand;
 }
 
-/* Load raw RGB565 pixels from an ithmb file, byte-swap, and scale
- * to out_w x out_h with letterboxing. */
+/* Sort candidates: fitting sizes first (smallest first), then
+ * non-fitting sizes (largest first). Simple insertion sort. */
+static void sort_thumbs(struct thumb_info *cands, int n,
+                        int target_w, int target_h)
+{
+    int i, j;
+
+    for (i = 1; i < n; i++)
+    {
+        struct thumb_info key = cands[i];
+        bool key_fits = (key.width >= (uint16_t)target_w
+                      && key.height >= (uint16_t)target_h);
+
+        j = i - 1;
+        while (j >= 0)
+        {
+            bool j_fits = (cands[j].width >= (uint16_t)target_w
+                        && cands[j].height >= (uint16_t)target_h);
+            bool swap = false;
+
+            if (key_fits && !j_fits)
+                swap = true;
+            else if (key_fits && j_fits && key.pixels < cands[j].pixels)
+                swap = true;
+            else if (!key_fits && !j_fits && key.pixels > cands[j].pixels)
+                swap = true;
+
+            if (!swap)
+                break;
+
+            cands[j + 1] = cands[j];
+            j--;
+        }
+        cands[j + 1] = key;
+    }
+}
+
+/* Load raw RGB565 pixels from an ithmb file and scale to out_w x out_h
+ * with letterboxing.  iPod Classic stores ithmb as native LE RGB565. */
 static bool load_ithmb(uint32_t corr_id, uint32_t ithmb_off,
                        int src_w, int src_h, uint32_t src_size,
-                       fb_data *out, int out_w, int out_h)
+                       fb_data *out, int out_w, int out_h,
+                       void *work_buf, size_t work_size)
 {
     char path[64];
     int fd;
-    uint16_t *raw;
-    unsigned char rawbuf[200 * 200 * 2]; /* max ~80KB for 200x200 */
+    fb_data *raw;
     int x, y, sx, sy;
     int dst_w, dst_h, pad_x, pad_y;
 
-    /* Sanity check — don't try to load huge thumbnails */
-    if (src_size > sizeof(rawbuf) || src_size < (uint32_t)(src_w * src_h * 2))
+    /* Need enough work space for the source pixel data */
+    if (src_size > work_size)
         return false;
 
     snprintf(path, sizeof(path),
@@ -225,20 +238,29 @@ static bool load_ithmb(uint32_t corr_id, uint32_t ithmb_off,
         return false;
     }
 
-    if (read(fd, rawbuf, src_size) < (ssize_t)src_size)
+    if (read(fd, work_buf, src_size) < (ssize_t)src_size)
     {
         close(fd);
         return false;
     }
     close(fd);
 
-    /* Byte-swap RGB565 pixels (ithmb stores byte-swapped) */
-    raw = (uint16_t *)(void *)rawbuf;
+    /* iPod Classic ithmb is native little-endian RGB565 — no byte-swap */
+    raw = (fb_data *)work_buf;
+
+    /* Reject blank thumbnails (all white or all black) */
     {
         int npix = src_w * src_h;
-        int i;
-        for (i = 0; i < npix; i++)
-            raw[i] = (uint16_t)((raw[i] >> 8) | (raw[i] << 8));
+        int check = (npix > 64) ? 64 : npix;
+        bool all_same = true;
+        fb_data first = raw[0];
+        int k;
+        for (k = 1; k < check; k++)
+        {
+            if (raw[k] != first) { all_same = false; break; }
+        }
+        if (all_same)
+            return false;
     }
 
     /* Compute letterbox dimensions preserving aspect ratio */
@@ -273,7 +295,8 @@ static bool load_ithmb(uint32_t corr_id, uint32_t ithmb_off,
 }
 
 bool artworkdb_load_thumb(uint64_t dbid, uint32_t mhii_link,
-                          fb_data *out, int out_w, int out_h)
+                          fb_data *out, int out_w, int out_h,
+                          void *work_buf, size_t work_size)
 {
     int fd;
     unsigned char hdr[32];
@@ -358,18 +381,29 @@ bool artworkdb_load_thumb(uint64_t dbid, uint32_t mhii_link,
         if ((mhii_link != 0 && mhii_id == mhii_link)
             || (mhii_link == 0 && mhii_dbid == dbid))
         {
-            struct thumb_info best;
+            struct thumb_info cands[MAX_THUMB_CANDIDATES];
+            int ncand, ci;
 
-            if (find_best_thumb(fd, mhii_pos, mhii_total,
-                                mhii_children, out_w, out_h, &best))
-            {
-                close(fd);
-                return load_ithmb(best.corr_id, best.ithmb_off,
-                                  best.width, best.height, best.img_size,
-                                  out, out_w, out_h);
-            }
-            /* Matched mhii but no usable thumbnail */
+            ncand = collect_thumbs(fd, mhii_pos, mhii_total,
+                                   mhii_children, cands,
+                                   MAX_THUMB_CANDIDATES);
             close(fd);
+
+            if (ncand == 0)
+                return false;
+
+            sort_thumbs(cands, ncand, out_w, out_h);
+
+            /* Try each candidate; skip blank/oversized thumbnails */
+            for (ci = 0; ci < ncand; ci++)
+            {
+                if (load_ithmb(cands[ci].corr_id, cands[ci].ithmb_off,
+                               cands[ci].width, cands[ci].height,
+                               cands[ci].img_size,
+                               out, out_w, out_h,
+                               work_buf, work_size))
+                    return true;
+            }
             return false;
         }
 
