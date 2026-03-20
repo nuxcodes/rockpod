@@ -891,36 +891,46 @@ decode_done:
             lflush();
         }
 
-        /* Display YCbCr → RGB565 on LCD */
-        tlog("--- YCbCr -> LCD (%dx%d) ---", tj.width, tj.height);
+        /* Display YCbCr → RGB565 on LCD, scaled to fit */
+        tlog("--- YCbCr -> LCD (%dx%d scaled to fit) ---",
+             tj.width, tj.height);
         {
             fb_data *tile = (fb_data *)(void *)work_buf1;
-            int ty, py, px;
-            int disp_w = (tj.width > LCD_WIDTH) ? LCD_WIDTH : tj.width;
-            int disp_h = (tj.height > LCD_HEIGHT) ? LCD_HEIGHT : tj.height;
+            int ox, oy;
+            int dst_w, dst_h, pad_x, pad_y;
+
+            /* Compute letterbox dimensions */
+            dst_w = LCD_WIDTH;
+            dst_h = (tj.height * LCD_WIDTH) / tj.width;
+            if (dst_h > LCD_HEIGHT)
+            {
+                dst_h = LCD_HEIGHT;
+                dst_w = (tj.width * LCD_HEIGHT) / tj.height;
+            }
+            pad_x = (LCD_WIDTH - dst_w) / 2;
+            pad_y = (LCD_HEIGHT - dst_h) / 2;
+            tlog("  dst=%dx%d pad=(%d,%d)", dst_w, dst_h, pad_x, pad_y);
 
             rb->lcd_clear_display();
-            for (ty = 0; ty < disp_h; ty += 16)
+            for (oy = 0; oy < dst_h; oy++)
             {
-                int rows = (ty + 16 <= disp_h) ? 16 : disp_h - ty;
-                for (py = 0; py < rows; py++)
+                int sy = oy * tj.height / dst_h;
+                if (sy >= tj.height) sy = tj.height - 1;
+                for (ox = 0; ox < dst_w; ox++)
                 {
-                    for (px = 0; px < disp_w; px++)
-                    {
-                        uint8_t yv  = frame_y[(ty + py) * y_stride + px];
-                        uint8_t cbv = frame_cb[((ty + py) / 2) * c_stride
-                                               + px / 2];
-                        uint8_t crv = frame_cr[((ty + py) / 2) * c_stride
-                                               + px / 2];
-                        int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
-                        int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)
-                                          - (((int)crv - 128) * 183 >> 8));
-                        int b = clamp8(yv + (((int)cbv - 128) * 454 >> 8));
-                        tile[py * disp_w + px] =
-                            ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-                    }
+                    int sx = ox * tj.width / dst_w;
+                    if (sx >= tj.width) sx = tj.width - 1;
+                    uint8_t yv  = frame_y[sy * y_stride + sx];
+                    uint8_t cbv = frame_cb[(sy / 2) * c_stride + sx / 2];
+                    uint8_t crv = frame_cr[(sy / 2) * c_stride + sx / 2];
+                    int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
+                    int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)
+                                      - (((int)crv - 128) * 183 >> 8));
+                    int b = clamp8(yv + (((int)cbv - 128) * 454 >> 8));
+                    tile[ox] =
+                        ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
                 }
-                rb->lcd_bitmap(tile, 0, ty, disp_w, rows);
+                rb->lcd_bitmap(tile, pad_x, pad_y + oy, dst_w, 1);
             }
             rb->lcd_update();
 
