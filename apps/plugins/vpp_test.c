@@ -674,11 +674,21 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  MIXER+0x008 = 0x%08lx (expect 0x100FF)",
          (unsigned long)MIXER_REG(0x008));
 
-    /* Step B: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
+    /* Step B: Release MCU LCD bus before ENVID takes over LCD pins.
+     * LCD_CON bit 31 = MCU parallel bus output enable. While set, the MCU
+     * controller at 0x38300000 drives LCD data pins D[17:0], causing bus
+     * contention with VPP's CLCD RGB output. Apple's FW has LCD clock gate
+     * already disabled (PWRCON bit 1) so this isn't an issue for them.
+     * RE evidence: ROM 0x000d16a8 clears bit 31 when transitioning. */
+    while (!(LCD_STATUS & 0x2));  /* wait for MCU LCD idle */
+    LCD_CON = LCD_CON & ~(1u << 31);  /* tri-state MCU bus */
+    vlog("  LCD_CON bit31 cleared (MCU bus released)");
+
+    /* Step C: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
     CLCD_CTRL |= 1;          /* input enable (starts reading YUV) */
     vlog("  After CLCD enable: CLCD_CTRL=0x%08lx", (unsigned long)CLCD_CTRL);
 
-    MIXER_CTRL = 7;           /* CLCD commit (ENVID=1, takes over LCD pins) */
+    MIXER_CTRL = 7;           /* mixer commit (ENVID=1, takes over LCD pins) */
     vlog("  After mixer commit: MIXER_CTRL=0x%08lx", (unsigned long)MIXER_CTRL);
 
     DISP_REG(0x03C) |= 1;    /* latch config */
@@ -794,6 +804,11 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* === Phase 10: Restore Rockbox LCD === */
     vlog("Phase 10: Restoring LCD");
+
+    /* Re-enable MCU LCD bus output (restore bit 31 cleared in Phase 6) */
+    LCD_CON = LCD_CON | (1u << 31);
+    vlog("  LCD_CON bit31 restored (MCU bus re-enabled)");
+
     vlog("=== Test complete ===");
     log_close();
 
