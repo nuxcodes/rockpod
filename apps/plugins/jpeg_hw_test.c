@@ -392,7 +392,7 @@ static unsigned long tj_parse_markers(struct test_jpeg *j)
         p += 2;
         if (marker == 0xD9) return 0;
         if (marker == 0xDA) break;
-        if ((marker & 0xF0) == 0xD0) continue;
+        if (marker >= 0xD0 && marker <= 0xD7) continue;
 
         if (p + 2 > j->len) return 0;
         uint16_t len = rbe16(j->data + p);

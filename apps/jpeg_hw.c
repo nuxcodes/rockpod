@@ -483,7 +483,7 @@ static unsigned long parse_markers(struct jpeg_hw_state *j)
             return 0;
         if (marker == 0xDA) /* SOS — handle below */
             break;
-        if ((marker & 0xF0) == 0xD0) /* RST — skip */
+        if (marker >= 0xD0 && marker <= 0xD7) /* RST0-RST7 only */
             continue;
 
         /* Marker with length */
