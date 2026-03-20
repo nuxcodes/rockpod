@@ -147,6 +147,10 @@ static struct {
 
     /* Volume overlay (centered bar, auto-hides) */
     long vol_show_until;
+
+    /* OSD animation (non-blocking, advances per frame) */
+    int osd_anim_step;    /* 0 = idle, 1..OSD_ANIM_STEPS = in progress */
+    bool osd_anim_show;   /* true = fly-in, false = fly-out */
 } ps;
 
 /* Tiny buffers for initial metadata-only demux pass */
@@ -426,8 +430,6 @@ static void seek_to_time(uint32_t target_ms)
 
     if (!ps.demux || ps.num_samples == 0) return;
 
-    cpu_boost(true);
-
     /* Convert target_ms to sample index via stts */
     target_ticks = (uint64_t)target_ms * ps.demux->timescale / 1000;
 
@@ -471,8 +473,6 @@ static void seek_to_time(uint32_t target_ms)
     ps.curr_time_ms = target_ms;
     ps.play_start_tick = current_tick;
     ps.play_start_time = target_ms;
-
-    cpu_boost(false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -767,70 +767,54 @@ static void draw_transport_bar(int y_off)
 /* OSD: show / hide / toggle                                          */
 /* ------------------------------------------------------------------ */
 
-static void osd_animate(bool show)
-{
-    int i;
-
-    for (i = 1; i <= OSD_ANIM_STEPS; i++)
-    {
-        int step = show ? i : (OSD_ANIM_STEPS - i);
-        int remain = OSD_ANIM_STEPS - step;
-        int pct = 100 - (remain * remain * 100)
-                        / (OSD_ANIM_STEPS * OSD_ANIM_STEPS);
-
-        int title_y = -ps.title_bar_h + (ps.title_bar_h * pct) / 100;
-        int trans_y = LCD_HEIGHT - (ps.transport_bar_h * pct) / 100;
-        int title_vis = ps.title_bar_h + title_y;
-        int trans_vis = LCD_HEIGHT - trans_y;
-
-        /* Restore clean video on LCD (YUV DMA, bypasses framebuffer) */
-        blit_last_frame();
-        clear_letterbox_bars();
-
-        lcd_set_viewport(NULL);
-
-        /* Draw bars to framebuffer, push only visible regions to LCD.
-         * lcd_update() would overwrite video with stale framebuffer. */
-        if (title_vis > 0)
-        {
-            draw_title_bar(title_y);
-            lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
-        }
-
-        if (trans_vis > 0)
-        {
-            draw_transport_bar(trans_y);
-            lcd_update_rect(0, trans_y, LCD_WIDTH, trans_vis);
-        }
-
-        sleep(1);
-    }
-}
-
 static void osd_show(void)
 {
     if (!ps.osd_visible)
     {
-        osd_animate(true);
+        ps.osd_anim_step = 1;
+        ps.osd_anim_show = true;
         ps.osd_visible = true;
-        ps.need_osd_redraw = true;
+    }
+    else if (ps.osd_anim_step > 0 && !ps.osd_anim_show)
+    {
+        /* Interrupt fly-out: mirror step for smooth reversal */
+        ps.osd_anim_step = OSD_ANIM_STEPS + 1 - ps.osd_anim_step;
+        ps.osd_anim_show = true;
     }
     ps.osd_hide_tick = current_tick + OSD_SHOW_TICKS;
+    ps.need_osd_redraw = true;
 }
 
 static void osd_hide(void)
 {
     if (ps.osd_visible)
     {
-        osd_animate(false);
-        ps.osd_visible = false;
-        ps.need_full_redraw = true;
+        if (ps.osd_anim_step > 0 && ps.osd_anim_show)
+        {
+            /* Interrupt fly-in: mirror step for smooth reversal */
+            ps.osd_anim_step = OSD_ANIM_STEPS + 1 - ps.osd_anim_step;
+        }
+        else if (ps.osd_anim_step == 0)
+        {
+            /* Start new fly-out */
+            ps.osd_anim_step = 1;
+        }
+        /* else: already flying out, do nothing */
+        ps.osd_anim_show = false;
     }
 }
 
 static void osd_toggle(void)
 {
-    if (ps.osd_visible)
+    if (ps.osd_anim_step > 0)
+    {
+        /* Animation in progress: reverse it */
+        if (ps.osd_anim_show)
+            osd_hide();
+        else
+            osd_show();
+    }
+    else if (ps.osd_visible)
         osd_hide();
     else
         osd_show();
@@ -842,16 +826,41 @@ static void osd_toggle(void)
 
 static void osd_draw(void)
 {
+    int title_y = 0;
+    int trans_y = LCD_HEIGHT - ps.transport_bar_h;
+    int title_vis, trans_vis;
+
+    /* Compute animated positions if animation is active */
+    if (ps.osd_anim_step > 0)
+    {
+        int step = ps.osd_anim_show ? ps.osd_anim_step
+                                    : (OSD_ANIM_STEPS - ps.osd_anim_step);
+        int remain = OSD_ANIM_STEPS - step;
+        int pct = 100 - (remain * remain * 100)
+                        / (OSD_ANIM_STEPS * OSD_ANIM_STEPS);
+
+        title_y = -ps.title_bar_h + (ps.title_bar_h * pct) / 100;
+        trans_y = LCD_HEIGHT - (ps.transport_bar_h * pct) / 100;
+    }
+
+    title_vis = ps.title_bar_h + title_y;
+    trans_vis = LCD_HEIGHT - trans_y;
+
     lcd_set_viewport(NULL);
 
-    draw_title_bar(0);
-    draw_transport_bar(LCD_HEIGHT - ps.transport_bar_h);
+    /* Draw bars to framebuffer, push only visible regions to LCD.
+     * lcd_update() would overwrite video with stale framebuffer data. */
+    if (title_vis > 0)
+    {
+        draw_title_bar(title_y);
+        lcd_update_rect(0, 0, LCD_WIDTH, title_vis);
+    }
 
-    /* Update only the OSD bar regions — lcd_update() would overwrite
-     * the YUV-blitted video with stale framebuffer data */
-    lcd_update_rect(0, 0, LCD_WIDTH, ps.title_bar_h);
-    lcd_update_rect(0, LCD_HEIGHT - ps.transport_bar_h,
-                    LCD_WIDTH, ps.transport_bar_h);
+    if (trans_vis > 0)
+    {
+        draw_transport_bar(trans_y);
+        lcd_update_rect(0, trans_y, LCD_WIDTH, trans_vis);
+    }
 
     if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
     {
@@ -860,6 +869,22 @@ static void osd_draw(void)
         int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
         draw_volume_overlay();
         lcd_update_rect((LCD_WIDTH - box_w) / 2, box_y, box_w, box_h);
+    }
+
+    /* Advance animation */
+    if (ps.osd_anim_step > 0)
+    {
+        ps.osd_anim_step++;
+        if (ps.osd_anim_step > OSD_ANIM_STEPS)
+        {
+            ps.osd_anim_step = 0;
+            if (!ps.osd_anim_show)
+            {
+                /* Fly-out complete */
+                ps.osd_visible = false;
+                ps.need_full_redraw = true;
+            }
+        }
     }
 }
 
@@ -872,7 +897,7 @@ static void full_redraw(void)
     blit_last_frame();
     clear_letterbox_bars();
 
-    if (ps.osd_visible)
+    if (ps.osd_visible && ps.osd_anim_step == 0)
         osd_draw();
 }
 
@@ -884,7 +909,6 @@ static void do_adjust_volume(int steps)
 {
     adjust_volume(steps);
     ps.vol_show_until = current_tick + VOL_SHOW_TICKS;
-    ps.need_osd_redraw = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -925,7 +949,9 @@ static void do_seek(int delta_ms)
     if (t < 0) t = 0;
     if ((uint32_t)t > ps.duration_ms) t = (int32_t)ps.duration_ms;
 
+    cpu_boost(true);
     seek_to_time((uint32_t)t);
+    cpu_boost(false);
     osd_show();
 }
 
@@ -1013,7 +1039,7 @@ static void resume_save(const char *filepath)
     fd = open(RESUME_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd >= 0)
     {
-        write(fd, entries, count * sizeof(struct resume_entry));
+        (void)write(fd, entries, count * sizeof(struct resume_entry));
         close(fd);
     }
 }
@@ -1100,11 +1126,13 @@ static void button_loop(const char *filepath)
 
         if (ps.state == PB_PLAYING)
         {
-            /* Boost CPU for decode+scale work (216 MHz vs 54 MHz idle) */
-            cpu_boost(true);
-
             /* Decode and display one frame */
-            int ret = decode_one_frame(true);
+            int ret;
+
+            cpu_boost(true);
+            ret = decode_one_frame(true);
+            cpu_boost(false);
+
             if (ret < 0)
             {
                 ps.state = PB_STOPPED;
@@ -1136,9 +1164,6 @@ static void button_loop(const char *filepath)
             if (ps.osd_visible)
                 osd_draw();
 
-            /* Unboost CPU before pacing sleep (low power during idle) */
-            cpu_boost(false);
-
             /* Accurate frame pacing using absolute tick targets.
              * This avoids cumulative rounding error from integer division. */
             {
@@ -1154,23 +1179,22 @@ static void button_loop(const char *filepath)
         }
         else
         {
-            /* Paused or stopped — poll at 10Hz */
-            btn = button_get_w_tmo(HZ / 10);
+            /* Paused or stopped — fast poll during animation */
+            btn = button_get_w_tmo(ps.osd_anim_step > 0 ? 1 : HZ / 10);
         }
 
-        /* Auto-hide OSD */
-        if (ps.osd_visible && TIME_AFTER(current_tick, ps.osd_hide_tick))
-        {
+        /* Auto-hide OSD (guard: don't re-trigger during fly-out) */
+        if (ps.osd_visible && ps.osd_anim_step == 0
+            && TIME_AFTER(current_tick, ps.osd_hide_tick))
             osd_hide();
-            blit_last_frame();
-            ps.need_full_redraw = false;
-        }
 
         /* Auto-hide volume overlay */
         if (ps.vol_show_until && TIME_AFTER(current_tick, ps.vol_show_until))
         {
             ps.vol_show_until = 0;
             blit_last_frame();
+            if (ps.osd_visible)
+                ps.need_osd_redraw = true;
         }
 
         /* Handle buttons */
@@ -1254,13 +1278,21 @@ static void button_loop(const char *filepath)
         }
 
         /* Redraw for state changes (OSD toggle while paused, etc.) */
-        if (ps.need_full_redraw)
+        if (ps.osd_anim_step > 0 && ps.state != PB_PLAYING)
+        {
+            /* Animation frame while paused — restore video then draw bars */
+            blit_last_frame();
+            clear_letterbox_bars();
+            osd_draw();
+        }
+        else if (ps.need_full_redraw)
         {
             full_redraw();
             ps.need_full_redraw = false;
             ps.need_osd_redraw = false;
         }
-        else if (ps.need_osd_redraw && ps.osd_visible)
+        else if (ps.need_osd_redraw && ps.osd_visible
+                 && ps.osd_anim_step == 0)
         {
             osd_draw();
             ps.need_osd_redraw = false;
@@ -1504,7 +1536,11 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* If resuming, seek to the saved position */
     if (ps.curr_time_ms > 0)
+    {
+        cpu_boost(true);
         seek_to_time(ps.curr_time_ms);
+        cpu_boost(false);
+    }
 
     /* Start playing */
     ps.state = PB_PLAYING;
