@@ -396,29 +396,47 @@ static void disp_go_lcd(void)
 {
     /* ===== FUN_001682cc replication: the GO sequence ===== */
 
-    /* DISP_MODE: PRESERVE Apple's boot-time stale bits (especially bit 5).
-     * Clock gating does NOT reset register values — Apple's NOR bootloader
-     * configures DISP_MODE during boot and it persists through Rockbox.
-     * Apple's code uses read-modify-write (AND 0x3F preserves bits 0-5).
-     * Bit 5 is the ONLY thing that made DISP go busy in testing.
-     * v14 overwrote with 0x1202 and DISP stopped going busy. */
-    DISP_MODE = (DISP_MODE & 0xFFFFFFF0) | 0x02;  /* set bit 1, preserve 4+ */
-    DISP_MODE &= ~0x10;          /* clear bit 4 */
-    DISP_MODE &= 0x3F;           /* clear bits 6-31, PRESERVE bits 0-5 */
-    DISP_MODE |= 0x200;          /* set bit 9 */
-    DISP_MODE |= 0x1000;         /* set bit 12 */
+    /* DISP_MODE bits (from 30 xrefs to 0x39300008 in ROM):
+     *   bits 0-3: output format — FUN_00168180 (ROM 0x168194): bic #0xf, orr #0x2
+     *   bit 4:    postproc type — FUN_00168240 (ROM 0x168258): bic #0x10 (0=LCD)
+     *   bit 5:    NEVER SET by any Apple function. Stale boot values vary.
+     *             v16 log: bit5=1 → DISP never went busy. bit5=0 → DISP busy.
+     *   bit 9:    sync enable — FUN_001682cc (GO)
+     *   bit 12:   pipeline enable — FUN_001682cc (GO)
+     *
+     * Apple's GO does: &= 0x3F (preserve 0-5), |= 0x200, |= 0x1000.
+     * Problem: stale bit 5 is indeterminate. Use &= 0x1F to clear it.
+     * We replicate FUN_00168180 (bit 1) + FUN_00168240 (bit 4 clear) inline. */
+    DISP_MODE = (DISP_MODE & 0xFFFFFFF0) | 0x02;  /* FUN_00168180: set bit 1 */
+    DISP_MODE &= ~0x10;          /* FUN_00168240: clear bit 4 (LCD mode) */
+    DISP_MODE &= 0x1F;           /* GO step 1: clear bits 5-31 (NOT 0x3F — bit 5 must be 0) */
+    DISP_MODE |= 0x200;          /* GO step 2: bit 9 sync enable */
+    DISP_MODE |= 0x1000;         /* GO step 3: bit 12 pipeline enable */
 
-    /* Step 2: Interlace field select — 0 for progressive LCD, 0x200 for interlaced NTSC.
-     * v13 incorrectly set 0x200. Apple: only writes 0x200 when BOTH interlace
-     * flags are set (state[2]==1 && state[3]==1). For LCD: always 0. */
+    /* Interlace field select: 0 for progressive LCD, 0x200 for interlaced NTSC.
+     * ROM 0x168378-0x168390: only writes 0x200 when state[2]==1 && state[3]==1.
+     * For LCD: always 0. v13 incorrectly set 0x200 (reverted in v16). */
     DISP_REG(0x034) = 0;
 
-    /* Step 3: Timing registers (from constant 0x792 = 1938) */
-    DISP_REG(0x028) = 0x79F;     /* 1938 | (1938 >> 7) = 1951 */
-    DISP_REG(0x02C) = 0x7B9;     /* 1938 + 0x27 = 1977 */
-    DISP_REG(0x030) = 0x79A;     /* 1938 + 8 = 1946 */
+    /* Color correction coefficients: CHIPID_REG_TWO bit 8 selects variant.
+     * ROM 0x168354: ldr r2,[r7,#0x4] (CHIPID+4), ROM 0x168358: tst r2,#0x100.
+     * Bytes: 042097e5 / 010c12e3. Two sets for chip silicon variants. */
+    {
+        uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
+        if (chipid2 & 0x100) {
+            /* CHIPID bit 8 set: variant B */
+            DISP_REG(0x028) = 0x7B5;  /* base + 0x23 */
+            DISP_REG(0x02C) = 0x7FF;  /* base + 0x6D */
+            DISP_REG(0x030) = 0x792;  /* base */
+        } else {
+            /* CHIPID bit 8 clear: variant A */
+            DISP_REG(0x028) = 0x79F;  /* base | (base >> 7) */
+            DISP_REG(0x02C) = 0x7B9;  /* base + 0x27 */
+            DISP_REG(0x030) = 0x79A;  /* base + 8 */
+        }
+    }
 
-    /* Step 4: GO */
+    /* GO: clear then enable. ROM 0x1683dc-0x1683e8. */
     DISP_CTRL = 0;
     DISP_CTRL |= 1;
 }
@@ -560,10 +578,17 @@ enum plugin_status plugin_start(const void *parameter)
     MIXER_L5_EN = 0x07;  /* all layer enables (Apple: vtable[0x20] + FUN_00168180 + FUN_00168240) */
     DISP_GAMMA_COMMIT = 0;  /* Apple: FUN_000b3cf4 right before GO */
     disp_go_lcd();
-    vlog("  DISP GO done (DISP_CTRL=0x%08lx DISP_MODE=0x%08lx)",
-         (unsigned long)DISP_CTRL, (unsigned long)DISP_MODE);
-    rb->sleep(HZ / 10);  /* let DISP state machine start (100ms settle) */
-    vlog("  After settle: DISP_CTRL=0x%08lx", (unsigned long)DISP_CTRL);
+    {
+        uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
+        vlog("  DISP GO done (DISP_CTRL=0x%08lx DISP_MODE=0x%08lx)",
+             (unsigned long)DISP_CTRL, (unsigned long)DISP_MODE);
+        vlog("  CHIPID_REG_TWO=0x%08lx (bit8=%d → variant %c)",
+             (unsigned long)chipid2, (chipid2 >> 8) & 1,
+             (chipid2 & 0x100) ? 'B' : 'A');
+    }
+    /* DISP_CTRL=0x01 is the normal running state (agent 3, ROM 0x166e00:
+     * bit 1 = "stopped/drained" confirmation, NOT "busy"). DISP generates
+     * sync continuously. Apple has no explicit delay before first frame. */
 
     /* Readback key registers to verify init */
     vlog("  CLCD  scale[0x28]=0x%08lx (expect 0x8000000)",
