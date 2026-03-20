@@ -847,7 +847,7 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
         need += SMALL_BUF_SIZE + 4096; /* small_a, 4K-aligned */
         need += SMALL_BUF_SIZE + 4096; /* small_b, 4K-aligned */
         need += COEFF_BUF_SIZE + 32;
-        need += y_size + 32;
+        need += y_size + 4096;        /* frame_y, 4K-aligned */
         need += c_size + 32;          /* Cb */
         need += c_size + 32;          /* Cr */
 
@@ -874,7 +874,7 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
         small_a   = (uint8_t *)ALIGN4K(p);    p = small_a + SMALL_BUF_SIZE;
         small_b   = (uint8_t *)ALIGN4K(p);    p = small_b + SMALL_BUF_SIZE;
         coeff_mem = (uint8_t *)ALIGN32(p);    p = coeff_mem + COEFF_BUF_SIZE;
-        frame_y   = (uint8_t *)ALIGN32(p);    p = frame_y + y_size;
+        frame_y   = (uint8_t *)ALIGN4K(p);    p = frame_y + y_size;
         frame_cb  = (uint8_t *)ALIGN32(p);    p = frame_cb + c_size;
         frame_cr  = (uint8_t *)ALIGN32(p);
 
@@ -907,6 +907,7 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
         }
 
         commit_dcache();
+        commit_discard_dcache();
 
         /* Decode all MCUs through VPU-A IDCT */
         if (decode_scan(&js,
