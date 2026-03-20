@@ -658,6 +658,24 @@ enum plugin_status plugin_start(const void *parameter)
             }
         }
 
+        /* Diagnostic: dump Q tables as loaded to XFORM */
+        tlog("QT luma (first 8, zigzag): %d %d %d %d %d %d %d %d",
+             tj.qt[tj.qt_sel[0]][0], tj.qt[tj.qt_sel[0]][1],
+             tj.qt[tj.qt_sel[0]][2], tj.qt[tj.qt_sel[0]][3],
+             tj.qt[tj.qt_sel[0]][4], tj.qt[tj.qt_sel[0]][5],
+             tj.qt[tj.qt_sel[0]][6], tj.qt[tj.qt_sel[0]][7]);
+        tlog("XFORM luma (first 8 regs, raster):");
+        tlog("  %lu %lu %lu %lu %lu %lu %lu %lu",
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 0*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 1*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 2*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 3*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 4*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 5*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 6*4),
+             (unsigned long)REG32(VDEC_XFORM + 0x200 + 7*4));
+        lflush();
+
         rb->commit_dcache();
         rb->commit_discard_dcache();
 
@@ -705,9 +723,42 @@ enum plugin_status plugin_start(const void *parameter)
                     tj_decode_block(&tj, 1, blocks[4]);
                     tj_decode_block(&tj, 2, blocks[5]);
 
+                    /* Diagnostic: dump first MCU coefficients */
+                    if (restart_count == 0)
+                    {
+                        int bi, ci;
+                        const char *bnames[] = {"Y0","Y1","Y2","Y3","Cb","Cr"};
+                        for (bi = 0; bi < 6; bi++)
+                        {
+                            tlog("%s DC=%d nz:", bnames[bi], blocks[bi][0]);
+                            for (ci = 1; ci < 16; ci++)
+                                if (blocks[bi][ci])
+                                    tlog("  [%d]=%d", ci, blocks[bi][ci]);
+                        }
+                        lflush();
+                    }
+
                     /* Y-top */
                     active = (toggle == 0) ? small_a : small_b;
                     pack_coeff_pair(coeff_buf, blocks[0], blocks[1]);
+
+                    /* Diagnostic: dump packed buffer for first MCU */
+                    if (restart_count == 0)
+                    {
+                        tlog("Packed Y-top buf (first 8 words):");
+                        tlog("  b0: %08lx %08lx %08lx %08lx",
+                             (unsigned long)coeff_buf[0],
+                             (unsigned long)coeff_buf[1],
+                             (unsigned long)coeff_buf[2],
+                             (unsigned long)coeff_buf[3]);
+                        tlog("  b1: %08lx %08lx %08lx %08lx",
+                             (unsigned long)coeff_buf[64],
+                             (unsigned long)coeff_buf[65],
+                             (unsigned long)coeff_buf[66],
+                             (unsigned long)coeff_buf[67]);
+                        lflush();
+                    }
+
                     rb->memset(active, 0, SMALL_BUF_SIZE);
                     rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
@@ -716,6 +767,33 @@ enum plugin_status plugin_start(const void *parameter)
                                      toggle, 0) < 0)
                         timeouts++;
                     rb->commit_discard_dcache();
+
+                    /* Diagnostic: dump VPU-A output for first MCU */
+                    if (restart_count == 0)
+                    {
+                        const uint32_t *sb = (const uint32_t *)active;
+                        tlog("VPU-A Y-top out (row0, 8 words, raw):");
+                        tlog("  %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx",
+                             (unsigned long)sb[0], (unsigned long)sb[1],
+                             (unsigned long)sb[2], (unsigned long)sb[3],
+                             (unsigned long)sb[4], (unsigned long)sb[5],
+                             (unsigned long)sb[6], (unsigned long)sb[7]);
+                        /* After bswap32 readback, show first 16 Y pixels */
+                        uint32_t r0 = __builtin_bswap32(sb[0]);
+                        uint32_t r1 = __builtin_bswap32(sb[1]);
+                        uint32_t r2 = __builtin_bswap32(sb[2]);
+                        uint32_t r3 = __builtin_bswap32(sb[3]);
+                        tlog("  bswap: %08lx %08lx %08lx %08lx",
+                             (unsigned long)r0, (unsigned long)r1,
+                             (unsigned long)r2, (unsigned long)r3);
+                        tlog("  pixels: %d %d %d %d %d %d %d %d ...",
+                             (r0>>24)&0xFF, (r0>>16)&0xFF,
+                             (r0>>8)&0xFF, r0&0xFF,
+                             (r1>>24)&0xFF, (r1>>16)&0xFF,
+                             (r1>>8)&0xFF, r1&0xFF);
+                        lflush();
+                    }
+
                     readback_luma(active, frame_y, mb_col, mb_row, 0, y_stride);
                     toggle ^= 1;
 
@@ -777,6 +855,18 @@ enum plugin_status plugin_start(const void *parameter)
 decode_done:
             tlog("Decode: %d MBs, %d timeouts",
                  restart_count, timeouts);
+            /* Dump first 16 Y pixels of frame */
+            tlog("Frame Y row0: %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                 frame_y[0], frame_y[1], frame_y[2], frame_y[3],
+                 frame_y[4], frame_y[5], frame_y[6], frame_y[7],
+                 frame_y[8], frame_y[9], frame_y[10], frame_y[11],
+                 frame_y[12], frame_y[13], frame_y[14], frame_y[15]);
+            tlog("Frame Cb[0..7]: %d %d %d %d %d %d %d %d",
+                 frame_cb[0], frame_cb[1], frame_cb[2], frame_cb[3],
+                 frame_cb[4], frame_cb[5], frame_cb[6], frame_cb[7]);
+            tlog("Frame Cr[0..7]: %d %d %d %d %d %d %d %d",
+                 frame_cr[0], frame_cr[1], frame_cr[2], frame_cr[3],
+                 frame_cr[4], frame_cr[5], frame_cr[6], frame_cr[7]);
             lflush();
         }
 
