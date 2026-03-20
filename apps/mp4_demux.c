@@ -391,6 +391,45 @@ static bool read_chunk_stco(struct mp4_parse_ctx *ctx, size_t chunk_len)
     return true;
 }
 
+/* co64 - 64-bit chunk offset table (for files >4GB).
+ * Reads 64-bit offsets but truncates to 32-bit.
+ * Files with chunk offsets >4GB are not supported. */
+static bool read_chunk_co64(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i, cap;
+
+    stream_read_uint32(&ctx->stream); /* version + flags */
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    cap = (numentries < ctx->res->chunk_offsets_cap)
+        ? numentries : ctx->res->chunk_offsets_cap;
+    ctx->res->num_stco = cap;
+
+    for (i = 0; i < cap; i++)
+    {
+        uint32_t hi = stream_read_uint32(&ctx->stream);
+        uint32_t lo = stream_read_uint32(&ctx->stream);
+        (void)hi; /* discard upper 32 bits */
+        ctx->res->chunk_offsets[i] = lo;
+        size_remaining -= 8;
+    }
+
+    if (numentries > cap)
+    {
+        stream_skip(&ctx->stream, (numentries - cap) * 8);
+        size_remaining -= (numentries - cap) * 8;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
 /* stss - sync sample (keyframe) table */
 static bool read_chunk_stss(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
@@ -457,6 +496,10 @@ static bool read_chunk_stbl(struct mp4_parse_ctx *ctx, size_t chunk_len)
                 break;
             case MAKEFOURCC('s','t','c','o'):
                 if (!read_chunk_stco(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('c','o','6','4'):
+                if (!read_chunk_co64(ctx, sub_len))
                     return false;
                 break;
             case MAKEFOURCC('s','t','s','s'):
@@ -690,7 +733,8 @@ static void walk_for_covr(struct mp4_parse_ctx *ctx, size_t chunk_len,
         {
             walk_for_covr(ctx, sub_len, depth + 1);
         }
-        else if (depth == 3 && sub_id == MAKEFOURCC('d','a','t','a'))
+        else if (depth == 3 && sub_id == MAKEFOURCC('d','a','t','a')
+                 && sub_len >= 24)
         {
             /* covr/data: version+flags(4) + locale(4) + image_data */
             uint32_t data_type = stream_read_uint32(&ctx->stream);
@@ -840,7 +884,8 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
     uint32_t i;
     uint32_t chunk_offset;
 
-    if (sample_index >= res->num_samples)
+    if (sample_index >= res->num_samples ||
+        sample_index >= res->sample_sizes_cap)
         return -1;
 
     *size_out = res->sample_sizes[sample_index];
@@ -858,7 +903,7 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
             next_first = res->num_stco;
 
         uint32_t chunks_in_run = next_first - first_chunk;
-        uint32_t samples_in_run = chunks_in_run * spc;
+        uint64_t samples_in_run = (uint64_t)chunks_in_run * spc;
 
         if (samples_so_far + samples_in_run > sample_index)
         {

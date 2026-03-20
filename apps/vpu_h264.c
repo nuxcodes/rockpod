@@ -136,6 +136,32 @@ static int ebsp_to_rbsp(uint8_t *dst, const uint8_t *src, int src_len)
     return di;
 }
 
+/* Map an RBSP byte offset back to the corresponding EBSP byte offset.
+ * The VPU expects EBSP data (handles EPBs internally), so after parsing
+ * the slice header in RBSP space we need to find where the slice body
+ * starts in the original EBSP stream. */
+static int map_rbsp_to_ebsp(const uint8_t *ebsp, int ebsp_len, int rbsp_pos)
+{
+    int ri = 0, si = 0;
+    while (si < ebsp_len && ri < rbsp_pos)
+    {
+        if (si + 2 < ebsp_len &&
+            ebsp[si] == 0 && ebsp[si+1] == 0 && ebsp[si+2] == 3)
+        {
+            if (ri + 1 >= rbsp_pos)
+                return si + (rbsp_pos - ri);
+            ri += 2;
+            si += 3;
+        }
+        else
+        {
+            ri++;
+            si++;
+        }
+    }
+    return si;
+}
+
 /* ---- H.264 header structures ---- */
 
 struct sps {
@@ -625,7 +651,8 @@ int vpu_h264_configure(struct vpu_h264 *v,
         v->pic_w = v->pic_wmb * 16;
         v->pic_h = v->pic_hmb * 16;
 
-        if (v->pic_w > v->max_w || v->pic_h > v->max_h)
+        if (v->pic_w == 0 || v->pic_h == 0 ||
+            v->pic_w > v->max_w || v->pic_h > v->max_h)
             return -1;
 
         v->frame_y_size = v->pic_w * v->pic_h;
@@ -687,7 +714,8 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
         v->pic_hmb = v->sps.pic_height_in_map_units_minus1 + 1;
         v->pic_w = v->pic_wmb * 16;
         v->pic_h = v->pic_hmb * 16;
-        if (v->pic_w > v->max_w || v->pic_h > v->max_h)
+        if (v->pic_w == 0 || v->pic_h == 0 ||
+            v->pic_w > v->max_w || v->pic_h > v->max_h)
             return -1;
         v->frame_y_size = v->pic_w * v->pic_h;
         v->frame_cb_size = (v->pic_w / 2) * (v->pic_h / 2);
@@ -717,16 +745,23 @@ int vpu_h264_decode_nalu(struct vpu_h264 *v,
         slice_qp = 26 + v->pps.pic_init_qp_minus26 + sh.slice_qp_delta;
         hdr_bytes = sh.bits_consumed / 8;
         bit_off = sh.bits_consumed & 7;
-        dma_len = rbsp_len - hdr_bytes;
         mb_count = v->pic_wmb * v->pic_hmb - sh.first_mb_in_slice;
 
-        if (dma_len <= 0 || dma_len > BS_DMA_SIZE)
-            return -1;
+        /* Map RBSP header offset to EBSP offset in the original NALU.
+         * The VPU expects EBSP data (handles EPBs internally). */
+        {
+            int ebsp_hdr_offset = map_rbsp_to_ebsp(nalu, nalu_len,
+                                                     hdr_bytes);
+            dma_len = nalu_len - ebsp_hdr_offset;
 
-        commit_discard_dcache();
+            if (dma_len <= 0 || dma_len > BS_DMA_SIZE)
+                return -1;
 
-        memcpy(UNCACHED(v->bs_dma), v->nalu_buf + hdr_bytes,
-               MIN(dma_len, BS_DMA_SIZE));
+            commit_discard_dcache();
+
+            memcpy(UNCACHED(v->bs_dma), nalu + ebsp_hdr_offset,
+                   MIN(dma_len, BS_DMA_SIZE));
+        }
 
         memset(UNCACHED(v->slice_desc), 0, SLICE_DESC_SIZE);
         build_slice_descriptor(

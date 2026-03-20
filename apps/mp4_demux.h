@@ -32,7 +32,7 @@
 
 /* Max sample table entries we'll store in memory */
 #define MP4V_MAX_SAMPLES    65536
-#define MP4V_MAX_STTS       64
+#define MP4V_MAX_STTS       4096
 #define MP4V_MAX_STSC       256
 #define MP4V_MAX_STCO       8192
 #define MP4V_MAX_STSS       4096

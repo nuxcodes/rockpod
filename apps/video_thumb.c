@@ -68,7 +68,7 @@ bool video_thumb_extract(const char *filepath,
                          void *thumb_buf,
                          void *work_buf, size_t work_size)
 {
-    struct mp4v_demux_res res;
+    static struct mp4v_demux_res res;
     uint32_t dummy_samples[1];
     uint32_t dummy_chunks[1];
     int fd;
