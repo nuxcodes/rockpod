@@ -302,12 +302,27 @@ static void mixer_init(void)
     MIXER_CTRL = 6;
 }
 
-/* Display engine filter coefficients from ROM data pool 0x167e54 */
-static const uint32_t disp_filter_coeff[14] = {
-    0x00FD00FE, 0x00050004, 0x00F700FA, 0x000E000A,
-    0x01EC01F2, 0x001D0014, 0x000001FE, 0x03D803E4,
-    0x03B003C7, 0x00790056, 0x000003F6, 0x072C0766,
-    0x028B0265, 0x04000ECC
+/* DISP +0x200-0x26C: interleaved coefficient + control register layout.
+ * Traced from FUN_00167c34 at ROM 0x167d6c-0x167e38.
+ * Previous versions wrote 14 coefficients consecutively — WRONG offsets.
+ * Apple interleaves: even offsets = filter/scaler coefficients,
+ * odd offsets = timing control values (sync, porch, polarity).
+ * Without correct control values, DISP generates no valid sync signals. */
+static const uint32_t disp_regs_200[28] = {
+    0x00FD00FE, 0x00000000,  /* +0x200, +0x204 */
+    0x00050004, 0x000000FF,  /* +0x208, +0x20C */
+    0x00F700FA, 0x00000001,  /* +0x210, +0x214 */
+    0x000E000A, 0x000001FF,  /* +0x218, +0x21C */
+    0x01EC01F2, 0x00000001,  /* +0x220, +0x224 */
+    0x001D0014, 0x000001FE,  /* +0x228, +0x22C */
+    0x03D803E4, 0x00000002,  /* +0x230, +0x234 */
+    0x00380028, 0x000003FD,  /* +0x238, +0x23C */
+    0x03B003C7, 0x00000005,  /* +0x240, +0x244 */
+    0x00790056, 0x000003F6,  /* +0x248, +0x24C */
+    0x072C0766, 0x0000001B,  /* +0x250, +0x254 */
+    0x028B0265, 0x04000ECC,  /* +0x258, +0x25C */
+    0x00000000, 0x00000000,  /* +0x260, +0x264 */
+    0x00000000, 0x00011A00,  /* +0x268, +0x26C */
 };
 
 static void disp_init_lcd(void)
@@ -356,13 +371,10 @@ static void disp_init_lcd(void)
     /* Output pixel format */
     DISP_OUT_FMT = 0x11;
 
-    /* Display filter coefficients (+0x200 through +0x234) */
-    for (int i = 0; i < 14; i++)
-        DISP_REG(0x200 + i * 4) = disp_filter_coeff[i];
-
-    /* Zero remaining filter area */
-    for (int i = 0x238; i <= 0x26C; i += 4)
-        DISP_REG(i) = 0;
+    /* Display filter/timing registers (+0x200 through +0x26C).
+     * Interleaved layout: 28 words from ROM 0x167d6c-0x167e38. */
+    for (int i = 0; i < 28; i++)
+        DISP_REG(0x200 + i * 4) = disp_regs_200[i];
 
     /* Pipeline fundamental config (from FUN_00069994) */
     DISP_REG(0x014) = 0x0000440C;
