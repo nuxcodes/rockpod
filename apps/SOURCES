@@ -53,6 +53,7 @@ root_menu.c
 #ifdef IPOD_6G
 itunesdb.c
 artworkdb.c
+jpeg_hw.c
 videos.c
 mp4_demux.c
 video_thumb.c

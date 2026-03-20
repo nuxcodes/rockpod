@@ -31,6 +31,9 @@
 #include "recorder/jpeg_load.h"
 #include "mp4_demux.h"
 #include "video_thumb.h"
+#ifdef IPOD_6G
+#include "jpeg_hw.h"
+#endif
 
 #include <string.h>
 
@@ -84,6 +87,21 @@ bool video_thumb_extract(const char *filepath,
         if (fd >= 0)
         {
             lseek(fd, res.cover_offset, SEEK_SET);
+
+#ifdef IPOD_6G
+            /* Try VPU-A hardware JPEG decode first */
+            if (res.cover_type == 13 /* JPEG */
+                && jpeg_hw_decode_fd(fd, res.cover_size,
+                                     (fb_data *)thumb_buf,
+                                     THUMB_SIZE, THUMB_SIZE,
+                                     work_buf, work_size))
+            {
+                close(fd);
+                return true;
+            }
+            /* HW decode failed — fall through to SW */
+            lseek(fd, res.cover_offset, SEEK_SET);
+#endif
 
             memset(&bm, 0, sizeof(bm));
             bm.width = THUMB_SIZE;
