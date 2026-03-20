@@ -53,13 +53,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ARM assembly YUV420->RGB565 converter (writes 2 lines to contiguous outbuf).
- * Global symbol from firmware/target/arm/s5l8702/lcd-asm-s5l8702.S. */
-extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
-                                   uint16_t *outbuf,
-                                   int width,
-                                   int stride);
-
 /* ------------------------------------------------------------------ */
 /* Constants                                                          */
 /* ------------------------------------------------------------------ */
@@ -230,8 +223,9 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
 {
     uint32_t x_step, y_step;
     int r, c;
-    uint16_t xtab[LCD_WIDTH];
-    uint8_t  xftab[LCD_WIDTH];
+    int16_t x0tab[LCD_WIDTH];
+    int16_t x1tab[LCD_WIDTH];
+    uint8_t xftab[LCD_WIDTH];
 
     if (dst_w < 1 || dst_h < 1 || src_w < 1 || src_h < 1)
         return;
@@ -249,7 +243,8 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
         x0 = (uint32_t)sx >> 16;
         x1 = x0 + 1;
         if (x1 >= src_w) x1 = src_w - 1;
-        xtab[c] = (uint16_t)(x0 | (x1 << 8));
+        x0tab[c] = (int16_t)x0;
+        x1tab[c] = (int16_t)x1;
         xftab[c] = (uint8_t)(((uint32_t)sx >> 8) & 0xFF);
     }
 
@@ -275,8 +270,8 @@ static void scale_plane_downscale(const uint8_t *src, int src_w, int src_h,
         for (c = 0; c < dst_w; c++)
         {
             uint32_t xf = xftab[c];
-            int x0 = xtab[c] & 0xFF;
-            int x1 = xtab[c] >> 8;
+            int x0 = x0tab[c];
+            int x1 = x1tab[c];
             uint32_t ab, de;
 
             ab = row0[x0] * (256 - xf) + row0[x1] * xf;
@@ -336,59 +331,19 @@ static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
 }
 
 /* ------------------------------------------------------------------ */
-/* Blit YUV420 to main LCD framebuffer (no LCD push)                  */
-/* Used for compositing: video + OSD drawn to FB, then lcd_update()   */
+/* Scale full frame, blit a vertical strip via lcd_blit_yuv            */
+/* strip_y and strip_h must be even (YUV420 constraint).               */
 /* ------------------------------------------------------------------ */
 
-static void blit_yuv_to_fb(const uint8_t *y, const uint8_t *cb,
-                            const uint8_t *cr, int stride,
-                            int x, int y_pos, int w, int h)
+static void scale_and_blit_strip(const uint8_t *y, const uint8_t *cb,
+                                  const uint8_t *cr, int w, int h,
+                                  int strip_y, int strip_h)
 {
-    unsigned char const *yuv_src[3];
-    int pairs = h >> 1;
+    unsigned char *src[3];
+    int src_y;
 
-    w = (w + 1) & ~1;
-    yuv_src[0] = y;
-    yuv_src[1] = cb;
-    yuv_src[2] = cr;
+    if (strip_h <= 0) return;
 
-    lcd_set_viewport(NULL);
-
-    if (x == 0 && w == LCD_WIDTH)
-    {
-        /* Fast path: video width == LCD stride, write directly */
-        uint16_t *out = (uint16_t *)FBADDR(0, y_pos);
-        while (pairs-- > 0)
-        {
-            lcd_write_yuv420_lines(yuv_src, out, w, stride);
-            yuv_src[0] += stride << 1;
-            yuv_src[1] += stride >> 1;
-            yuv_src[2] += stride >> 1;
-            out += LCD_WIDTH << 1;
-        }
-    }
-    else
-    {
-        /* Slow path: temp buffer for stride mismatch */
-        uint16_t line_buf[LCD_WIDTH * 2];
-        int row = y_pos;
-        while (pairs-- > 0)
-        {
-            lcd_write_yuv420_lines(yuv_src, line_buf, w, stride);
-            memcpy(FBADDR(x, row), line_buf, w * sizeof(uint16_t));
-            memcpy(FBADDR(x, row + 1), line_buf + w, w * sizeof(uint16_t));
-            yuv_src[0] += stride << 1;
-            yuv_src[1] += stride >> 1;
-            yuv_src[2] += stride >> 1;
-            row += 2;
-        }
-    }
-}
-
-/* Like scale_and_blit() but writes to framebuffer for compositing */
-static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
-                               const uint8_t *cr, int w, int h)
-{
     if (ps.need_scale)
     {
         int cdst_w = ps.dst_w / 2;
@@ -411,14 +366,21 @@ static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
             scale_plane_downscale(cr, w / 2, h / 2, w / 2,
                                   ps.scale_cr, cdst_w, cdst_h);
         }
-        blit_yuv_to_fb(ps.scale_y, ps.scale_cb, ps.scale_cr,
-                        ps.dst_w,
-                        ps.disp_x, ps.disp_y, ps.dst_w, ps.dst_h);
+        src[0] = (unsigned char *)ps.scale_y;
+        src[1] = (unsigned char *)ps.scale_cb;
+        src[2] = (unsigned char *)ps.scale_cr;
+        src_y = strip_y - ps.disp_y;
+        lcd_blit_yuv(src, 0, src_y, ps.dst_w,
+                     ps.disp_x, strip_y, ps.dst_w, strip_h);
     }
     else
     {
-        blit_yuv_to_fb(y, cb, cr, w,
-                        ps.disp_x, ps.disp_y, ps.disp_w, ps.disp_h);
+        src[0] = (unsigned char *)y;
+        src[1] = (unsigned char *)cb;
+        src[2] = (unsigned char *)cr;
+        src_y = strip_y - ps.disp_y;
+        lcd_blit_yuv(src, 0, src_y, w,
+                     ps.disp_x, strip_y, ps.disp_w, strip_h);
     }
 }
 
@@ -426,27 +388,26 @@ static void scale_and_blit_fb(const uint8_t *y, const uint8_t *cb,
 /* Clear letterbox bars (black areas outside video rect)              */
 /* ------------------------------------------------------------------ */
 
-static void clear_letterbox_bars(bool push)
+static void clear_letterbox_bars(void)
 {
     lcd_set_foreground(LCD_BLACK);
     if (ps.disp_y > 0)
     {
         int bot_y = ps.disp_y + ps.disp_h;
         lcd_fillrect(0, 0, LCD_WIDTH, ps.disp_y);
-        if (push) lcd_update_rect(0, 0, LCD_WIDTH, ps.disp_y);
+        lcd_update_rect(0, 0, LCD_WIDTH, ps.disp_y);
         lcd_fillrect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
-        if (push) lcd_update_rect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
+        lcd_update_rect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
     }
     if (ps.disp_x > 0)
     {
         int right_x = ps.disp_x + ps.disp_w;
         lcd_fillrect(0, ps.disp_y, ps.disp_x, ps.disp_h);
-        if (push) lcd_update_rect(0, ps.disp_y, ps.disp_x, ps.disp_h);
+        lcd_update_rect(0, ps.disp_y, ps.disp_x, ps.disp_h);
         lcd_fillrect(right_x, ps.disp_y,
                      LCD_WIDTH - right_x, ps.disp_h);
-        if (push)
-            lcd_update_rect(right_x, ps.disp_y,
-                            LCD_WIDTH - right_x, ps.disp_h);
+        lcd_update_rect(right_x, ps.disp_y,
+                        LCD_WIDTH - right_x, ps.disp_h);
     }
 }
 
@@ -499,10 +460,10 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                if (ps.osd_visible)
-                    scale_and_blit_fb(y, cb, cr, w, h);
-                else
+                if (!ps.osd_visible)
                     scale_and_blit(y, cb, cr, w, h);
+                /* When OSD visible, osd_draw() handles video
+                 * via scale_and_blit_strip (clipped to strip) */
             }
             return 1;
         }
@@ -529,20 +490,6 @@ static void blit_last_frame(void)
     if (!y || w == 0 || h == 0) return;
 
     scale_and_blit(y, cb, cr, w, h);
-}
-
-/* Like blit_last_frame() but writes to framebuffer for compositing */
-static void blit_last_frame_fb(void)
-{
-    const uint8_t *y, *cb, *cr;
-    int w, h;
-
-    if (!ps.decoder) return;
-
-    vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-    if (!y || w == 0 || h == 0) return;
-
-    scale_and_blit_fb(y, cb, cr, w, h);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1004,21 +951,83 @@ static void osd_draw(void)
 
     lcd_set_viewport(NULL);
 
-    /* Composite: letterbox + bars + volume all to framebuffer,
-     * then push entire frame to LCD in a single DMA transfer.
-     * Video is already in the framebuffer (from scale_and_blit_fb
-     * or blit_last_frame_fb). */
-    clear_letterbox_bars(false);
-
+    /* Draw bars to framebuffer */
     if (title_vis > 0)
         draw_title_bar(title_y);
     if (trans_vis > 0)
         draw_transport_bar(trans_y);
 
-    if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
-        draw_volume_overlay();
+    /* Align strip boundaries to even rows (YUV420 constraint) */
+    {
+        int strip_top = (title_vis + 1) & ~1;
+        int strip_bot = trans_y & ~1;
+        int top_push = strip_top;
+        int bot_push = strip_bot;
+        int fill_start, fill_end;
 
-    lcd_update();
+        /* Extend to cover letterbox if needed */
+        if (ps.disp_y > top_push)
+            top_push = ps.disp_y;
+        if (ps.disp_y + ps.disp_h < bot_push)
+            bot_push = ps.disp_y + ps.disp_h;
+
+        /* Fill gap between bar edge and strip/video with black */
+        fill_start = (title_vis > 0) ? title_vis : 0;
+        if (top_push > fill_start)
+        {
+            lcd_set_foreground(LCD_BLACK);
+            lcd_fillrect(0, fill_start, LCD_WIDTH, top_push - fill_start);
+        }
+        fill_end = (trans_vis > 0) ? trans_y : LCD_HEIGHT;
+        if (bot_push < fill_end)
+        {
+            lcd_set_foreground(LCD_BLACK);
+            lcd_fillrect(0, bot_push, LCD_WIDTH, fill_end - bot_push);
+        }
+
+        /* Push bar regions from framebuffer to LCD */
+        if (top_push > 0)
+            lcd_update_rect(0, 0, LCD_WIDTH, top_push);
+        if (bot_push < LCD_HEIGHT)
+            lcd_update_rect(0, bot_push, LCD_WIDTH, LCD_HEIGHT - bot_push);
+
+        /* Blit video strip directly to LCD (clipped, no framebuffer) */
+        {
+            int strip_h = (bot_push - top_push) & ~1;
+            if (strip_h > 0)
+            {
+                const uint8_t *vy, *vcb, *vcr;
+                int vw, vh;
+                vpu_h264_get_frame(ps.decoder, &vy, &vcb, &vcr, &vw, &vh);
+                if (vy && vw > 0 && vh > 0)
+                    scale_and_blit_strip(vy, vcb, vcr, vw, vh,
+                                         top_push, strip_h);
+            }
+        }
+
+        /* Pillarbox columns in strip zone */
+        if (ps.disp_x > 0 && bot_push > top_push)
+        {
+            int right_x = ps.disp_x + ps.disp_w;
+            int sh = bot_push - top_push;
+            lcd_set_foreground(LCD_BLACK);
+            lcd_fillrect(0, top_push, ps.disp_x, sh);
+            lcd_update_rect(0, top_push, ps.disp_x, sh);
+            lcd_fillrect(right_x, top_push, LCD_WIDTH - right_x, sh);
+            lcd_update_rect(right_x, top_push, LCD_WIDTH - right_x, sh);
+        }
+    }
+
+    /* Volume overlay (opaque box, drawn after video strip) */
+    if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
+    {
+        int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
+        int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
+        int box_x = (LCD_WIDTH - box_w) / 2;
+        int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
+        draw_volume_overlay();
+        lcd_update_rect(box_x, box_y, box_w, box_h);
+    }
 
     /* Advance animation */
     if (ps.osd_anim_step > 0)
@@ -1044,16 +1053,11 @@ static void osd_draw(void)
 static void full_redraw(void)
 {
     if (ps.osd_visible && ps.osd_anim_step == 0)
-    {
-        /* Composite path: video + letterbox + bars -> framebuffer -> lcd_update */
-        blit_last_frame_fb();
         osd_draw();
-    }
     else
     {
-        /* Direct path: video straight to LCD */
         blit_last_frame();
-        clear_letterbox_bars(true);
+        clear_letterbox_bars();
     }
 }
 
@@ -1314,13 +1318,10 @@ static void button_loop(const char *filepath)
                 no_frame_count = 0;
             }
 
-            /* OSD overlay: video is already in framebuffer (from
-             * scale_and_blit_fb in decode_one_frame). Draw bars on top
-             * and push entire composited frame via lcd_update(). */
+            /* OSD overlay: osd_draw handles bars + clipped video strip.
+             * Video blit is inside osd_draw via scale_and_blit_strip. */
             if (ps.osd_visible)
             {
-                if (ret != 1)
-                    blit_last_frame_fb();
                 osd_draw();
                 ps.need_osd_redraw = false;
             }
@@ -1355,7 +1356,7 @@ static void button_loop(const char *filepath)
                 if (wait < 0) wait = 0;
                 if (wait > HZ) wait = HZ;
 
-                btn = button_get_w_tmo(wait > 0 ? wait : 1);
+                btn = button_get_w_tmo(wait > 0 ? wait : 0);
             }
         }
         else
@@ -1374,14 +1375,11 @@ static void button_loop(const char *filepath)
         {
             ps.vol_show_until = 0;
             if (ps.osd_visible && ps.osd_anim_step == 0)
-            {
-                blit_last_frame_fb();
                 osd_draw();
-            }
             else
             {
                 blit_last_frame();
-                clear_letterbox_bars(true);
+                clear_letterbox_bars();
             }
         }
 
@@ -1468,16 +1466,11 @@ static void button_loop(const char *filepath)
         /* Redraw for state changes (OSD toggle while paused, etc.) */
         if (ps.osd_anim_step > 0 && ps.state != PB_PLAYING)
         {
-            /* Composite: video + letterbox + bars -> framebuffer -> lcd_update */
-            blit_last_frame_fb();
+            /* Paused animation: clipped-blit re-renders last frame strip */
             osd_draw();
         }
         else if (ps.need_full_redraw)
         {
-            /* During PB_PLAYING, skip full_redraw — the next iteration's
-             * decode_one_frame will render via lcd_blit_yuv (OSD now hidden).
-             * Calling full_redraw here would redundantly re-blit the same
-             * frame (2-4 extra DMA transfers), causing a frame drop. */
             if (ps.state != PB_PLAYING)
                 full_redraw();
             ps.need_full_redraw = false;
@@ -1486,7 +1479,6 @@ static void button_loop(const char *filepath)
         else if (ps.need_osd_redraw && ps.osd_visible
                  && ps.osd_anim_step == 0)
         {
-            blit_last_frame_fb();
             osd_draw();
             ps.need_osd_redraw = false;
         }
@@ -1683,10 +1675,12 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Compute display rect with aspect-preserving downscale. */
+    /* Compute display rect with aspect-preserving downscale.
+     * Use display dimensions from tkhd (PAR-adjusted) for aspect ratio,
+     * but coded dimensions (video_w/h) for VPU output stride. */
     {
-        uint16_t ar_w = ps.video_w;
-        uint16_t ar_h = ps.video_h;
+        uint16_t ar_w = demux.display_width ? demux.display_width : ps.video_w;
+        uint16_t ar_h = demux.display_height ? demux.display_height : ps.video_h;
 
         if (ar_w > LCD_WIDTH || ar_h > LCD_HEIGHT)
         {
@@ -1708,7 +1702,7 @@ void video_playback_start(const char *filepath, const char *title)
         ps.disp_w = ps.dst_w;
         ps.disp_h = ps.dst_h;
         ps.disp_x = (LCD_WIDTH - ps.disp_w) / 2;
-        ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
+        ps.disp_y = ((LCD_HEIGHT - ps.disp_h) / 2) & ~1;
     }
 
     load_theme_colors();
