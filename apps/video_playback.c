@@ -1269,9 +1269,10 @@ void video_playback_start(const char *filepath, const char *title)
     audio_hard_stop();
 
     {
-        size_t scale_size = 0;
-        if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
-            scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
+        /* Always allocate scale buffer — PAR from tkhd may require scaling
+         * even when coded dimensions fit in LCD (e.g., 640x480 coded but
+         * 853x480 display for 16:9 content). 115KB is negligible. */
+        size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
 
         alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
                    + MP4V_MAX_STCO * sizeof(uint32_t) + 32
@@ -1304,8 +1305,7 @@ void video_playback_start(const char *filepath, const char *title)
     ps.read_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
     p = ps.read_buf + ps.read_buf_size;
 
-    /* Allocate scale buffer if video needs downscaling */
-    if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
+    /* Allocate scale buffer (always — PAR may require scaling) */
     {
         int sw = LCD_WIDTH;
         int sh = LCD_HEIGHT;
@@ -1359,28 +1359,35 @@ void video_playback_start(const char *filepath, const char *title)
     ps.duration_ms = calc_duration_ms(&demux);
     if (ps.duration_ms == 0) ps.duration_ms = 60000;
 
-    /* Compute display rect with aspect-preserving downscale */
-    if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
+    /* Compute display rect with aspect-preserving downscale.
+     * Use display dimensions from tkhd (PAR-adjusted) for aspect ratio,
+     * but coded dimensions (width/height) for VPU output stride. */
     {
-        uint32_t sx = ((uint32_t)LCD_WIDTH << 16) / demux.width;
-        uint32_t sy = ((uint32_t)LCD_HEIGHT << 16) / demux.height;
-        uint32_t s = MIN(sx, sy);
-        ps.dst_w = (int)(((uint32_t)demux.width * s) >> 16) & ~1;
-        ps.dst_h = (int)(((uint32_t)demux.height * s) >> 16) & ~1;
-        if (ps.dst_w < 4) ps.dst_w = 4;
-        if (ps.dst_h < 4) ps.dst_h = 4;
-        ps.need_scale = true;
+        uint16_t ar_w = demux.display_width ? demux.display_width : demux.width;
+        uint16_t ar_h = demux.display_height ? demux.display_height : demux.height;
+
+        if (ar_w > LCD_WIDTH || ar_h > LCD_HEIGHT)
+        {
+            uint32_t sx = ((uint32_t)LCD_WIDTH << 16) / ar_w;
+            uint32_t sy = ((uint32_t)LCD_HEIGHT << 16) / ar_h;
+            uint32_t s = MIN(sx, sy);
+            ps.dst_w = (int)(((uint32_t)ar_w * s) >> 16) & ~1;
+            ps.dst_h = (int)(((uint32_t)ar_h * s) >> 16) & ~1;
+            if (ps.dst_w < 4) ps.dst_w = 4;
+            if (ps.dst_h < 4) ps.dst_h = 4;
+            ps.need_scale = true;
+        }
+        else
+        {
+            ps.dst_w = ar_w & ~1;
+            ps.dst_h = ar_h & ~1;
+            ps.need_scale = (ar_w != demux.width || ar_h != demux.height);
+        }
+        ps.disp_w = ps.dst_w;
+        ps.disp_h = ps.dst_h;
+        ps.disp_x = (LCD_WIDTH - ps.disp_w) / 2;
+        ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
     }
-    else
-    {
-        ps.dst_w = demux.width & ~1;
-        ps.dst_h = demux.height & ~1;
-        ps.need_scale = false;
-    }
-    ps.disp_w = ps.dst_w;
-    ps.disp_h = ps.dst_h;
-    ps.disp_x = (LCD_WIDTH - ps.disp_w) / 2;
-    ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
 
     load_theme_colors();
 

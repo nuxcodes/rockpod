@@ -65,8 +65,10 @@ struct mp4v_stsc_entry {
 struct mp4v_demux_res {
     /* Video format */
     uint32_t format;         /* fourcc: 'avc1' etc. */
-    uint16_t width;
-    uint16_t height;
+    uint16_t width;          /* coded width from avc1 sample entry */
+    uint16_t height;         /* coded height from avc1 sample entry */
+    uint16_t display_width;  /* display width from tkhd (PAR-adjusted) */
+    uint16_t display_height; /* display height from tkhd */
     uint32_t timescale;      /* from mdhd */
 
     /* avcC decoder config (SPS + PPS) */

@@ -659,6 +659,46 @@ static bool read_chunk_mdia(struct mp4_parse_ctx *ctx, size_t chunk_len)
     return true;
 }
 
+/* tkhd - track header (extract display width/height for PAR) */
+static bool read_chunk_tkhd(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t version;
+    uint32_t dw_fp, dh_fp; /* 16.16 fixed-point display dimensions */
+
+    version = stream_read_uint32(&ctx->stream); /* version + flags */
+    size_remaining -= 4;
+
+    if ((version >> 24) == 0)
+    {
+        /* Version 0: creation(4)+modification(4)+track_id(4)+reserved(4)+
+           duration(4) = 20 bytes, then reserved(8)+layer(2)+alt_group(2)+
+           volume(2)+reserved(2)+matrix(36)+width(4)+height(4) = 56 bytes */
+        stream_skip(&ctx->stream, 20 + 8 + 2 + 2 + 2 + 2 + 36);
+        size_remaining -= 20 + 8 + 2 + 2 + 2 + 2 + 36;
+    }
+    else
+    {
+        /* Version 1: creation(8)+modification(8)+track_id(4)+reserved(4)+
+           duration(8) = 32 bytes */
+        stream_skip(&ctx->stream, 32 + 8 + 2 + 2 + 2 + 2 + 36);
+        size_remaining -= 32 + 8 + 2 + 2 + 2 + 2 + 36;
+    }
+
+    dw_fp = stream_read_uint32(&ctx->stream); /* width in 16.16 */
+    dh_fp = stream_read_uint32(&ctx->stream); /* height in 16.16 */
+    size_remaining -= 8;
+
+    /* Store integer part of display dimensions (for later PAR use) */
+    ctx->res->display_width = (uint16_t)(dw_fp >> 16);
+    ctx->res->display_height = (uint16_t)(dh_fp >> 16);
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
 /* trak - track container */
 static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
@@ -677,6 +717,10 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
 
         switch (sub_id)
         {
+            case MAKEFOURCC('t','k','h','d'):
+                if (!read_chunk_tkhd(ctx, sub_len))
+                    return false;
+                break;
             case MAKEFOURCC('m','d','i','a'):
                 if (!read_chunk_mdia(ctx, sub_len))
                     return false;
