@@ -45,7 +45,11 @@
 #define MHIT_TOTAL_LEN        8
 #define MHIT_NUM_MHOD        12
 #define MHIT_DURATION_MS      40
+#define MHIT_DBID            112
+#define MHIT_ARTWORK_COUNT   124
+#define MHIT_HAS_ARTWORK     164
 #define MHIT_MEDIATYPE       208
+#define MHIT_MHII_LINK       352
 
 /* mhod field offsets */
 #define MHOD_HEADER_LEN       4
@@ -69,6 +73,16 @@ static uint32_t get_le32(const unsigned char *buf)
          | ((uint32_t)buf[1] << 8)
          | ((uint32_t)buf[2] << 16)
          | ((uint32_t)buf[3] << 24);
+}
+
+static uint16_t get_le16(const unsigned char *buf)
+{
+    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+}
+
+static uint64_t get_le64(const unsigned char *buf)
+{
+    return (uint64_t)get_le32(buf) | ((uint64_t)get_le32(buf + 4) << 32);
 }
 
 /* Read exactly n bytes at a given offset. Returns n on success, <n on error. */
@@ -200,15 +214,15 @@ static int read_mhod_string(int fd, off_t mhod_offset,
 static int parse_mhit(int fd, off_t mhit_offset,
                       struct video_library *lib)
 {
-    unsigned char hdr[256];
+    unsigned char hdr[356];
     uint32_t hdr_len, num_mhod, duration_ms, mediatype;
     struct video_entry *entry;
     off_t mhod_offset;
     uint32_t i;
     char raw_path[256];
 
-    /* Read enough of the mhit header to get the fields we need */
-    if (read_at(fd, mhit_offset, hdr, 212) < 212)
+    /* Read enough of the mhit header for all fields up to mhii_link (352+4) */
+    if (read_at(fd, mhit_offset, hdr, 356) < 212)
         return -1;
 
     /* Verify magic */
@@ -232,6 +246,16 @@ static int parse_mhit(int fd, off_t mhit_offset,
     memset(entry, 0, sizeof(*entry));
     entry->duration_ms = duration_ms;
     entry->type = mediatype_to_videotype(mediatype);
+
+    /* Extract artwork fields (only if header is large enough) */
+    if (hdr_len >= MHIT_DBID + 8)
+        entry->dbid = get_le64(hdr + MHIT_DBID);
+    if (hdr_len >= MHIT_ARTWORK_COUNT + 2)
+        entry->artwork_count = get_le16(hdr + MHIT_ARTWORK_COUNT);
+    if (hdr_len >= MHIT_HAS_ARTWORK + 1)
+        entry->has_artwork = hdr[MHIT_HAS_ARTWORK];
+    if (hdr_len >= MHIT_MHII_LINK + 4)
+        entry->mhii_link = get_le32(hdr + MHIT_MHII_LINK);
 
     /* Parse mhod children for title, path, artist */
     mhod_offset = mhit_offset + hdr_len;

@@ -36,6 +36,10 @@ struct video_entry {
     char filepath[256];
     uint32_t duration_ms;
     enum video_type type;
+    uint64_t dbid;           /* mhit+112: ArtworkDB lookup key */
+    uint32_t mhii_link;      /* mhit+352: → ArtworkDB mhii.id */
+    uint16_t artwork_count;  /* mhit+124: ≥1 required for ithmb */
+    uint8_t  has_artwork;    /* mhit+164: 0x01=yes, 0x02=no */
 };
 
 struct video_library {

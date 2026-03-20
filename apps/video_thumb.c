@@ -119,19 +119,11 @@ bool video_thumb_from_jpeg(const char *jpeg_path,
     bm.height = THUMB_SIZE;
     bm.data = (unsigned char *)work_buf;
 
-    /* Force test gradient to verify bitmap rendering pipeline */
-    {
-        fb_data *dst = (fb_data *)thumb_buf;
-        int r, c;
-        for (r = 0; r < THUMB_SIZE; r++)
-            for (c = 0; c < THUMB_SIZE; c++)
-                dst[r * THUMB_SIZE + c] = LCD_RGBPACK(c * 5, r * 5, 200);
-    }
+    ret = read_jpeg_file(jpeg_path, &bm, work_size,
+                         FORMAT_NATIVE | FORMAT_RESIZE | FORMAT_KEEP_ASPECT,
+                         NULL);
+    if (ret <= 0)
+        return false;
+    letterbox_to_thumb(&bm, thumb_buf);
     return true;
-
-    (void)jpeg_path;
-    (void)work_buf;
-    (void)work_size;
-    (void)bm;
-    (void)ret;
 }

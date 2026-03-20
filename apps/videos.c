@@ -30,6 +30,7 @@
 #include "root_menu.h"
 #include "screen_access.h"
 #include "itunesdb.h"
+#include "artworkdb.h"
 #include "video_thumb.h"
 #include "video_playback.h"
 #include "videos.h"
@@ -57,7 +58,7 @@ static bool    thumb_valid[MAX_THUMBS];
 #define VIDEOS_CACHE_PATH ROCKBOX_DIR "/videos.cache"
 #define ITUNESDB_PATH     "/iPod_Control/iTunes/iTunesDB"
 #define CACHE_MAGIC       0x56494443  /* "VIDC" */
-#define CACHE_VERSION     1
+#define CACHE_VERSION     2
 
 struct videos_cache_header {
     uint32_t magic;
@@ -228,13 +229,26 @@ static void load_thumbnails(int *indices, int count)
 
     for (i = 0; i < limit; i++)
     {
-        /* Force test gradient to verify rendering pipeline */
-        fb_data *dst = thumb_bitmaps[i];
-        int r, c;
-        for (r = 0; r < THUMB_SIZE; r++)
-            for (c = 0; c < THUMB_SIZE; c++)
-                dst[r * THUMB_SIZE + c] = LCD_RGBPACK(c * 5, r * 5, 200);
-        thumb_valid[i] = true;
+        struct video_entry *entry = &video_lib.entries[indices[i]];
+        bool ok = false;
+
+        /* 1. Try ArtworkDB ithmb (iTunes-synced, pre-rendered RGB565) */
+        if (entry->artwork_count >= 1 && entry->has_artwork == 0x01)
+            ok = artworkdb_load_thumb(entry->dbid, entry->mhii_link,
+                                      thumb_bitmaps[i],
+                                      THUMB_SIZE, THUMB_SIZE);
+
+        /* 2. Try MP4 embedded covr atom → JPEG decode */
+        if (!ok)
+            ok = video_thumb_extract(entry->filepath,
+                                     thumb_bitmaps[i],
+                                     thumb_work_buf, THUMB_WORK_SIZE);
+
+        /* 3. Try standalone artist JPEG */
+        if (!ok)
+            ok = load_fallback_thumb(entry, i);
+
+        thumb_valid[i] = ok;
     }
 }
 
