@@ -53,6 +53,18 @@
 #define ALIGN32(x)  (((uintptr_t)(x) + 31) & ~31)
 #define ALIGN4K(x)  (((uintptr_t)(x) + 0xFFF) & ~0xFFF)
 
+/* JPEG zigzag → raster position mapping (for Q table de-zigzag) */
+static const uint8_t zz_to_raster[64] = {
+     0,  1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63
+};
+
 static int log_fd = -1;
 
 static void tlog(const char *fmt, ...)
@@ -148,7 +160,7 @@ static void vpua_jpeg_init(uint32_t dma_addr, uint32_t work_addr)
     REG32(VDEC_MAIN + 0x10) = 0x00010100;
     REG32(VDEC_DMA + 0x110) = 0x800;
     REG32(VDEC_XFORM + 0x804) = 0x40;
-    REG32(VDEC_DEBLK + 0x10)  = 0x14; /* 0x10 + bit2 = deblock disable */
+    REG32(VDEC_DEBLK + 0x10)  = 0x10;
     REG32(VDEC_SUB  + 0x6C)   = 0x10001;
 
     REG32(VDEC_SUB + 0x20) = dma_addr;
@@ -632,14 +644,14 @@ enum plugin_status plugin_start(const void *parameter)
         vpua_jpeg_init((uint32_t)(uintptr_t)dma_work,
                        (uint32_t)(uintptr_t)work_buf1);
 
-        /* Load Q tables from JPEG into XFORM */
+        /* Load Q tables from JPEG into XFORM (de-zigzagged to raster order) */
         {
             int i;
             for (i = 0; i < 64; i++)
             {
-                REG32(VDEC_XFORM + 0x200 + i * 4) =
+                REG32(VDEC_XFORM + 0x200 + zz_to_raster[i] * 4) =
                     tj.qt[tj.qt_sel[0]][i];
-                REG32(VDEC_XFORM + 0x300 + i * 4) =
+                REG32(VDEC_XFORM + 0x300 + zz_to_raster[i] * 4) =
                     tj.qt[tj.qt_sel[1]][i];
             }
         }

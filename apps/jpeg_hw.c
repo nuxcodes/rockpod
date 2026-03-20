@@ -65,6 +65,21 @@
 #define ALIGN32(x)  (((uintptr_t)(x) + 31) & ~31)
 #define ALIGN4K(x)  (((uintptr_t)(x) + 0xFFF) & ~0xFFF)
 
+/* JPEG zigzag scan order → raster position mapping.
+ * DQT marker stores Q values in zigzag order; XFORM registers
+ * are indexed by raster position.  Apple de-zigzags Q tables
+ * during DQT parse (FUN_000df908). */
+static const uint8_t zz_to_raster[64] = {
+     0,  1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63
+};
+
 /* ================================================================
  * 2. VPU-A hardware control
  * ================================================================ */
@@ -901,13 +916,14 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
                        (uint32_t)(uintptr_t)work_buf1);
 
         /* Load JPEG Q tables into XFORM scaling matrices.
-         * Both coefficients and Q table stay in zigzag order —
-         * VPU-A handles zigzag→raster internally. */
+         * DQT stores Q values in zigzag order; XFORM registers are
+         * indexed by raster position.  De-zigzag during load
+         * (matches Apple FUN_000df908). */
         for (i = 0; i < 64; i++)
         {
-            REG32(VDEC_XFORM + 0x200 + i * 4) =
+            REG32(VDEC_XFORM + 0x200 + zz_to_raster[i] * 4) =
                 js.qt[js.qt_sel[0]][i];
-            REG32(VDEC_XFORM + 0x300 + i * 4) =
+            REG32(VDEC_XFORM + 0x300 + zz_to_raster[i] * 4) =
                 js.qt[js.qt_sel[1]][i];
         }
 
