@@ -98,8 +98,13 @@ static struct {
     uint16_t video_w, video_h;
     uint32_t duration_ms;
 
-    /* Display rect (centered within LCD, no scaling) */
+    /* Display rect (centered within LCD, with optional scaling) */
     int disp_x, disp_y, disp_w, disp_h;
+
+    /* Downscaler state */
+    bool need_scale;
+    int dst_w, dst_h;
+    uint8_t *scale_y, *scale_cb, *scale_cr;
 
     /* Playback */
     enum playback_state state;
@@ -182,6 +187,121 @@ static uint32_t calc_duration_ms(const struct mp4v_demux_res *d)
 }
 
 /* ------------------------------------------------------------------ */
+/* Fixed-point bilinear downscale for a single YUV plane              */
+/* ------------------------------------------------------------------ */
+
+static void scale_plane_bilinear(const uint8_t *src, int src_w, int src_h,
+                                  int src_stride,
+                                  uint8_t *dst, int dst_w, int dst_h)
+{
+    uint32_t x_ratio, y_ratio;
+    int r, c;
+
+    if (dst_w < 2 || dst_h < 2 || src_w < 2 || src_h < 2)
+        return;
+
+    x_ratio = ((uint32_t)(src_w - 1) << 16) / (unsigned)(dst_w - 1);
+    y_ratio = ((uint32_t)(src_h - 1) << 16) / (unsigned)(dst_h - 1);
+
+    for (r = 0; r < dst_h; r++)
+    {
+        uint32_t sy = (uint32_t)r * y_ratio;
+        int y0 = sy >> 16;
+        int y1 = y0 + 1;
+        uint32_t yf = (sy >> 8) & 0xFF;
+        const uint8_t *row0, *row1;
+        uint8_t *out;
+
+        if (y1 >= src_h) y1 = src_h - 1;
+
+        row0 = src + y0 * src_stride;
+        row1 = src + y1 * src_stride;
+        out = dst + r * dst_w;
+
+        for (c = 0; c < dst_w; c++)
+        {
+            uint32_t sx = (uint32_t)c * x_ratio;
+            int x0 = sx >> 16;
+            int x1 = x0 + 1;
+            uint32_t xf = (sx >> 8) & 0xFF;
+            uint32_t a, b, d, e, ab, de;
+
+            if (x1 >= src_w) x1 = src_w - 1;
+
+            a = row0[x0];
+            b = row0[x1];
+            d = row1[x0];
+            e = row1[x1];
+
+            ab = a * (256 - xf) + b * xf;
+            de = d * (256 - xf) + e * xf;
+            out[c] = (uint8_t)((ab * (256 - yf) + de * yf
+                                + (1 << 15)) >> 16);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Scale and blit a decoded YUV420 frame                              */
+/* ------------------------------------------------------------------ */
+
+static void scale_and_blit(const uint8_t *y, const uint8_t *cb,
+                            const uint8_t *cr, int w)
+{
+    unsigned char *src[3];
+
+    if (ps.need_scale)
+    {
+        scale_plane_bilinear(y, ps.video_w, ps.video_h, w,
+                             ps.scale_y, ps.dst_w, ps.dst_h);
+        scale_plane_bilinear(cb, ps.video_w / 2, ps.video_h / 2, w / 2,
+                             ps.scale_cb, ps.dst_w / 2, ps.dst_h / 2);
+        scale_plane_bilinear(cr, ps.video_w / 2, ps.video_h / 2, w / 2,
+                             ps.scale_cr, ps.dst_w / 2, ps.dst_h / 2);
+        src[0] = (unsigned char *)ps.scale_y;
+        src[1] = (unsigned char *)ps.scale_cb;
+        src[2] = (unsigned char *)ps.scale_cr;
+        lcd_blit_yuv(src, 0, 0, ps.dst_w,
+                     ps.disp_x, ps.disp_y, ps.dst_w, ps.dst_h);
+    }
+    else
+    {
+        src[0] = (unsigned char *)y;
+        src[1] = (unsigned char *)cb;
+        src[2] = (unsigned char *)cr;
+        lcd_blit_yuv(src, 0, 0, w,
+                     ps.disp_x, ps.disp_y, ps.disp_w, ps.disp_h);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Clear letterbox bars (black areas outside video rect)              */
+/* ------------------------------------------------------------------ */
+
+static void clear_letterbox_bars(void)
+{
+    lcd_set_foreground(LCD_BLACK);
+    if (ps.disp_y > 0)
+    {
+        int bot_y = ps.disp_y + ps.disp_h;
+        lcd_fillrect(0, 0, LCD_WIDTH, ps.disp_y);
+        lcd_update_rect(0, 0, LCD_WIDTH, ps.disp_y);
+        lcd_fillrect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
+        lcd_update_rect(0, bot_y, LCD_WIDTH, LCD_HEIGHT - bot_y);
+    }
+    if (ps.disp_x > 0)
+    {
+        int right_x = ps.disp_x + ps.disp_w;
+        lcd_fillrect(0, ps.disp_y, ps.disp_x, ps.disp_h);
+        lcd_update_rect(0, ps.disp_y, ps.disp_x, ps.disp_h);
+        lcd_fillrect(right_x, ps.disp_y,
+                     LCD_WIDTH - right_x, ps.disp_h);
+        lcd_update_rect(right_x, ps.disp_y,
+                        LCD_WIDTH - right_x, ps.disp_h);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Decode: feed one MP4 sample to VPU                                 */
 /* ------------------------------------------------------------------ */
 
@@ -228,18 +348,9 @@ static int decode_one_frame(bool display)
             {
                 const uint8_t *y, *cb, *cr;
                 int w, h;
-                unsigned char *src[3];
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-
-                src[0] = (unsigned char *)y;
-                src[1] = (unsigned char *)cb;
-                src[2] = (unsigned char *)cr;
-
-                int blit_w = MIN(w, ps.disp_w) & ~1;
-                int blit_h = MIN(h, ps.disp_h) & ~1;
-                lcd_blit_yuv(src, 0, 0, w,
-                             ps.disp_x, ps.disp_y, blit_w, blit_h);
+                scale_and_blit(y, cb, cr, w);
             }
             return 1;
         }
@@ -259,20 +370,13 @@ static void blit_last_frame(void)
 {
     const uint8_t *y, *cb, *cr;
     int w, h;
-    unsigned char *src[3];
 
     if (!ps.decoder) return;
 
     vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
     if (!y || w == 0 || h == 0) return;
 
-    src[0] = (unsigned char *)y;
-    src[1] = (unsigned char *)cb;
-    src[2] = (unsigned char *)cr;
-
-    int blit_w = MIN(w, ps.disp_w) & ~1;
-    int blit_h = MIN(h, ps.disp_h) & ~1;
-    lcd_blit_yuv(src, 0, 0, w, ps.disp_x, ps.disp_y, blit_w, blit_h);
+    scale_and_blit(y, cb, cr, w);
 }
 
 /* ------------------------------------------------------------------ */
@@ -684,6 +788,7 @@ static void osd_draw(void)
 static void full_redraw(void)
 {
     blit_last_frame();
+    clear_letterbox_bars();
 
     if (ps.osd_visible)
         osd_draw();
@@ -1132,17 +1237,43 @@ void video_playback_start(const char *filepath, const char *title)
         return;
     }
 
+    /* Reject unsupported H.264 profiles */
+    if (demux.avc_profile != 66)
+    {
+        const char *pname = demux.avc_profile == 77 ? "Main" :
+                            demux.avc_profile == 100 ? "High" : "Unknown";
+        splashf(HZ * 3, "Unsupported:\n%s Profile H.264\n\nNeed Baseline",
+                pname);
+        return;
+    }
+
     max_w = (demux.width + 15) & ~15;
     max_h = (demux.height + 15) & ~15;
+
+    /* Reject resolutions the VPU can't handle */
+    if (max_w > 1280 || max_h > 720)
+    {
+        splashf(HZ * 3, "Unsupported:\n%dx%d too large\n\nMax 1280x720",
+                demux.width, demux.height);
+        return;
+    }
+
     dec_size = vpu_h264_buf_size(max_w, max_h);
 
     /* Stop audio playback to free core memory for decode buffers */
     audio_hard_stop();
 
-    alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
-               + MP4V_MAX_STCO * sizeof(uint32_t) + 32
-               + dec_size + 4096
-               + 128 * 1024 + 32;
+    {
+        size_t scale_size = 0;
+        if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
+            scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
+
+        alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
+                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32
+                   + dec_size + 4096
+                   + 128 * 1024 + 32
+                   + scale_size;
+    }
 
     mem_handle = core_alloc(alloc_size);
     if (mem_handle < 0)
@@ -1167,6 +1298,19 @@ void video_playback_start(const char *filepath, const char *title)
     ps.read_buf_size = 128 * 1024;
     ps.read_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
     p = ps.read_buf + ps.read_buf_size;
+
+    /* Allocate scale buffer if video needs downscaling */
+    if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
+    {
+        int sw = LCD_WIDTH;
+        int sh = LCD_HEIGHT;
+        ps.scale_y = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+        p = ps.scale_y + sw * sh;
+        ps.scale_cb = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+        p = ps.scale_cb + (sw / 2) * (sh / 2);
+        ps.scale_cr = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+        p = ps.scale_cr + (sw / 2) * (sh / 2);
+    }
 
     /* Step 2: Re-parse MP4 with full sample tables */
     if (mp4v_demux_open(filepath, &demux,
@@ -1210,9 +1354,26 @@ void video_playback_start(const char *filepath, const char *title)
     ps.duration_ms = calc_duration_ms(&demux);
     if (ps.duration_ms == 0) ps.duration_ms = 60000;
 
-    /* Display rect: no scaling, center on LCD */
-    ps.disp_w = MIN(demux.width, LCD_WIDTH) & ~1;
-    ps.disp_h = MIN(demux.height, LCD_HEIGHT) & ~1;
+    /* Compute display rect with aspect-preserving downscale */
+    if (demux.width > LCD_WIDTH || demux.height > LCD_HEIGHT)
+    {
+        uint32_t sx = ((uint32_t)LCD_WIDTH << 16) / demux.width;
+        uint32_t sy = ((uint32_t)LCD_HEIGHT << 16) / demux.height;
+        uint32_t s = MIN(sx, sy);
+        ps.dst_w = (int)(((uint32_t)demux.width * s) >> 16) & ~1;
+        ps.dst_h = (int)(((uint32_t)demux.height * s) >> 16) & ~1;
+        if (ps.dst_w < 2) ps.dst_w = 2;
+        if (ps.dst_h < 2) ps.dst_h = 2;
+        ps.need_scale = true;
+    }
+    else
+    {
+        ps.dst_w = demux.width & ~1;
+        ps.dst_h = demux.height & ~1;
+        ps.need_scale = false;
+    }
+    ps.disp_w = ps.dst_w;
+    ps.disp_h = ps.dst_h;
     ps.disp_x = (LCD_WIDTH - ps.disp_w) / 2;
     ps.disp_y = (LCD_HEIGHT - ps.disp_h) / 2;
 
