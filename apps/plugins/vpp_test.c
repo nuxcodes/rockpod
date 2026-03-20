@@ -237,14 +237,28 @@ static void clcd_init(void)
     CLCD_REG(0x064) = 0x200; /* H_STEP default = 1.0 in Q23.9 */
     CLCD_REG(0x068) = 0x200; /* V_STEP default */
 
-    /* Filter coefficient bank 1 (horizontal): use identity/flat */
-    /* For a first test, write simple passthrough values */
-    for (int i = 0x06C; i <= 0x0A8; i += 4)
-        CLCD_REG(i) = 0x00FF0000;  /* center tap = 255, others = 0 */
-
-    /* Filter coefficient bank 2 (vertical): identity/flat */
-    for (int i = 0x0EC; i <= 0x148; i += 4)
-        CLCD_REG(i) = 0x00FF0000;  /* center tap = 255 */
+    /* Polyphase filter coefficients from Apple ROM data pool (FUN_00167288).
+     * Extracted by agent from ROM — 16 horizontal + 24 vertical entries.
+     * Previous versions used 0x00FF0000 (identity) which may cause
+     * accumulator overflow (0xFF exceeds per-phase unity gain of ~0x40). */
+    static const uint32_t h_coeff[16] = {
+        0x00070707, 0x07070707, 0x07070707, 0x07000000,
+        0x00020405, 0x06060606, 0x06050504, 0x03020101,
+        0x007A7470, 0x6E6C6B6C, 0x6C6E7073, 0x76787B7E,
+        0x7F7E7D79, 0x726B6359, 0x4F44392E, 0x23191008,
+    };
+    static const uint32_t v_coeff[24] = {
+        0x003D3A38, 0x38383839, 0x3A3B3C3D, 0x3E3F3F00,
+        0x7F7E7C76, 0x6F665C51, 0x463B3025, 0x1B130B05,
+        0x00050B13, 0x1B25303B, 0x46515C66, 0x6F767C7E,
+        0x00003F3F, 0x3E3D3C3B, 0x3A393838, 0x38383A3D,
+        0x6B6B6D6F, 0x3336393D, 0x3F010203, 0x03030202,
+        0xAAA69F95, 0x88786754, 0x412E1E0F, 0x0279726D,
+    };
+    for (int i = 0; i < 16; i++)
+        CLCD_REG(0x06C + i * 4) = h_coeff[i];
+    for (int i = 0; i < 24; i++)
+        CLCD_REG(0x0EC + i * 4) = v_coeff[i];
 
     /* YUV mode/enable FIRST (Apple does these before coefficients) */
     CLCD_YUV_MODE = 1;    /* +0x3C0 */
@@ -707,33 +721,32 @@ enum plugin_status plugin_start(const void *parameter)
     for (int i = 0; i <= 0x18; i += 4)
         vlog("    +0x%02x = 0x%08lx", i, (unsigned long)DISP_REG(i));
 
-    /* === Phase 7: Wait for completion === */
-    vlog("Phase 7: Waiting for completion");
+    /* === Phase 7: Check pipeline is running === */
+    vlog("Phase 7: Pipeline status check");
 
-    /* Poll CLCD busy bit (bit 1) — should go high then low */
-    int timeout = 100;
-    bool saw_busy = false;
-    while (timeout > 0) {
-        uint32_t ctrl = CLCD_CTRL;
-        if (ctrl & 2) {
-            saw_busy = true;
-        } else if (saw_busy) {
-            vlog("  CLCD completed (saw busy then idle)");
-            break;
-        }
-        rb->sleep(1);  /* ~10ms */
-        timeout--;
-    }
+    /* CLCD_CTRL bit 2 = "actively processing" (NOT stall/error).
+     * MIXER_CTRL bit 2 = config mode bit (Apple writes 6 init, 7 run).
+     * RE evidence: Apple NEVER checks bit 2. Only polls bit 1 for
+     * shutdown drain (ROM 0x166E98). CTRL=0x05 is NORMAL running state.
+     * Pipeline runs continuously — never goes idle on its own. */
+    rb->sleep(HZ / 10);  /* 100ms for pipeline to start flowing */
+    uint32_t clcd_s = CLCD_CTRL;
+    uint32_t mixer_s = MIXER_CTRL;
+    uint32_t disp_s = DISP_CTRL;
+    vlog("  CLCD_CTRL=0x%08lx (bit0=%d bit2=%d) %s",
+         (unsigned long)clcd_s, clcd_s & 1, (clcd_s >> 2) & 1,
+         (clcd_s == 0x05) ? "RUNNING" :
+         (clcd_s == 0x01) ? "enabled-no-activity" : "unexpected");
+    vlog("  MIXER_CTRL=0x%08lx %s",
+         (unsigned long)mixer_s,
+         (mixer_s == 0x05 || mixer_s == 0x07) ? "RUNNING" : "unexpected");
+    vlog("  DISP_CTRL=0x%08lx %s",
+         (unsigned long)disp_s,
+         (disp_s == 0x01) ? "RUNNING(sync)" : "unexpected");
 
-    if (timeout <= 0) {
-        vlog("  WARNING: CLCD did not signal completion in 1s");
-        vlog("  CLCD_CTRL = 0x%08lx", (unsigned long)CLCD_CTRL);
-        vlog("  DISP_CTRL = 0x%08lx", (unsigned long)DISP_CTRL);
-    }
-
-    /* Keep the VPP output visible for 3 seconds */
-    vlog("  Holding display for 3 seconds...");
-    rb->sleep(HZ * 3);
+    /* Hold VPP output visible for 5 seconds — look at the LCD! */
+    vlog("  Holding display for 5 seconds — check LCD for gradient...");
+    rb->sleep(HZ * 5);
 
     /* === Phase 8: Dump diagnostic registers === */
     vlog("Phase 8: Post-trigger register dump");
