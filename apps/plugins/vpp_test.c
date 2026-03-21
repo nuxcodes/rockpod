@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v85a ===");
+    vlog("=== VPP Pipeline Test v85b ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v85a");
+    rb->splashf(HZ, "VPP v85b");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -684,7 +684,7 @@ enum plugin_status plugin_start(const void *parameter)
      * Bit 1 = deinterlace path (vpp_set_deinterlace for LCD)
      * Bit 2 = interlace flag (vpp_set_interlace — NOT for progressive!)
      * v1-v47 had 0x07 (all 3 bits) — bit 2 WRONG for progressive LCD. */
-    MIXER_L5_EN = 0x02;  /* v85a: bit 1 only. Bit 0 was NEVER set by Apple (ROM verified). */
+    MIXER_L5_EN = 0x03;  /* v85b: reverted — 0x02 dropped DMA bit 2 */
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -900,7 +900,8 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
              (unsigned long)comp[0]);
 
-        /* v85a: Full compositor register dump — find any non-zero POR regs */
+        /* v85b: Full compositor register dump — unsuppress for this block */
+#undef vlog
         vlog("  --- Full POR dump (non-zero only) ---");
         {
             int dump_count = 0;
@@ -914,6 +915,9 @@ enum plugin_status plugin_start(const void *parameter)
             if (dump_count >= 32)
                 vlog("    ... (truncated at 32)");
         }
+        vlog("  TRIGCON before init: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
+        vlog("  LCD+0x8C = 0x%08lx (0=bus idle)", (unsigned long)*(volatile uint32_t *)(0x3830008C));
+#define vlog(...) do {} while(0)
 
         /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
@@ -956,7 +960,6 @@ enum plugin_status plugin_start(const void *parameter)
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
         comp[0x200/4] |= 0x10080;
-        vlog("  TRIGCON after write: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
         /* Zero unused layer format registers (layers 0-4) to prevent
          * stale iBoot data from overlaying video output */
         comp[0x05C/4] = 0;  /* layer 0 */
@@ -1042,7 +1045,6 @@ enum plugin_status plugin_start(const void *parameter)
         /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
          * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
         comp[0x3AC/4] = 0x04004003;
-        vlog("  TRIGCON after GO: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
     }
     vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,
