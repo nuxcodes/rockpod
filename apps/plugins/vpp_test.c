@@ -355,7 +355,7 @@ static void disp_init_lcd(void)
         DISP_REG(i) = 0;
 
     /* CSC bypass (bit 4) */
-    DISP_CSC_MODE = (DISP_CSC_MODE & 0xFFFFFFE0) | 0x10;  /* v73: Apple BIC #0x1f preserves bits 5-31 */
+    DISP_CSC_MODE = (DISP_CSC_MODE & 0xE0) | 0x10;  /* v82: v76 gold mask (clears stale boot bits) */
     DISP_CSC_Y = 0x800000;     /* 1.0 in 8.24 FP */
     DISP_CSC_CBCR = 0x800000;
     DISP_CSC_OFS = 0x80;       /* 128 for unsigned chroma */
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v81");
+    rb->splashf(HZ, "VPP v82");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -601,21 +601,30 @@ enum plugin_status plugin_start(const void *parameter)
      * output is locked out. POR=0 but verify and force. */
     *(volatile uint32_t *)(0x38300080) = 0;
 
+    /* v82: GPIO 7.1 = VPP power domain enable. Apple sets HIGH in
+     * FUN_00167be4 during VPP power-on. Tested in v3 (no effect, but
+     * v3 had many other bugs). PATA/SSD conflict: GPIO 7.1 shares ATA D1.
+     * Safety: set AFTER log_open(), restore BEFORE log_close(). No disk
+     * I/O while GPIO 7.1 is HIGH (all vlog goes to memory buffer). */
+    GPIOCMD = 0x0007010F;  /* GPIO 7.1 HIGH */
+
+    /* v82: Enable CG16_2L — same register as CG16_LCD on S5L8720.
+     * Disabled by Rockbox system_preinit(). Conflicting agent results
+     * (ROM never enables gate 0xF vs MCU doesn't need pixel clock)
+     * but zero risk to try. Set same config as SVID = PLL2/4 = 54MHz. */
+    {
+        volatile uint32_t *cg32 = (volatile uint32_t *)(0x3C500008);
+        uint32_t val = *cg32;
+        val = (val & 0xFFFF0000) | 0x3003;  /* lower 16 = CG16_2L */
+        *cg32 = val;
+    }
+
     /* v80: suppress ALL logging in critical section (clock enable → trigger) */
 #define vlog(...) do {} while(0)
 
     vpp_svid_enable(true);
     { volatile int d; for (d = 0; d < 500000; d++); } /* v80: no scheduler yield */
     vpp_clocks_enable(true);
-
-    uint32_t pwrcon_before = PWRCON(0);
-    uint32_t pwrcon_after = PWRCON(0);
-
-    /* GPIO 7.1: Apple sets HIGH during VPP power-on (ROM 0x167be4) but
-     * this is for CE-ATA only. On PATA/SSD iPods, pin 7.1 = ATA D1.
-     * v23 test proved: setting it corrupts ALL disk I/O (log was garbage).
-     * Both MMIO trace agents confirmed: NOT needed for VPP pipeline.
-     * REMOVED — do not re-add. */
 
     /* PWRCON bits 7+13: RE-ENABLED (marathon batch 6, 3 agents confirmed
      * compositor IS in HW path). Compositor clocks needed for passthrough. */
@@ -815,22 +824,13 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v64: Proper compositor reset (batch 12 agent from ROM):
-         * Apple ALWAYS disables block and waits for idle BEFORE gating.
-         * Gating a running block leaves undefined internal state. */
-        /* v73: Enable compositor clocks HERE (deferred from Phase 2) */
-        PWRCON(0) &= ~0x2080;
+        /* v82: SKIP compositor reset. Apple NEVER resets the compositor
+         * during VPP startup (confirmed by 2 agents). Our gate/ungate may
+         * destroy internal state that iBoot configured. Just ensure clocks
+         * are on and overwrite registers directly. */
+        PWRCON(0) &= ~0x2080;  /* ensure compositor clocks ON */
         for (volatile int d = 0; d < 50000; d++);
-        comp[0x000/4] &= ~1;   /* step 1: clear CTRL enable */
-        { int i; for (i = 0; i < 100; i++) {
-            if (comp[0x000/4] & 2) break;
-            for (volatile int d = 0; d < 10000; d++);
-        }}
-        PWRCON(0) |= 0x2080;   /* step 2: gate compositor clocks */
-        for (volatile int d = 0; d < 50000; d++);
-        PWRCON(0) &= ~0x2080;  /* step 3: ungate — block at POR */
-        for (volatile int d = 0; d < 50000; d++);
-        vlog("  Compositor reset done");
+        vlog("  Compositor clocks enabled (NO reset — Apple never resets)");
 
         /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");
@@ -927,7 +927,7 @@ enum plugin_status plugin_start(const void *parameter)
         /* Per-channel identity gain (0x1000 = 1.0 in 4.12 FP) */
         comp[0x0D8/4] = 0x00001000;
         comp[0x0DC/4] = 0;
-        comp[0x0E0/4] = 0x50004000;  /* v73: Apple LCD active video blend */
+        comp[0x0E0/4] = 0x00001000;  /* v82: init value (0x50004000 is teardown) */
         comp[0x0E4/4] = 0;
         comp[0x0E8/4] = 0x00001000;
         comp[0x0EC/4] = 0;
@@ -942,7 +942,7 @@ enum plugin_status plugin_start(const void *parameter)
          * complete may cause hardware to output before ready.
          * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
         comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
-        comp[0x00C/4] = 0x000F0F0F;
+        comp[0x00C/4] = 0x00FF0000;  /* v82: bright RED background (visible) */
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
@@ -1106,6 +1106,14 @@ enum plugin_status plugin_start(const void *parameter)
      *   LCD+0x70 = 1             (passthrough enable — LAST!)
      */
 
+    /* v82: LCD controller gate/ungate reset — clear MCU-mode internal
+     * state contamination from Rockbox's lcd_update() calls. Reset to
+     * POR, then configure passthrough on clean hardware. */
+    PWRCON(0) |= (1 << 1);   /* gate LCD clock = hardware reset to POR */
+    for (volatile int d = 0; d < 50000; d++);
+    PWRCON(0) &= ~(1 << 1);  /* ungate = LCD at POR, clean state */
+    for (volatile int d = 0; d < 50000; d++);
+
     /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
     LCD_CON = 0x81100DB9;
     *(volatile uint32_t *)(0x38300088) = 0x01000000;
@@ -1226,6 +1234,11 @@ enum plugin_status plugin_start(const void *parameter)
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
     vlog("Phase 8: Panel GRAM readback");
     {
+        /* v82: Disable passthrough BEFORE reading GRAM. Reading with
+         * LCD+0x70=1 is meaningless — compositor may drive the bus.
+         * Must switch to MCU mode for valid GRAM read. */
+        *(volatile uint32_t *)(0x38300070) = 0;
+        for (volatile int d = 0; d < 50000; d++);
         uint32_t save_con = LCD_CON;
         if (panel_type >= 2) {
             /* ILI9320: set address to (0,0), read register 0x202 */
@@ -1339,6 +1352,11 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  LCD_CON restored to 0x%08lx", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");
+
+    /* v82: GPIO 7.1 LOW — restore ATA D1 before any disk I/O.
+     * Must happen BEFORE log_close() which flushes to disk. */
+    GPIOCMD = 0x0007010E;  /* GPIO 7.1 LOW */
+
     log_close();
 
     /* Force full LCD redraw to restore Rockbox UI */
