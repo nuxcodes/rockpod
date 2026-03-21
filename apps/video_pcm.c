@@ -37,8 +37,13 @@ static int16_t silence[SILENCE_SAMPLES * 2];
 static volatile uint32_t pcm_read_pos;
 static volatile uint32_t pcm_write_pos;
 
-/* Master clock: total stereo samples consumed by DMA */
-static volatile uint64_t clock_samples;
+/* Master clock: stereo samples consumed by DMA (uint32_t sufficient
+ * for >27 hours at 44.1kHz; avoids torn reads on 32-bit ARM) */
+static volatile uint32_t clock_samples;
+
+/* Clock base: absolute time (ms) at last flush/init */
+static uint32_t clock_base_ms;
+static uint32_t clock_sample_rate;
 
 /* Saved mixer frequency for restore on stop */
 static unsigned int saved_sampr;
@@ -79,10 +84,11 @@ static void video_pcm_get_more(const void **start, size_t *size)
     }
     else
     {
-        /* Underrun: play silence, clock keeps advancing */
+        /* Underrun: play silence. Do NOT advance clock —
+         * advancing would create a permanent A/V offset because the
+         * audio content hasn't actually been played yet. */
         *start = silence;
         *size = sizeof(silence);
-        clock_samples += SILENCE_SAMPLES;
     }
 }
 
@@ -95,6 +101,8 @@ void video_pcm_init(uint32_t sample_rate)
     pcm_read_pos = 0;
     pcm_write_pos = 0;
     clock_samples = 0;
+    clock_base_ms = 0;
+    clock_sample_rate = sample_rate;
     memset(silence, 0, sizeof(silence));
 
     /* Set sample rate BEFORE starting playback
@@ -135,17 +143,23 @@ int video_pcm_write(const int16_t *pcm, int stereo_samples)
     return written;
 }
 
-uint64_t video_pcm_get_clock(void)
+uint32_t video_pcm_get_clock_ms(void)
 {
-    return clock_samples;
+    uint32_t samples = clock_samples; /* atomic 32-bit read on ARM */
+    if (clock_sample_rate == 0)
+        return clock_base_ms;
+    return clock_base_ms + (uint32_t)((uint64_t)samples * 1000
+                                     / clock_sample_rate);
 }
 
-void video_pcm_flush(void)
+void video_pcm_flush(uint32_t base_ms, uint32_t sample_rate)
 {
     pcm_play_lock();
     pcm_read_pos = 0;
     pcm_write_pos = 0;
     clock_samples = 0;
+    clock_base_ms = base_ms;
+    clock_sample_rate = sample_rate;
     pcm_play_unlock();
 }
 

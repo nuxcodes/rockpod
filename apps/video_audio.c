@@ -192,7 +192,7 @@ static void audio_decode_thread(void)
             {
                 uint32_t target_ms = (uint32_t)ev.data;
                 audio_sample_idx = audio_sample_for_time(target_ms);
-                video_pcm_flush();
+                video_pcm_flush(target_ms, audio_sample_rate);
                 audio_is_ready = false;
                 /* Re-apply lead_trim when seeking to start */
                 if (target_ms == 0)

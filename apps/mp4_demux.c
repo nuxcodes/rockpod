@@ -115,6 +115,9 @@ struct mp4_parse_ctx {
     bool want_audio;     /* caller provided audio buffers */
     uint16_t tkhd_dw;    /* tkhd display width (pending video confirm) */
     uint16_t tkhd_dh;    /* tkhd display height (pending video confirm) */
+    /* Pending per-trak fields (committed at end of trak once type is known) */
+    uint32_t pending_timescale;   /* from mdhd (parsed before hdlr) */
+    uint32_t pending_lead_trim;   /* from edts/elst (parsed before mdia) */
 };
 
 /* Parse avcC box - H.264 decoder configuration record.
@@ -989,11 +992,9 @@ static bool read_chunk_mdhd(struct mp4_parse_ctx *ctx, size_t chunk_len)
             size_remaining -= 28;
         }
 
-        /* Save timescale to the correct track (video vs audio) */
-        if (ctx->in_audio_trak)
-            ctx->res->audio_timescale = ts;
-        else
-            ctx->res->timescale = ts;
+        /* Save to pending — committed at end of trak once type is known.
+         * mdhd comes before hdlr in mdia, so track type isn't known yet. */
+        ctx->pending_timescale = ts;
     }
 
     if (size_remaining > 0)
@@ -1139,8 +1140,10 @@ static bool read_chunk_elst(struct mp4_parse_ctx *ctx, size_t chunk_len)
         }
 
         /* First non-empty edit: media_time > 0 = priming offset */
+        /* Save to pending — committed at end of trak once type is known.
+         * edts comes before mdia, so track type isn't known yet. */
         if (i == 0 && media_time > 0)
-            ctx->res->audio_lead_trim = (uint32_t)media_time;
+            ctx->pending_lead_trim = (uint32_t)media_time;
     }
 
     if (size_remaining > 0)
@@ -1206,7 +1209,10 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
                     return false;
                 break;
             case MAKEFOURCC('e','d','t','s'):
-                if (ctx->in_audio_trak && ctx->want_audio)
+                /* edts comes before mdia — track type unknown yet.
+                 * Parse unconditionally, save to pending_lead_trim.
+                 * Committed to audio_lead_trim at end of trak. */
+                if (ctx->want_audio)
                 {
                     if (!read_chunk_edts(ctx, sub_len))
                         return false;
@@ -1224,18 +1230,23 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
         size_remaining -= sub_len;
     }
 
-    /* If this trak had a video track with avcC data, mark as found
-     * and commit the tkhd display dimensions (for PAR letterboxing) */
+    /* Commit pending per-trak fields now that track type is known.
+     * mdhd timescale and edts/elst are parsed before hdlr identifies
+     * the track type, so they were saved to pending fields above. */
     if (ctx->in_video_trak && ctx->res->format != 0)
     {
         ctx->found_video = true;
         ctx->res->display_width = ctx->tkhd_dw;
         ctx->res->display_height = ctx->tkhd_dh;
+        ctx->res->timescale = ctx->pending_timescale;
     }
 
-    /* If this trak had an audio track with mp4a data, mark as found */
     if (ctx->in_audio_trak && ctx->res->audio_format != 0)
+    {
         ctx->found_audio = true;
+        ctx->res->audio_timescale = ctx->pending_timescale;
+        ctx->res->audio_lead_trim = ctx->pending_lead_trim;
+    }
 
     return true;
 }

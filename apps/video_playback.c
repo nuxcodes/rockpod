@@ -1097,6 +1097,8 @@ static void play_pause(void)
         {
             ps.curr_time_ms = 0;
             ps.cur_sample = 0;
+            if (ps.has_audio)
+                video_audio_seek(0);
         }
 
         ps.play_start_tick = current_tick;
@@ -1353,9 +1355,7 @@ static void button_loop(const char *filepath)
                 if (ps.has_audio)
                 {
                     /* Audio clock = ground truth */
-                    uint64_t audio_pos = video_pcm_get_clock();
-                    uint32_t audio_ms = (uint32_t)(audio_pos * 1000
-                                                 / ps.audio_sample_rate);
+                    uint32_t audio_ms = video_pcm_get_clock_ms();
                     int32_t drift = (int32_t)(ps.curr_time_ms - audio_ms);
 
                     if (drift > 10)
@@ -1373,9 +1373,7 @@ static void button_loop(const char *filepath)
                             if (sr <= 0) break;
                             update_frame_time();
                             skipped++;
-                            audio_pos = video_pcm_get_clock();
-                            audio_ms = (uint32_t)(audio_pos * 1000
-                                                / ps.audio_sample_rate);
+                            audio_ms = video_pcm_get_clock_ms();
                             drift = (int32_t)(ps.curr_time_ms - audio_ms);
                         }
                         wait = 0;
@@ -1829,6 +1827,9 @@ void video_playback_start(const char *filepath, const char *title)
         {
             ps.has_audio = true;
             ps.audio_sample_rate = demux.audio_sample_rate;
+            /* If resuming, seek audio to the saved position */
+            if (ps.curr_time_ms > 0)
+                video_audio_seek(ps.curr_time_ms);
             video_audio_play();
         }
     }

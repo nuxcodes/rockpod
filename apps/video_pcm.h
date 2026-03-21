@@ -18,11 +18,13 @@ void video_pcm_init(uint32_t sample_rate);
  * Returns number of stereo samples actually written (may be less if full). */
 int video_pcm_write(const int16_t *pcm, int stereo_samples);
 
-/* Get audio master clock: total stereo samples played by DMA. */
-uint64_t video_pcm_get_clock(void);
+/* Get audio master clock in milliseconds.
+ * Returns base_ms + (samples_played * 1000 / sample_rate). */
+uint32_t video_pcm_get_clock_ms(void);
 
-/* Flush ring buffer and reset clock (for seek). */
-void video_pcm_flush(void);
+/* Flush ring buffer and set clock base (for seek).
+ * After flush, get_clock returns base_ms + samples_played. */
+void video_pcm_flush(uint32_t base_ms, uint32_t sample_rate);
 
 /* Pause/resume PCM output. */
 void video_pcm_pause(bool pause);
