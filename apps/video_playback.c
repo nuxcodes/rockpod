@@ -1135,11 +1135,14 @@ static void do_seek(int delta_ms)
     if (ps.has_audio)
     {
         /* Pause PCM during seek to prevent audio from running ahead
-         * while seek_to_time blocks decoding keyframes. */
+         * while seek_to_time blocks decoding keyframes.
+         * Only unpause if we were playing — seeking while paused
+         * must NOT restart audio (would desync on resume). */
         video_pcm_pause(true);
         video_audio_seek((uint32_t)t);
         seek_to_time((uint32_t)t);
-        video_pcm_pause(false);
+        if (ps.state == PB_PLAYING)
+            video_pcm_pause(false);
         ps.audio_clock_lost = false;
     }
     else

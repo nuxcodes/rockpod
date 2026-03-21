@@ -312,7 +312,8 @@ int video_audio_init(const char *filepath,
                      const struct mp4v_demux_res *demux)
 {
     if (demux->audio_format == 0 || demux->audio_codecdata_len == 0
-        || demux->audio_timescale == 0 || demux->audio_sample_rate == 0)
+        || demux->audio_timescale == 0 || demux->audio_sample_rate == 0
+        || demux->audio_num_samples == 0)
         return -1;
 
     /* Guard against double-init (would corrupt static FAAD state) */
