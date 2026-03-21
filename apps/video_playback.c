@@ -1312,6 +1312,11 @@ static void button_loop(const char *filepath)
             if (ret < 0)
             {
                 ps.state = PB_STOPPED;
+                if (ps.has_audio)
+                {
+                    video_audio_pause();
+                    video_pcm_pause(true);
+                }
                 cpu_boost(false);
                 ps.curr_time_ms = ps.duration_ms;
                 osd_show();

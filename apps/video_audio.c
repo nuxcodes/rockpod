@@ -49,12 +49,14 @@ enum {
 
 /* Shared state */
 static const struct mp4v_demux_res *audio_demux;
-static int audio_fd;
+static int audio_fd = -1;
 static uint32_t audio_sample_idx;
 static uint32_t audio_sample_rate;
 static uint32_t audio_lead_trim;
 static volatile bool audio_is_ready;
 static volatile bool audio_is_playing;
+static volatile bool audio_has_error;
+static bool audio_initialized;
 
 /* Read buffer for AAC frames (max AAC frame ~2KB, 8KB generous) */
 #define AUDIO_READ_BUF_SIZE  8192
@@ -143,13 +145,17 @@ static void audio_decode_thread(void)
     /* Init libfaad (uses static allocation — no heap needed) */
     decoder = NeAACDecOpen();
     if (!decoder)
+    {
+        audio_has_error = true;
         goto thread_exit;
+    }
 
     if (NeAACDecInit2(decoder,
                       (uint8_t *)audio_demux->audio_codecdata,
                       audio_demux->audio_codecdata_len,
                       &sample_rate_out, &channels_out) < 0)
     {
+        audio_has_error = true;
         goto thread_exit;
     }
 
@@ -157,19 +163,11 @@ static void audio_decode_thread(void)
 
     while (running)
     {
-        /* Wait for messages (blocking when paused, polling when playing) */
+        /* Wait for messages (blocking when paused, non-blocking when playing) */
         if (playing)
-        {
-            /* Non-blocking: check for message, default to decode */
-            if (queue_peek(&audio_queue, &ev))
-                queue_wait(&audio_queue, &ev); /* consume it */
-            else
-                ev.id = SYS_TIMEOUT;
-        }
+            queue_wait_w_tmo(&audio_queue, &ev, 0);
         else
-        {
             queue_wait(&audio_queue, &ev);
-        }
 
         switch (ev.id)
         {
@@ -207,11 +205,8 @@ static void audio_decode_thread(void)
                 running = false;
                 continue;
 
-            case SYS_TIMEOUT:
-                /* Fall through to decode */
-                break;
-
             default:
+                /* SYS_TIMEOUT or unknown — fall through to decode */
                 break;
         }
 
@@ -286,7 +281,7 @@ static void audio_decode_thread(void)
                 }
 
                 pcm_samples = convert_frame_to_pcm(
-                    (NeAACDecStruct *)decoder, &frame_info, skip);
+                    decoder, &frame_info, skip);
 
                 if (pcm_samples > 0)
                     video_pcm_write(pcm_conv_buf, pcm_samples);
@@ -315,12 +310,17 @@ int video_audio_init(const char *filepath,
     if (demux->audio_format == 0 || demux->audio_codecdata_len == 0)
         return -1;
 
+    /* Guard against double-init (would corrupt static FAAD state) */
+    if (audio_initialized)
+        return -1;
+
     audio_demux = demux;
     audio_sample_idx = 0;
     audio_sample_rate = demux->audio_sample_rate;
     audio_lead_trim = demux->audio_lead_trim;
     audio_is_ready = false;
     audio_is_playing = false;
+    audio_has_error = false;
 
     /* Open separate fd for independent seeks */
     audio_fd = open(filepath, O_RDONLY);
@@ -340,6 +340,7 @@ int video_audio_init(const char *filepath,
         IF_PRIO(, PRIORITY_PLAYBACK)
         IF_COP(, CPU));
 
+    audio_initialized = true;
     return 0;
 }
 
@@ -365,6 +366,9 @@ void video_audio_seek(uint32_t target_ms)
 
 void video_audio_stop(void)
 {
+    if (!audio_initialized)
+        return;
+
     queue_post(&audio_queue, AUDIO_MSG_QUIT, 0);
     thread_wait(audio_thread_id);
 
@@ -378,11 +382,12 @@ void video_audio_stop(void)
 
     queue_delete(&audio_queue);
     audio_demux = NULL;
+    audio_initialized = false;
 }
 
 bool video_audio_ready(void)
 {
-    return audio_is_ready;
+    return audio_is_ready || audio_has_error;
 }
 
 #endif /* IPOD_6G */

@@ -36,15 +36,17 @@ FAAD_CORE_CFLAGS := \
     $(filter-out -DCODEC,$(CFLAGS)) \
     -include $(ROOTDIR)/apps/faad_shim/faad_noiram.h
 
-# Compile rule: libfaad .c files → faad_core/ .o files
+# Compile rules with -MMD for automatic header dependency tracking.
+# Without this, header changes won't trigger rebuilds.
 $(FAAD_CORE_BLD)/%.o: $(FAAD_CORE_DIR)/%.c
 	$(SILENT)mkdir -p $(FAAD_CORE_BLD)
-	$(call PRINTS,CC faad_core/$(notdir $<))$(CC) $(FAAD_CORE_CFLAGS) -c $< -o $@
+	$(call PRINTS,CC faad_core/$(notdir $<))$(CC) $(FAAD_CORE_CFLAGS) -MMD -c $< -o $@
 
-# Compile rule: codeclib .c files (mdct, fft, mdct_lookup) → faad_core/ .o files
 $(FAAD_CORE_BLD)/%.o: $(CODEC_LIB_DIR)/%.c
 	$(SILENT)mkdir -p $(FAAD_CORE_BLD)
-	$(call PRINTS,CC faad_core/$(notdir $<))$(CC) $(FAAD_CORE_CFLAGS) -c $< -o $@
+	$(call PRINTS,CC faad_core/$(notdir $<))$(CC) $(FAAD_CORE_CFLAGS) -MMD -c $< -o $@
+
+-include $(FAAD_CORE_OBJ:.o=.d)
 
 $(FAAD_CORE_LIB): $(FAAD_CORE_OBJ)
 	$(SILENT)$(shell rm -f $@)

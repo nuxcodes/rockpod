@@ -24,9 +24,6 @@
 /* Ring buffer: 64KB = ~0.74s at 44100 Hz stereo 16-bit */
 #define PCM_BUF_SAMPLES  16384  /* stereo samples (= 64KB / 4 bytes) */
 
-/* Watermark: 25% fill before starting playback from real data */
-#define PCM_PLAY_WM      (PCM_BUF_SAMPLES / 4)
-
 /* Silence clip for underrun (256 stereo samples = ~5.8ms at 44.1kHz) */
 #define SILENCE_SAMPLES   256
 
@@ -44,6 +41,9 @@ static volatile uint32_t clock_samples;
 /* Clock base: absolute time (ms) at last flush/init */
 static uint32_t clock_base_ms;
 static uint32_t clock_sample_rate;
+
+/* Flush guard: prevents write during flush (set by main, checked by audio) */
+static volatile bool flush_pending;
 
 /* Saved mixer frequency for restore on stop */
 static unsigned int saved_sampr;
@@ -119,10 +119,14 @@ int video_pcm_write(const int16_t *pcm, int stereo_samples)
 {
     int written = 0;
 
+    /* Bail if flush is in progress (prevents write/flush race) */
+    if (flush_pending)
+        return 0;
+
     while (written < stereo_samples)
     {
         uint32_t space = pcm_free();
-        if (space == 0)
+        if (space == 0 || flush_pending)
             break;
 
         uint32_t wr = pcm_write_pos % PCM_BUF_SAMPLES;
@@ -154,13 +158,27 @@ uint32_t video_pcm_get_clock_ms(void)
 
 void video_pcm_flush(uint32_t base_ms, uint32_t sample_rate)
 {
+    /* Block the write side first to prevent race with audio thread */
+    flush_pending = true;
+
+    /* Stop mixer channel to invalidate any stale buffer pointer,
+     * then reset state, then restart (mpegplayer pattern). */
     pcm_play_lock();
+    mixer_channel_stop(PCM_MIXER_CHAN_PLAYBACK);
+    pcm_play_unlock();
+
     pcm_read_pos = 0;
     pcm_write_pos = 0;
     clock_samples = 0;
     clock_base_ms = base_ms;
     clock_sample_rate = sample_rate;
-    pcm_play_unlock();
+
+    /* Restart mixer with fresh callback */
+    mixer_channel_set_amplitude(PCM_MIXER_CHAN_PLAYBACK, MIX_AMP_UNITY);
+    mixer_channel_play_data(PCM_MIXER_CHAN_PLAYBACK,
+                            video_pcm_get_more, NULL, 0);
+
+    flush_pending = false;
 }
 
 void video_pcm_pause(bool pause)
