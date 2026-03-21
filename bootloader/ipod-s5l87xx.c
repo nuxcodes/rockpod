@@ -1023,6 +1023,38 @@ void main(void)
         fatal_error(ERR_RB);
     }
 
+#ifdef IPOD_6G
+    /* Save compositor timing to file so the main firmware plugin can read it.
+     * The DRAM at 0x0890D2DC is zeroed by bss_init() and later overwritten
+     * by the audio buffer, so the plugin cannot read it directly.
+     * Format: 5 words DRAM capture, 5 words HW capture, 1 word PWRCON(0),
+     *         1 word HW CTRL = 48 bytes total. */
+    {
+        int fd = open("/iPod_Control/Device/comp_timing.bin",
+                      O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (fd >= 0) {
+            uint32_t buf[12];
+            buf[0] = comp_timing[0];
+            buf[1] = comp_timing[1];
+            buf[2] = comp_timing[2];
+            buf[3] = comp_timing[3];
+            buf[4] = comp_timing[4];
+            buf[5] = comp_hw_timing[0];
+            buf[6] = comp_hw_timing[1];
+            buf[7] = comp_hw_timing[2];
+            buf[8] = comp_hw_timing[3];
+            buf[9] = comp_hw_timing[4];
+            buf[10] = pwrcon0_boot;
+            buf[11] = comp_hw_ctrl;
+            write(fd, buf, sizeof(buf));
+            close(fd);
+            printf("Timing saved to comp_timing.bin");
+        } else {
+            printf("WARN: can't save timing file");
+        }
+    }
+#endif
+
     printf("Loading Rockbox...");
     unsigned char *loadbuffer = (unsigned char *)DRAM_ORIG;
     rc = load_firmware(loadbuffer, BOOTFILE, MAX_LOADSIZE);

@@ -496,18 +496,43 @@ enum plugin_status plugin_start(const void *parameter)
 {
     (void)parameter;
 
-    /* Capture iBoot compositor timing FIRST — before audio buffer allocation
-     * overwrites 0x0890D2DC. This DRAM region survives Rockbox boot (BSS ends
-     * at ~0x0842xxxx) but is destroyed when buflib allocates the audio buffer. */
+    /* Read iBoot compositor timing from bootloader-saved file.
+     *
+     * The DRAM at 0x0890D2DC is DESTROYED before the plugin can read it:
+     *   - Bootloader bss_init() zeros 0x08800000+ (covers 0x0890D2DC)
+     *   - Main firmware BSS/audio buffer further overwrites it
+     * The Rockbox bootloader captures the values BEFORE bss_init() and
+     * saves them to /iPod_Control/Device/comp_timing.bin (48 bytes):
+     *   [0..4]  = DRAM capture (iBoot's copy at 0x0890D2DC)
+     *   [5..9]  = HW reg capture (compositor +0x1EC-0x1FC, or 0xDEADxxxx if gated)
+     *   [10]    = PWRCON(0) at iBoot handoff
+     *   [11]    = compositor CTRL reg (or 0xDEADC0DE if gated)
+     */
     static uint32_t iboot_timing_save[5];
+    static uint32_t iboot_hw_save[5];
+    static uint32_t iboot_pwrcon0 = 0;
+    static uint32_t iboot_comp_ctrl = 0;
+    bool have_timing_file = false;
     {
-        volatile uint32_t *iboot = (volatile uint32_t *)0x0890d2dc;
-        for (int i = 0; i < 5; i++)
-            iboot_timing_save[i] = iboot[i];
+        int fd = rb->open("/iPod_Control/Device/comp_timing.bin", O_RDONLY);
+        if (fd >= 0) {
+            uint32_t fbuf[12];
+            int n = rb->read(fd, fbuf, sizeof(fbuf));
+            rb->close(fd);
+            if (n == 48) {
+                for (int i = 0; i < 5; i++) {
+                    iboot_timing_save[i] = fbuf[i];
+                    iboot_hw_save[i] = fbuf[5 + i];
+                }
+                iboot_pwrcon0 = fbuf[10];
+                iboot_comp_ctrl = fbuf[11];
+                have_timing_file = true;
+            }
+        }
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v54 ===");
+    vlog("=== VPP Pipeline Test v57 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -539,8 +564,15 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v52: powering on...");
-    rb->sleep(HZ / 2);  /* ensure splash DMA completes (batch 6: LCD DMA conflict) */
+    rb->splashf(HZ, "VPP v58: scroll stop + GRAM readback");
+    rb->sleep(HZ / 2);  /* ensure splash DMA completes */
+
+    /* Stop scroll thread from overwriting LCD_CON during VPP operation.
+     * The scroll worker calls lcd_update_rect() which sets LCD_CON to
+     * Rockbox's frame mode (0x80100DB0), destroying our passthrough
+     * config (0x81100DB9). lcd_scroll_stop() zeros the scroll line
+     * count so the worker has nothing to process. */
+    rb->lcd_scroll_stop();
 
     /* === Phase 2: Enable VPP clocks + GPIO 7.1 === */
     vlog("Phase 2: Enabling clocks");
@@ -852,43 +884,51 @@ enum plugin_status plugin_start(const void *parameter)
             comp[0xC00/4 + i] = i * 4;  /* B channel */
         }
 
-        /* Timing registers: write non-zero defaults if currently zero.
-         * Apple loads from iBoot SRAM (0x890d2dc) — values irrecoverable.
-         * But zero timing may prevent compositor from starting.
-         * Try reasonable values based on 320x240 LCD panel. */
-        /* Timing regs: Apple loads 5 words from SRAM at 0x0890d2dc.
-         * These are panel-specific values set by iBoot. The SRAM might
-         * still contain the values if Rockbox hasn't overwritten that region.
-         * Try reading from iBoot SRAM first, fall back to guesses. */
-        {
-            volatile uint32_t *iboot_timing = (volatile uint32_t *)0x0890d2dc;
-            vlog("  iBoot SRAM 0x890d2dc: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)iboot_timing[0], (unsigned long)iboot_timing[1],
-                 (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
-                 (unsigned long)iboot_timing[4]);
-
-            /* v55: SRAM values at 0x0890D2DC are stale Rockbox data, not
-             * real iBoot timing (v54 log: values truncate to nonsense).
-             * Use POR defaults: +0x1F4=0x10 (FIFO threshold), rest=0.
-             * DMA was active in v37 with these POR values. */
-            {
-                vlog("  iBoot SRAM (stale): %08lx %08lx %08lx %08lx %08lx",
-                     (unsigned long)iboot_timing_save[0],
-                     (unsigned long)iboot_timing_save[1],
-                     (unsigned long)iboot_timing_save[2],
-                     (unsigned long)iboot_timing_save[3],
-                     (unsigned long)iboot_timing_save[4]);
-                comp[0x1EC/4] = 0;
-                comp[0x1F0/4] = 0;
-                comp[0x1F4/4] = 0x10;  /* FIFO threshold — POR default */
-                comp[0x1F8/4] = 0;
-                comp[0x1FC/4] = 0;
-            }
-            vlog("  Compositor timing: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-                 (unsigned long)comp[0x1FC/4]);
+        /* v57: Timing registers from bootloader-captured iBoot data.
+         *
+         * Previous versions tried reading DRAM at 0x0890D2DC directly, but
+         * that address is inside the bootloader's BSS region (0x08800000+)
+         * which bss_init() zeros. The main firmware audio buffer then
+         * further overwrites it. So the plugin always got garbage.
+         *
+         * The bootloader now saves the values to comp_timing.bin before
+         * bss_init() runs. We use the DRAM capture (iBoot's original
+         * values) if available, else fall back to POR defaults. */
+        if (have_timing_file) {
+            vlog("  iBoot timing file found!");
+            vlog("    DRAM capture: %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)iboot_timing_save[0],
+                 (unsigned long)iboot_timing_save[1],
+                 (unsigned long)iboot_timing_save[2],
+                 (unsigned long)iboot_timing_save[3],
+                 (unsigned long)iboot_timing_save[4]);
+            vlog("    HW capture:   %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)iboot_hw_save[0],
+                 (unsigned long)iboot_hw_save[1],
+                 (unsigned long)iboot_hw_save[2],
+                 (unsigned long)iboot_hw_save[3],
+                 (unsigned long)iboot_hw_save[4]);
+            vlog("    PWRCON0=%08lx CTRL=%08lx",
+                 (unsigned long)iboot_pwrcon0,
+                 (unsigned long)iboot_comp_ctrl);
+            /* Use DRAM capture (iBoot's original values) for timing */
+            comp[0x1EC/4] = iboot_timing_save[0];
+            comp[0x1F0/4] = iboot_timing_save[1];
+            comp[0x1F4/4] = iboot_timing_save[2];
+            comp[0x1F8/4] = iboot_timing_save[3];
+            comp[0x1FC/4] = iboot_timing_save[4];
+        } else {
+            vlog("  No timing file — using POR defaults");
+            comp[0x1EC/4] = 0;
+            comp[0x1F0/4] = 0;
+            comp[0x1F4/4] = 0x10;  /* POR default FIFO threshold */
+            comp[0x1F8/4] = 0;
+            comp[0x1FC/4] = 0;
         }
+        vlog("  Compositor timing written: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+             (unsigned long)comp[0x1FC/4]);
 
         /* NOW set bit 30 (display output enable) — Apple does this LAST.
          * RE: FUN_000d8920(1) at ROM 0x14d408, step 23 of 24. */
@@ -1031,71 +1071,200 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired — LOOK AT LCD NOW!");
 
-    /* === MINIMAL HOLD — no register dumps, no disk I/O between trigger and display ===
-     * Previous versions did ~90 register reads + fdprintf calls here.
-     * This could interfere with pipeline timing or ATA bus contention.
-     * v38: just hold for 10 seconds, then dump AFTER. */
-
-    /* v55: Re-fire compositor GO AFTER pipeline trigger.
-     * The compositor GO may go idle if fired before VPP data arrives.
-     * Re-triggering ensures compositor starts pulling from DISP output. */
-    *(volatile uint32_t *)0x38900000 = 1;  /* compositor GO re-trigger */
-    vlog("  Compositor GO re-triggered after pipeline");
-
-    /* === Phase 7: Hold display — LOOK AT LCD NOW === */
-    vlog("Phase 7: Holding 10 seconds — WATCH THE SCREEN!");
-
-    /* Diagnostic hold: sample key registers every second for 10 seconds.
-     * Log LCD_STATUS, CLCD DMA status, compositor state, LCD passthrough.
-     * This tells us WHERE data stops flowing. */
+    /* === Phase 7b: Timing sweep ===
+     * v57: Now using bootloader-captured iBoot data (comp_timing.bin).
+     * Previous versions read DRAM 0x0890D2DC directly from the plugin,
+     * but that address is inside the bootloader BSS (zeroed by bss_init)
+     * and later overwritten by the audio buffer — always garbage.
+     *
+     * Strategy: try 4 timing approaches. For each:
+     *   1. Write timing registers
+     *   2. Re-fire compositor GO strobe
+     *   3. Wait 2s, sampling LCD_STATUS and CLCD DMA each second */
+    vlog("Phase 7b: Timing sweep — 4 approaches");
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-        for (int sec = 0; sec < 10; sec++) {
-            /* Busy-wait 1 second */
-            uint32_t start = USEC_TIMER;
-            while ((USEC_TIMER - start) < 1000000);
 
-            vlog("  t=%d: CLCD=%08lx +0x10=%08lx MIXER=%08lx DISP=%08lx",
-                 sec,
+        /* --- Approach 1: POR values only (+0x1F4=0x10, rest=0) --- */
+        vlog("  === APPROACH 1: POR defaults (+0x1F4=0x10) ===");
+        comp[0x1EC/4] = 0;
+        comp[0x1F0/4] = 0;
+        comp[0x1F4/4] = 0x10;
+        comp[0x1F8/4] = 0;
+        comp[0x1FC/4] = 0;
+        comp[0x008/4] |= 0x40000000;
+        comp[0x000/4] = 1;
+        comp[0x3AC/4] = 0x04004003;
+        vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+             (unsigned long)comp[0x1FC/4]);
+        for (int s = 0; s < 2; s++) {
+            uint32_t t0 = USEC_TIMER;
+            while ((USEC_TIMER - t0) < 1000000);
+            vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
+                 s,
+                 (unsigned long)LCD_STATUS,
                  (unsigned long)CLCD_CTRL,
                  (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)MIXER_CTRL,
-                 (unsigned long)DISP_CTRL);
-            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx",
-                 (unsigned long)LCD_STATUS,
-                 (unsigned long)LCD_CON,
-                 (unsigned long)*(volatile uint32_t *)(0x38300070));
-            vlog("      COMP=%08lx +0x8=%08lx +0x200=%08lx +0x3AC=%08lx",
                  (unsigned long)comp[0],
-                 (unsigned long)comp[0x008/4],
-                 (unsigned long)comp[0x200/4],
-                 (unsigned long)comp[0x3AC/4]);
+                 (unsigned long)comp[0x008/4]);
         }
+
+        /* --- Approach 2: Samsung VIDTCON-style guess --- */
+        vlog("  === APPROACH 2: VIDTCON guess ===");
+        comp[0x1EC/4] = 0x000A0A01;
+        comp[0x1F0/4] = 0x000A0A01;
+        comp[0x1F4/4] = 0x10;
+        comp[0x1F8/4] = 0;
+        comp[0x1FC/4] = 0;
+        comp[0x008/4] |= 0x40000000;
+        comp[0x000/4] = 1;
+        comp[0x3AC/4] = 0x04004003;
+        vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+             (unsigned long)comp[0x1FC/4]);
+        for (int s = 0; s < 2; s++) {
+            uint32_t t0 = USEC_TIMER;
+            while ((USEC_TIMER - t0) < 1000000);
+            vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
+                 s,
+                 (unsigned long)LCD_STATUS,
+                 (unsigned long)CLCD_CTRL,
+                 (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)comp[0],
+                 (unsigned long)comp[0x008/4]);
+        }
+
+        /* --- Approach 3: iBoot DRAM capture (from bootloader file) --- */
+        if (have_timing_file) {
+            vlog("  === APPROACH 3: iBoot DRAM capture (bootloader) ===");
+            comp[0x1EC/4] = iboot_timing_save[0];
+            comp[0x1F0/4] = iboot_timing_save[1];
+            comp[0x1F4/4] = iboot_timing_save[2];
+            comp[0x1F8/4] = iboot_timing_save[3];
+            comp[0x1FC/4] = iboot_timing_save[4];
+            comp[0x008/4] |= 0x40000000;
+            comp[0x000/4] = 1;
+            comp[0x3AC/4] = 0x04004003;
+            vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+                 (unsigned long)comp[0x1FC/4]);
+            for (int s = 0; s < 2; s++) {
+                uint32_t t0 = USEC_TIMER;
+                while ((USEC_TIMER - t0) < 1000000);
+                vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
+                     s,
+                     (unsigned long)LCD_STATUS,
+                     (unsigned long)CLCD_CTRL,
+                     (unsigned long)CLCD_REG(0x010),
+                     (unsigned long)comp[0],
+                     (unsigned long)comp[0x008/4]);
+            }
+        } else {
+            vlog("  === APPROACH 3: SKIPPED (no timing file) ===");
+        }
+
+        /* --- Approach 4: iBoot HW register capture (from bootloader file) --- */
+        if (have_timing_file &&
+            iboot_hw_save[0] != 0xDEAD0001) {  /* sentinel = clocks were gated */
+            vlog("  === APPROACH 4: iBoot HW capture (bootloader) ===");
+            comp[0x1EC/4] = iboot_hw_save[0];
+            comp[0x1F0/4] = iboot_hw_save[1];
+            comp[0x1F4/4] = iboot_hw_save[2];
+            comp[0x1F8/4] = iboot_hw_save[3];
+            comp[0x1FC/4] = iboot_hw_save[4];
+            comp[0x008/4] |= 0x40000000;
+            comp[0x000/4] = 1;
+            comp[0x3AC/4] = 0x04004003;
+            vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+                 (unsigned long)comp[0x1FC/4]);
+            for (int s = 0; s < 2; s++) {
+                uint32_t t0 = USEC_TIMER;
+                while ((USEC_TIMER - t0) < 1000000);
+                vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
+                     s,
+                     (unsigned long)LCD_STATUS,
+                     (unsigned long)CLCD_CTRL,
+                     (unsigned long)CLCD_REG(0x010),
+                     (unsigned long)comp[0],
+                     (unsigned long)comp[0x008/4]);
+            }
+        } else {
+            vlog("  === APPROACH 4: SKIPPED (clocks were gated at boot) ===");
+        }
+
+        vlog("  Timing sweep done. Holding 3s for visual check...");
+    }
+    rb->sleep(HZ * 3);
+
+    /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
+    vlog("Phase 8: Panel GRAM readback");
+    {
+        uint32_t save_con = LCD_CON;
+        if (panel_type >= 2) {
+            /* ILI9320: set address to (0,0), read register 0x202 */
+            vpp_lcd_config(0x80000DA8);
+            vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x202);
+            while (!(LCD_STATUS & 0x2));
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t dummy = LCD_DBUFF;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t px0 = LCD_DBUFF;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t px1 = LCD_DBUFF;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t px2 = LCD_DBUFF;
+            vlog("  GRAM[0,0]: dummy=%08lx px0=%08lx px1=%08lx px2=%08lx",
+                 (unsigned long)dummy, (unsigned long)px0,
+                 (unsigned long)px1, (unsigned long)px2);
+        } else {
+            /* ILI9341: command 0x2E (RAMRD) */
+            vpp_lcd_config(0x80000c20);
+            vpp_lcd_cmd(0x2A);
+            vpp_lcd_data(0); vpp_lcd_data(0); vpp_lcd_data(0); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x2B);
+            vpp_lcd_data(0); vpp_lcd_data(0); vpp_lcd_data(0); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x2E);
+            while (!(LCD_STATUS & 0x2));
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t dummy = LCD_DBUFF;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t r = LCD_DBUFF >> 1;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t g = LCD_DBUFF >> 1;
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t b = LCD_DBUFF >> 1;
+            vlog("  GRAM[0,0]: dummy=%08lx R=%02lx G=%02lx B=%02lx",
+                 (unsigned long)dummy, (unsigned long)r,
+                 (unsigned long)g, (unsigned long)b);
+        }
+        LCD_CON = save_con;
     }
 
-    /* NOW dump status (after the hold) */
-    uint32_t clcd_s = CLCD_CTRL;
-    uint32_t mixer_s = MIXER_CTRL;
-    uint32_t disp_s = DISP_CTRL;
-    vlog("  CLCD_CTRL=0x%08lx %s",
-         (unsigned long)clcd_s, (clcd_s == 0x05) ? "RUNNING" : "other");
-    vlog("  MIXER_CTRL=0x%08lx %s",
-         (unsigned long)mixer_s,
-         (mixer_s == 0x05 || mixer_s == 0x07) ? "RUNNING" : "unexpected");
-    vlog("  DISP_CTRL=0x%08lx %s",
-         (unsigned long)disp_s,
-         (disp_s == 0x01) ? "RUNNING(sync)" : "unexpected");
-
-    /* Hold VPP output visible for 5 seconds — look at the LCD! */
-    vlog("  Holding display for 5 seconds — check LCD for gradient...");
-    rb->sleep(HZ * 5);
-
-    /* === Phase 8: Dump diagnostic registers === */
-    vlog("Phase 8: Post-trigger register dump");
-    vlog("  CLCD_CTRL  = 0x%08lx", (unsigned long)CLCD_CTRL);
+    /* Final status dump */
+    vlog("Phase 8b: Final register dump");
+    vlog("  CLCD_CTRL  = 0x%08lx +0x10=%08lx", (unsigned long)CLCD_CTRL,
+         (unsigned long)CLCD_REG(0x010));
     vlog("  MIXER_CTRL = 0x%08lx", (unsigned long)MIXER_CTRL);
     vlog("  DISP_CTRL  = 0x%08lx", (unsigned long)DISP_CTRL);
     vlog("  DISP_MODE  = 0x%08lx", (unsigned long)DISP_MODE);
+    vlog("  LCD_STATUS = 0x%08lx LCD_CON = 0x%08lx",
+         (unsigned long)LCD_STATUS, (unsigned long)LCD_CON);
 
     /* === Phase 9: Shutdown VPP pipeline === */
     vlog("Phase 9: Shutting down VPP");
