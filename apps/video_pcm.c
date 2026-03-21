@@ -73,9 +73,13 @@ static void video_pcm_get_more(const void **start, size_t *size)
         if (rd + chunk > PCM_BUF_SAMPLES)
             chunk = PCM_BUF_SAMPLES - rd;
 
-        /* Limit chunk size to avoid hogging DMA */
-        if (chunk > 2048)
-            chunk = 2048;
+        /* Limit chunk to one mixer frame so the entire returned buffer
+         * is consumed before pcm_read_pos advances. Without this, the
+         * mixer stores our pointer and gradually reads over 8 callbacks
+         * while the write side sees the positions as "free" and
+         * overwrites them — causing audible fragment repetition. */
+        if (chunk > MIX_FRAME_SAMPLES)
+            chunk = MIX_FRAME_SAMPLES;
 
         *start = &pcm_buffer[rd * 2];
         *size = chunk * 4; /* stereo 16-bit = 4 bytes per sample */
