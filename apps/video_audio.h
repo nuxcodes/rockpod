@@ -36,4 +36,7 @@ void video_audio_stop(void);
 /* Check if audio thread has pre-filled enough PCM data to start. */
 bool video_audio_ready(void);
 
+/* Check if audio thread is actively decoding (false after EOF or error). */
+bool video_audio_is_active(void);
+
 #endif /* VIDEO_AUDIO_H */

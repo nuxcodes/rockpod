@@ -163,6 +163,7 @@ static struct {
 
     /* Audio */
     bool has_audio;
+    bool audio_clock_lost; /* audio EOF/error: fell back to tick pacing */
     uint32_t audio_sample_rate;
 } ps;
 
@@ -1098,7 +1099,10 @@ static void play_pause(void)
             ps.curr_time_ms = 0;
             ps.cur_sample = 0;
             if (ps.has_audio)
+            {
                 video_audio_seek(0);
+                ps.audio_clock_lost = false;
+            }
         }
 
         ps.play_start_tick = current_tick;
@@ -1136,6 +1140,7 @@ static void do_seek(int delta_ms)
         video_audio_seek((uint32_t)t);
         seek_to_time((uint32_t)t);
         video_pcm_pause(false);
+        ps.audio_clock_lost = false;
     }
     else
     {
@@ -1367,7 +1372,8 @@ static void button_loop(const char *filepath)
             {
                 long wait;
 
-                if (ps.has_audio)
+                if (ps.has_audio && !ps.audio_clock_lost
+                    && video_audio_is_active())
                 {
                     /* Audio clock = ground truth */
                     uint32_t audio_ms = video_pcm_get_clock_ms();
@@ -1400,6 +1406,14 @@ static void button_loop(const char *filepath)
                 }
                 else
                 {
+                    /* Audio finished/failed/absent: tick-based pacing.
+                     * Re-anchor tick clock on first entry after audio loss. */
+                    if (ps.has_audio && !ps.audio_clock_lost)
+                    {
+                        ps.play_start_tick = current_tick;
+                        ps.play_start_time = ps.curr_time_ms;
+                        ps.audio_clock_lost = true;
+                    }
                     /* No audio: tick-based pacing (original logic) */
                     long target_tick = ps.play_start_tick +
                         (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
@@ -1851,6 +1865,9 @@ void video_playback_start(const char *filepath, const char *title)
         cpu_boost(false);
     }
 
+    /* Boost CPU for audio init, pre-fill, and playback */
+    cpu_boost(true);
+
     /* Initialize audio if the MP4 has an audio track */
     if (demux.audio_format != 0 && demux.audio_codecdata_len > 0)
     {
@@ -1865,9 +1882,19 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Wait for audio pre-fill (~200ms) before starting video decode.
-     * Without this, the first frames stutter as video waits for
-     * the audio clock to start advancing. */
+    /* Show first video frame immediately while audio pre-fills.
+     * Without this, the screen stays black during the 50-200ms pre-fill. */
+    {
+        int first = decode_one_frame(true);
+        if (first == 1)
+        {
+            update_frame_time();
+            clear_letterbox_bars(true);
+        }
+    }
+
+    /* Wait for audio pre-fill (~200ms) before entering main loop.
+     * Audio thread fills PCM buffer while first frame is visible. */
     if (ps.has_audio)
     {
         int prefill_wait = 0;
@@ -1880,7 +1907,6 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* Start playing */
     ps.state = PB_PLAYING;
-    cpu_boost(true);
     ps.play_start_tick = current_tick;
     ps.play_start_time = ps.curr_time_ms;
     ps.osd_visible = false;

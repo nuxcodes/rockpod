@@ -297,7 +297,11 @@ static void audio_decode_thread(void)
             }
         }
 
-        yield();
+        /* Yield only during normal playback, not pre-fill.
+         * Pre-fill is bounded by buffer size — no starvation risk.
+         * Skipping yield during pre-fill saves ~90ms (10ms/frame * 9). */
+        if (audio_is_ready)
+            yield();
     }
 
 thread_exit:
@@ -389,6 +393,11 @@ void video_audio_stop(void)
 bool video_audio_ready(void)
 {
     return audio_is_ready || audio_has_error;
+}
+
+bool video_audio_is_active(void)
+{
+    return audio_is_playing;
 }
 
 #endif /* IPOD_6G */
