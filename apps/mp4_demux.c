@@ -274,13 +274,12 @@ static uint32_t read_mp4_descr_length(struct mp4_stream *s)
  * Ported from libm4a/demux.c:95-154. */
 static bool read_chunk_esds(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
-    size_t size_remaining = chunk_len - 8;
+    off_t box_end = ctx->stream.pos + (off_t)(chunk_len - 8);
     uint8_t tag;
     uint32_t descr_len;
 
     /* version + flags */
     stream_read_uint32(&ctx->stream);
-    size_remaining -= 4;
 
     /* ES_Descriptor (tag 0x03) */
     tag = stream_read_uint8(&ctx->stream);
@@ -323,6 +322,13 @@ static bool read_chunk_esds(struct mp4_parse_ctx *ctx, size_t chunk_len)
         stream_read(&ctx->stream, ctx->res->audio_codecdata, descr_len);
     }
 
+    /* Skip any trailing descriptors (SLConfigDescriptor etc.) */
+    {
+        off_t remaining = box_end - ctx->stream.pos;
+        if (remaining > 0)
+            stream_skip(&ctx->stream, (size_t)remaining);
+    }
+
     return true;
 }
 
@@ -362,17 +368,18 @@ static bool read_chunk_stsd_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
             stream_skip(&ctx->stream, 8);
             entry_remaining -= 8;
 
+            /* channelCount(2) + sampleSize(2) + compressionID(2) +
+               packetSize(2) = 8 bytes */
             ctx->res->audio_channels = stream_read_uint16(&ctx->stream);
-            stream_skip(&ctx->stream, 2); /* sample_size (bits) */
-            stream_skip(&ctx->stream, 2); /* packet_size */
-            entry_remaining -= 6;
+            stream_skip(&ctx->stream, 6); /* sampleSize+compressionID+packetSize */
+            entry_remaining -= 8;
 
+            /* sampleRate: 16.16 fixed-point, 4 bytes */
             {
-                uint32_t sr_fp = stream_read_uint32(&ctx->stream); /* 16.16 FP */
+                uint32_t sr_fp = stream_read_uint32(&ctx->stream);
                 ctx->res->audio_sample_rate = sr_fp >> 16;
             }
-            stream_skip(&ctx->stream, 2); /* reserved */
-            entry_remaining -= 6;
+            entry_remaining -= 4;
 
             /* Walk sub-boxes for esds */
             while (entry_remaining > 8)

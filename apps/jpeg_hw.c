@@ -209,6 +209,20 @@ static int hw_mb_submit(uint32_t coeff_phys, uint32_t ref_addr,
         XFORM_800 = XFORM_CMD_BASE | ((uint32_t)is_chroma << 19);
         DMA_10C = ((uint32_t)is_chroma << 3) | 0x31;
     }
+
+    /* Wait for output DMA to complete.  DMA_10C triggers an async
+     * bus-master write from VPU-A to DRAM.  CPU slave-port reads do
+     * NOT serialize independent bus-master DMA writes (AHB spec).
+     * Poll DEBLK+0x14 bit 16 (pipeline busy) — same register polled
+     * at the start of each submission.  When it clears, the entire
+     * pipeline (IDCT → deblock → output DMA) has finished and the
+     * small buffer in DRAM contains valid data.
+     * Apple relies on double-buffered readback (reads PREVIOUS
+     * iteration's buffer); we read the CURRENT buffer, so we must
+     * wait here. */
+    timeout = 100000;
+    while ((REG32(VDEC_DEBLK + 0x14) & 0x10000) && --timeout > 0) {}
+
     return 0;
 }
 

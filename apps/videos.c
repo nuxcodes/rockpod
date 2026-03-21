@@ -43,6 +43,7 @@
 #include <stdio.h>
 
 #define MAX_VIDEO_ENTRIES 256
+#define CORNER_RADIUS 8
 
 /* Thumbnail storage: one THUMB_SIZE x THUMB_SIZE RGB565 bitmap per video */
 #define MAX_THUMBS 64
@@ -307,8 +308,31 @@ static void video_margin_draw(int item_index, struct screen *display,
     {
         int thumb_x = x;
         int thumb_y = y + (height - THUMB_SIZE) / 2;
+        struct viewport *vp = lcd_current_viewport;
+        int abs_x = vp->x + thumb_x;
+        int abs_y = vp->y + thumb_y;
+        int r = CORNER_RADIUS;
+        int r2x4 = 4 * r * r;
+        int px, py;
+        fb_data bg;
+
+        bg = *FBADDR(abs_x, abs_y);
+
         display->bitmap(thumb_bitmaps[item_index],
                         thumb_x, thumb_y, THUMB_SIZE, THUMB_SIZE);
+
+        for (py = 0; py < r; py++)
+            for (px = 0; px < r; px++)
+            {
+                int dx = 2 * r - 1 - 2 * px;
+                int dy = 2 * r - 1 - 2 * py;
+                if (dx * dx + dy * dy > r2x4)
+                {
+                    *FBADDR(abs_x + px, abs_y + py) = bg;
+                    *FBADDR(abs_x + px,
+                            abs_y + THUMB_SIZE - 1 - py) = bg;
+                }
+            }
     }
 }
 

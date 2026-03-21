@@ -439,10 +439,11 @@ static void disp_go_lcd(void)
     DISP_MODE |= 0x200;          /* GO step 2: bit 9 sync enable */
     DISP_MODE |= 0x1000;         /* GO step 3: bit 12 pipeline enable */
 
-    /* Interlace field select: 0 for progressive LCD, 0x200 for interlaced NTSC.
-     * ROM 0x168378-0x168390: only writes 0x200 when state[2]==1 && state[3]==1.
-     * For LCD: always 0. v13 incorrectly set 0x200 (reverted in v16). */
-    DISP_REG(0x034) = 0;
+    /* DISP+0x034: Full checklist agent found Apple sets 0x200 for LCD VIDEO
+     * mode (state[2]==1 AND state[3]==1 = video content on LCD output).
+     * v13-v15 had 0x200 but other bugs (DISP+0x00C=6, stale bit5) masked it.
+     * v16 reverted to 0 — but those bugs are now fixed. Try 0x200 again. */
+    DISP_REG(0x034) = 0x200;
 
     /* Color correction coefficients: CHIPID_REG_TWO bit 8 selects variant.
      * ROM 0x168354: ldr r2,[r7,#0x4] (CHIPID+4), ROM 0x168358: tst r2,#0x100.
@@ -739,8 +740,15 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)comp[0x0D8/4], (unsigned long)comp[0x0E0/4],
              (unsigned long)comp[0x0E8/4], (unsigned long)comp[0x3AC/4]);
 
-        /* Minimal init: set only what we need, preserve timing regs.
-         * FUN_0014d240 does full init but we avoid clobbering boot state. */
+        /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
+         * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
+         * setting bit 30 before viewport → invalid state → backpressure
+         * → CLCD DMA stalls. This explains DMA active in v31 but not v34). */
+
+        /* Step 1: Clear pipeline bit (Apple does this FIRST via FUN_000b1328) */
+        comp[0x200/4] &= ~1;
+
+        /* Step 2-3: Basic config */
         comp[0x004/4] = 1;
         comp[0x020/4] = 1;
         /* Per-channel identity gain (0x1000 = 1.0 in 4.12 FP) */
@@ -755,7 +763,12 @@ enum plugin_status plugin_start(const void *parameter)
          * bits[17:16]=01 output fmt, bits[21:20]=01 input fmt B,
          * bits[25:24]=01 input fmt A, bit 30=display output enable.
          * FUN_000bf820(0,0,0x00010101,1): param3 bytes set bits 24,20,16. */
-        comp[0x008/4] = 0x41118101;
+        /* Write +0x008 WITHOUT bit 30 first. Apple sets bit 30 LAST
+         * (step 23 of 24) after all viewport/pipeline config is done.
+         * Setting bit 30 = display output enable before config is
+         * complete may cause hardware to output before ready.
+         * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
+        comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
         comp[0x00C/4] = 0x000F0F0F;
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
@@ -774,8 +787,8 @@ enum plugin_status plugin_start(const void *parameter)
         /* Viewport: full screen */
         comp[0x210/4] = 0x00010110;
         comp[0x214/4] = 0x00EF013F;     /* (239<<16)|319 */
-        /* Channel config from FUN_000d7384 (ROM 0x14df2c) */
-        comp[0x3AC/4] = 0x04004003;
+        /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
+         * (FUN_0014deec at ROM 0x14df2c), not in FUN_0014d240. Moved below. */
         /* DO NOT touch +0x1EC-0x1FC — timing from iBoot, preserve Apple values */
 
         /* Layer 5 (video overlay) config — FUN_0014cc90 case 5.
@@ -835,9 +848,16 @@ enum plugin_status plugin_start(const void *parameter)
             }
         }
 
-        /* Master enable — write but DON'T read back yet.
-         * It's a GO strobe that auto-clears. */
+        /* NOW set bit 30 (display output enable) — Apple does this LAST.
+         * RE: FUN_000d8920(1) at ROM 0x14d408, step 23 of 24. */
+        comp[0x008/4] |= 0x40000000;
+
+        /* Master GO strobe (auto-clears). */
         comp[0x000/4] = 1;
+
+        /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
+         * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
+        comp[0x3AC/4] = 0x04004003;
     }
     vlog("  Compositor: CTRL=0x%08lx CFG=0x%08lx VP=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,

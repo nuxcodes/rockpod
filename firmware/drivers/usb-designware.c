@@ -44,8 +44,13 @@
 /* Diagnostic counter: incomplete isochronous IN transfers */
 static volatile int iisoixfr_count = 0;
 
-/* Forward declaration — defined in usb_audio.c */
+/* Forward declaration — defined in usb_audio.c.
+ * In bootloader builds, usb_audio.c is not compiled. */
+#ifdef BOOTLOADER
+static inline bool usb_audio_source_streaming(void) { return false; }
+#else
 extern bool usb_audio_source_streaming(void);
+#endif
 
 
 /* The ARM940T uses a subset of the ARMv4 functions, not
