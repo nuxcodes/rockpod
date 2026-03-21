@@ -355,7 +355,7 @@ static void disp_init_lcd(void)
         DISP_REG(i) = 0;
 
     /* CSC bypass (bit 4) */
-    DISP_CSC_MODE = (DISP_CSC_MODE & 0xE0) | 0x10;
+    DISP_CSC_MODE = (DISP_CSC_MODE & 0xFFFFFFE0) | 0x10;  /* v68: Apple BIC #0x1f preserves bits 5-31 */
     DISP_CSC_Y = 0x800000;     /* 1.0 in 8.24 FP */
     DISP_CSC_CBCR = 0x800000;
     DISP_CSC_OFS = 0x80;       /* 128 for unsigned chroma */
@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v57 ===");
+    vlog("=== VPP Pipeline Test v69 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -564,7 +564,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v58: scroll stop + GRAM readback");
+    rb->splashf(HZ, "VPP v69");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -692,9 +692,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* === Phase 5: Configure buffer addresses and scaling === */
     vlog("Phase 5: Configuring buffers and scaling");
 
-    /* Pixel format: marathon batch 4 agent 4 found Apple NEVER sets
-     * bits[11:8] of MIXER+0x00C. mixer_init already zeroed it.
-     * The 0x200 value was speculative — no RE evidence. REMOVED. */
+    /* MIXER+0x00C: batch 12 agent confirmed Apple NEVER writes pixel format
+     * bits here for video layer 5. Those go to MIXER+0x008. The 0x200 was
+     * for layers 0-3 only. Removed. mixer_init already zeroed it. */
 
     /* Buffer addresses */
     CLCD_Y_ADDR  = (uint32_t)y_plane;
@@ -793,7 +793,21 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* Dump Apple boot state BEFORE we touch anything */
+        /* v64: Proper compositor reset (batch 12 agent from ROM):
+         * Apple ALWAYS disables block and waits for idle BEFORE gating.
+         * Gating a running block leaves undefined internal state. */
+        comp[0x000/4] &= ~1;   /* step 1: clear CTRL enable */
+        { int i; for (i = 0; i < 100; i++) {
+            if (comp[0x000/4] & 2) break;  /* wait for idle bit */
+            for (volatile int d = 0; d < 10000; d++);
+        }}
+        PWRCON(0) |= 0x2080;   /* step 2: gate compositor clocks */
+        for (volatile int d = 0; d < 10000; d++);
+        PWRCON(0) &= ~0x2080;  /* step 3: ungate — block at POR */
+        for (volatile int d = 0; d < 10000; d++);
+        vlog("  Compositor reset done");
+
+        /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");
         vlog("    CTRL=0x%08lx CFG=0x%08lx MODE=0x%08lx",
              (unsigned long)comp[0], (unsigned long)comp[0x008/4],
@@ -809,6 +823,64 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)comp[0x0D8/4], (unsigned long)comp[0x0E0/4],
              (unsigned long)comp[0x0E8/4], (unsigned long)comp[0x3AC/4]);
 
+        /* v65: Comprehensive gap register probe.
+         * RE evidence: exhaustive decompilation of ALL 15 compositor functions
+         * in ROM confirms Apple NEVER reads or writes offsets +0x010-0x01C,
+         * +0x024-0x02C, +0x040-0x048, and many others. These could be:
+         *   - Read-only status (interrupt pending, FIFO level, DMA status)
+         *   - Error flags, line counter, frame counter
+         *   - Reserved/unused (read as 0 or 0xDEAD)
+         * Reading POR values tells us if the register exists (non-zero/non-FF). */
+        vlog("  --- Gap register probe (POR after reset) ---");
+        /* Gap 1: +0x010 to +0x01C (between CONFIG and RESET_B) */
+        vlog("    +010=0x%08lx +014=0x%08lx +018=0x%08lx +01C=0x%08lx",
+             (unsigned long)comp[0x010/4], (unsigned long)comp[0x014/4],
+             (unsigned long)comp[0x018/4], (unsigned long)comp[0x01C/4]);
+        /* Gap 2: +0x024 to +0x02C (after RESET_B, before layer regs) */
+        vlog("    +024=0x%08lx +028=0x%08lx +02C=0x%08lx",
+             (unsigned long)comp[0x024/4], (unsigned long)comp[0x028/4],
+             (unsigned long)comp[0x02C/4]);
+        /* Known writes: +0x030, +0x034, +0x038, +0x03C, +0x040, +0x044 */
+        /* Gap 3: +0x048 to +0x058 (between layer src and viewport regs) */
+        vlog("    +048=0x%08lx +058=0x%08lx",
+             (unsigned long)comp[0x048/4], (unsigned long)comp[0x058/4]);
+        /* Gap 4: +0x0D0 (between blend/alpha and panel type) */
+        vlog("    +0D0=0x%08lx +0D4=0x%08lx",
+             (unsigned long)comp[0x0D0/4], (unsigned long)comp[0x0D4/4]);
+        /* Gap 5: +0x1E0 to +0x1E8 (before timing regs at +0x1EC) */
+        vlog("    +1E0=0x%08lx +1E4=0x%08lx +1E8=0x%08lx",
+             (unsigned long)comp[0x1E0/4], (unsigned long)comp[0x1E4/4],
+             (unsigned long)comp[0x1E8/4]);
+        /* Gap 6: +0x204/+0x208/+0x20C (DMA regs - verify POR) */
+        vlog("    +204=0x%08lx +208=0x%08lx +20C=0x%08lx",
+             (unsigned long)comp[0x204/4], (unsigned long)comp[0x208/4],
+             (unsigned long)comp[0x20C/4]);
+        /* Gap 7: +0x218 to +0x3A8 (large unknown area) */
+        vlog("    +218=0x%08lx +21C=0x%08lx +220=0x%08lx +224=0x%08lx",
+             (unsigned long)comp[0x218/4], (unsigned long)comp[0x21C/4],
+             (unsigned long)comp[0x220/4], (unsigned long)comp[0x224/4]);
+        /* Scan for any non-zero registers in +0x228 to +0x3A8 */
+        {
+            int gi;
+            int gap_found = 0;
+            for (gi = 0x228; gi <= 0x3A8; gi += 4) {
+                uint32_t gv = comp[gi/4];
+                if (gv != 0) {
+                    vlog("    +%03x=0x%08lx (NON-ZERO!)", gi,
+                         (unsigned long)gv);
+                    if (++gap_found >= 16) {
+                        vlog("    ... (truncated, >16 non-zero)");
+                        break;
+                    }
+                }
+            }
+            if (gap_found == 0)
+                vlog("    +228..+3A8: all zero");
+        }
+        /* Also read +0x000 to check idle/busy bits */
+        vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
+             (unsigned long)comp[0]);
+
         /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
          * setting bit 30 before viewport → invalid state → backpressure
@@ -820,6 +892,13 @@ enum plugin_status plugin_start(const void *parameter)
         /* Step 2-3: Basic config */
         comp[0x004/4] = 1;
         comp[0x020/4] = 1;
+        /* v59b: THE MISSING PIECE — compositor panel type selector!
+         * vtable[0x6c](obj, 1, 0) at ROM 0x14d914 writes 0x389000D4 = 1.
+         * This selects "panel type 1 = internal LCD" for the compositor.
+         * Without it, the compositor doesn't know what panel to output to.
+         * WE NEVER SET THIS IN v1-v59! Marathon batch 10 agent found it. */
+        comp[0x0D4/4] = 1;  /* panel type = LCD */
+
         /* Per-channel identity gain (0x1000 = 1.0 in 4.12 FP) */
         comp[0x0D8/4] = 0x00001000;
         comp[0x0DC/4] = 0;
@@ -872,6 +951,10 @@ enum plugin_status plugin_start(const void *parameter)
         comp[0x050/4] = 0;                  /* no offset */
         comp[0x054/4] = (240 << 16) | 320;  /* dims (240<<16)|320 */
 
+        /* comp +0x038-0x044: Layer 5 DMA buffer addresses REMOVED.
+         * v66 showed these KILL DMA (0x034d→0x000). In bypass mode (bit 8),
+         * compositor passes VPP data through — its own DMA conflicts. */
+
         /* Gamma LUTs — CRITICAL. Without identity LUT, all pixels map to BLACK.
          * Apple inits 256 entries per channel with value = i*4 (10-bit output).
          * ROM evidence: FUN_00088d8c writes to 0x38900400/0x800/0xC00.
@@ -894,37 +977,16 @@ enum plugin_status plugin_start(const void *parameter)
          * The bootloader now saves the values to comp_timing.bin before
          * bss_init() runs. We use the DRAM capture (iBoot's original
          * values) if available, else fall back to POR defaults. */
-        if (have_timing_file) {
-            vlog("  iBoot timing file found!");
-            vlog("    DRAM capture: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)iboot_timing_save[0],
-                 (unsigned long)iboot_timing_save[1],
-                 (unsigned long)iboot_timing_save[2],
-                 (unsigned long)iboot_timing_save[3],
-                 (unsigned long)iboot_timing_save[4]);
-            vlog("    HW capture:   %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)iboot_hw_save[0],
-                 (unsigned long)iboot_hw_save[1],
-                 (unsigned long)iboot_hw_save[2],
-                 (unsigned long)iboot_hw_save[3],
-                 (unsigned long)iboot_hw_save[4]);
-            vlog("    PWRCON0=%08lx CTRL=%08lx",
-                 (unsigned long)iboot_pwrcon0,
-                 (unsigned long)iboot_comp_ctrl);
-            /* Use DRAM capture (iBoot's original values) for timing */
-            comp[0x1EC/4] = iboot_timing_save[0];
-            comp[0x1F0/4] = iboot_timing_save[1];
-            comp[0x1F4/4] = iboot_timing_save[2];
-            comp[0x1F8/4] = iboot_timing_save[3];
-            comp[0x1FC/4] = iboot_timing_save[4];
-        } else {
-            vlog("  No timing file — using POR defaults");
-            comp[0x1EC/4] = 0;
-            comp[0x1F0/4] = 0;
-            comp[0x1F4/4] = 0x10;  /* POR default FIFO threshold */
-            comp[0x1F8/4] = 0;
-            comp[0x1FC/4] = 0;
-        }
+        /* v59: Hardcode timing values from v54's accidental success.
+         * v54 read stale SRAM which truncated to 0x0C/0x26/0x01/0x82/0x4E.
+         * Those values produced DMA 0x034d (fully active).
+         * POR defaults (zeros) produce DMA 0x000 (dead).
+         * Non-zero +0x1EC and +0x1F0 are REQUIRED for DMA. */
+        comp[0x1EC/4] = 0x0C;    /* V timing (12) — v54 value */
+        comp[0x1F0/4] = 0x26;    /* H timing (38) — v54 value */
+        comp[0x1F4/4] = 0x10;    /* FIFO threshold — POR default. 0x01 killed DMA. */
+        comp[0x1F8/4] = 0x82;    /* v54 value */
+        comp[0x1FC/4] = 0x4E;    /* v54 value */
         vlog("  Compositor timing written: %08lx %08lx %08lx %08lx %08lx",
              (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
              (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
@@ -933,6 +995,11 @@ enum plugin_status plugin_start(const void *parameter)
         /* NOW set bit 30 (display output enable) — Apple does this LAST.
          * RE: FUN_000d8920(1) at ROM 0x14d408, step 23 of 24. */
         comp[0x008/4] |= 0x40000000;
+
+        /* v64: IRQ mask clear — Apple calls vtable[0x10](obj, 0x00FFFFFF)
+         * just before GO at ROM 0x14d41c. Writes to comp+0x024.
+         * Missing from all previous versions! */
+        comp[0x024/4] = 0x00FFFFFF;
 
         /* Master GO strobe (auto-clears). */
         comp[0x000/4] = 1;
@@ -944,6 +1011,19 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,
          (unsigned long)*(volatile uint32_t *)0x38900008);
+
+    /* v65: Post-GO gap register probe.
+     * After GO strobe, status registers should now reflect running state.
+     * Compare with POR values above to identify live status bits. */
+    {
+        volatile uint32_t *comp2 = (volatile uint32_t *)0x38900000;
+        vlog("  --- Post-GO gap registers ---");
+        vlog("    +010=0x%08lx +014=0x%08lx +018=0x%08lx +01C=0x%08lx",
+             (unsigned long)comp2[0x010/4], (unsigned long)comp2[0x014/4],
+             (unsigned long)comp2[0x018/4], (unsigned long)comp2[0x01C/4]);
+        vlog("    +024=0x%08lx CTRL=0x%08lx (bit1=idle?)",
+             (unsigned long)comp2[0x024/4], (unsigned long)comp2[0]);
+    }
 
     /* Layer 5 is now BEFORE GO (correct Apple order). Post-GO call in
      * FUN_0014deec writes to LCD passthrough (0x383), NOT compositor. */
@@ -1069,138 +1149,51 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 1;
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
-    vlog("  Pipeline trigger fired — LOOK AT LCD NOW!");
+    vlog("  Pipeline trigger fired");
 
-    /* === Phase 7b: Timing sweep ===
-     * v57: Now using bootloader-captured iBoot data (comp_timing.bin).
-     * Previous versions read DRAM 0x0890D2DC directly from the plugin,
-     * but that address is inside the bootloader BSS (zeroed by bss_init)
-     * and later overwritten by the audio buffer — always garbage.
-     *
-     * Strategy: try 4 timing approaches. For each:
-     *   1. Write timing registers
-     *   2. Re-fire compositor GO strobe
-     *   3. Wait 2s, sampling LCD_STATUS and CLCD DMA each second */
-    vlog("Phase 7b: Timing sweep — 4 approaches");
+    /* v69: Compositor layer 5 buffer addresses — written PER-FRAME by Apple
+     * via vtable[0x24] = FUN_0014d6b4, AFTER the one-time trigger.
+     * Agent verified: literal pool 0x14d800 = 0x38900000 (direct MMIO).
+     * v66 wrote these during init (before GO) → killed DMA.
+     * Apple writes them AFTER pipeline is running. Try that. */
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-
-        /* --- Approach 1: POR values only (+0x1F4=0x10, rest=0) --- */
-        vlog("  === APPROACH 1: POR defaults (+0x1F4=0x10) ===");
-        comp[0x1EC/4] = 0;
-        comp[0x1F0/4] = 0;
-        comp[0x1F4/4] = 0x10;
-        comp[0x1F8/4] = 0;
-        comp[0x1FC/4] = 0;
-        comp[0x008/4] |= 0x40000000;
-        comp[0x000/4] = 1;
-        comp[0x3AC/4] = 0x04004003;
-        vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
-             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-             (unsigned long)comp[0x1FC/4]);
-        for (int s = 0; s < 2; s++) {
-            uint32_t t0 = USEC_TIMER;
-            while ((USEC_TIMER - t0) < 1000000);
-            vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
-                 s,
-                 (unsigned long)LCD_STATUS,
-                 (unsigned long)CLCD_CTRL,
-                 (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)comp[0],
-                 (unsigned long)comp[0x008/4]);
-        }
-
-        /* --- Approach 2: Samsung VIDTCON-style guess --- */
-        vlog("  === APPROACH 2: VIDTCON guess ===");
-        comp[0x1EC/4] = 0x000A0A01;
-        comp[0x1F0/4] = 0x000A0A01;
-        comp[0x1F4/4] = 0x10;
-        comp[0x1F8/4] = 0;
-        comp[0x1FC/4] = 0;
-        comp[0x008/4] |= 0x40000000;
-        comp[0x000/4] = 1;
-        comp[0x3AC/4] = 0x04004003;
-        vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
-             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-             (unsigned long)comp[0x1FC/4]);
-        for (int s = 0; s < 2; s++) {
-            uint32_t t0 = USEC_TIMER;
-            while ((USEC_TIMER - t0) < 1000000);
-            vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
-                 s,
-                 (unsigned long)LCD_STATUS,
-                 (unsigned long)CLCD_CTRL,
-                 (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)comp[0],
-                 (unsigned long)comp[0x008/4]);
-        }
-
-        /* --- Approach 3: iBoot DRAM capture (from bootloader file) --- */
-        if (have_timing_file) {
-            vlog("  === APPROACH 3: iBoot DRAM capture (bootloader) ===");
-            comp[0x1EC/4] = iboot_timing_save[0];
-            comp[0x1F0/4] = iboot_timing_save[1];
-            comp[0x1F4/4] = iboot_timing_save[2];
-            comp[0x1F8/4] = iboot_timing_save[3];
-            comp[0x1FC/4] = iboot_timing_save[4];
-            comp[0x008/4] |= 0x40000000;
-            comp[0x000/4] = 1;
-            comp[0x3AC/4] = 0x04004003;
-            vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-                 (unsigned long)comp[0x1FC/4]);
-            for (int s = 0; s < 2; s++) {
-                uint32_t t0 = USEC_TIMER;
-                while ((USEC_TIMER - t0) < 1000000);
-                vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
-                     s,
-                     (unsigned long)LCD_STATUS,
-                     (unsigned long)CLCD_CTRL,
-                     (unsigned long)CLCD_REG(0x010),
-                     (unsigned long)comp[0],
-                     (unsigned long)comp[0x008/4]);
-            }
-        } else {
-            vlog("  === APPROACH 3: SKIPPED (no timing file) ===");
-        }
-
-        /* --- Approach 4: iBoot HW register capture (from bootloader file) --- */
-        if (have_timing_file &&
-            iboot_hw_save[0] != 0xDEAD0001) {  /* sentinel = clocks were gated */
-            vlog("  === APPROACH 4: iBoot HW capture (bootloader) ===");
-            comp[0x1EC/4] = iboot_hw_save[0];
-            comp[0x1F0/4] = iboot_hw_save[1];
-            comp[0x1F4/4] = iboot_hw_save[2];
-            comp[0x1F8/4] = iboot_hw_save[3];
-            comp[0x1FC/4] = iboot_hw_save[4];
-            comp[0x008/4] |= 0x40000000;
-            comp[0x000/4] = 1;
-            comp[0x3AC/4] = 0x04004003;
-            vlog("    timing: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-                 (unsigned long)comp[0x1FC/4]);
-            for (int s = 0; s < 2; s++) {
-                uint32_t t0 = USEC_TIMER;
-                while ((USEC_TIMER - t0) < 1000000);
-                vlog("    t=%d: LCD_S=%08lx CLCD=%08lx +10=%08lx COMP=%08lx +8=%08lx",
-                     s,
-                     (unsigned long)LCD_STATUS,
-                     (unsigned long)CLCD_CTRL,
-                     (unsigned long)CLCD_REG(0x010),
-                     (unsigned long)comp[0],
-                     (unsigned long)comp[0x008/4]);
-            }
-        } else {
-            vlog("  === APPROACH 4: SKIPPED (clocks were gated at boot) ===");
-        }
-
-        vlog("  Timing sweep done. Holding 3s for visual check...");
+        comp[0x038/4] = (uint32_t)y_plane;
+        comp[0x03C/4] = (uint32_t)cb_plane;
+        comp[0x040/4] = 0;
+        comp[0x044/4] = (uint32_t)cr_plane;
     }
-    rb->sleep(HZ * 3);
+    vlog("  Comp layer 5 addrs set (post-trigger) — LOOK AT LCD NOW!");
+
+    vlog("Phase 7b: Holding 10 seconds");
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+        for (int sec = 0; sec < 10; sec++) {
+            uint32_t start = USEC_TIMER;
+            while ((USEC_TIMER - start) < 1000000);
+            vlog("  t=%d: CLCD=%08lx +10=%08lx MIXER=%08lx DISP=%08lx",
+                 sec, (unsigned long)CLCD_CTRL, (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)MIXER_CTRL, (unsigned long)DISP_CTRL);
+            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx",
+                 (unsigned long)LCD_STATUS, (unsigned long)LCD_CON,
+                 (unsigned long)*(volatile uint32_t *)(0x38300070));
+            vlog("      COMP=%08lx +0x8=%08lx +0x200=%08lx",
+                 (unsigned long)comp[0], (unsigned long)comp[0x008/4],
+                 (unsigned long)comp[0x200/4]);
+            /* v65: probe gap regs while pipeline running */
+            if (sec == 0 || sec == 5) {
+                vlog("      GAP +010=%08lx +014=%08lx +018=%08lx +01C=%08lx",
+                     (unsigned long)comp[0x010/4],
+                     (unsigned long)comp[0x014/4],
+                     (unsigned long)comp[0x018/4],
+                     (unsigned long)comp[0x01C/4]);
+                vlog("      GAP +1E0=%08lx +1E4=%08lx +1E8=%08lx",
+                     (unsigned long)comp[0x1E0/4],
+                     (unsigned long)comp[0x1E4/4],
+                     (unsigned long)comp[0x1E8/4]);
+            }
+        }
+    }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
     vlog("Phase 8: Panel GRAM readback");
