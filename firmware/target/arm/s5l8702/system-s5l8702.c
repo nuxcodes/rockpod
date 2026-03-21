@@ -217,6 +217,7 @@ static void vic_init(void)
 
 void system_init(void)
 {
+
     /*
      * Bootloader seems to give a blank screen when IRAM1 is disabled
      * - FW 10/13/19

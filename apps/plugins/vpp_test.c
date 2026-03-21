@@ -496,10 +496,20 @@ enum plugin_status plugin_start(const void *parameter)
 {
     (void)parameter;
 
-    log_open();
-    vlog("=== VPP Pipeline Test ===");
+    /* Capture iBoot compositor timing FIRST — before audio buffer allocation
+     * overwrites 0x0890D2DC. This DRAM region survives Rockbox boot (BSS ends
+     * at ~0x0842xxxx) but is destroyed when buflib allocates the audio buffer. */
+    static uint32_t iboot_timing_save[5];
+    {
+        volatile uint32_t *iboot = (volatile uint32_t *)0x0890d2dc;
+        for (int i = 0; i < 5; i++)
+            iboot_timing_save[i] = iboot[i];
+    }
 
-    uint32_t saved_lcd_con = 0;  /* saved before passthrough, restored after */
+    log_open();
+    vlog("=== VPP Pipeline Test v54 ===");
+
+    uint32_t saved_lcd_con = 0;
 
     /* Get audio buffer for test frame data */
     size_t buf_size;
@@ -529,8 +539,8 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP Test: powering on...");
-    rb->sleep(HZ / 5);  /* ensure splash DMA completes */
+    rb->splashf(HZ, "VPP v52: powering on...");
+    rb->sleep(HZ / 2);  /* ensure splash DMA completes (batch 6: LCD DMA conflict) */
 
     /* === Phase 2: Enable VPP clocks + GPIO 7.1 === */
     vlog("Phase 2: Enabling clocks");
@@ -553,9 +563,8 @@ enum plugin_status plugin_start(const void *parameter)
      * Both MMIO trace agents confirmed: NOT needed for VPP pipeline.
      * REMOVED — do not re-add. */
 
-    /* Enable compositor clocks BEFORE VPP (marathon batch 3 agent 5):
-     * Apple does PWRCON bits 7+13 as the FIRST step of FUN_0014deec,
-     * which runs BEFORE FUN_00168450 (VPP init). */
+    /* PWRCON bits 7+13: RE-ENABLED (marathon batch 6, 3 agents confirmed
+     * compositor IS in HW path). Compositor clocks needed for passthrough. */
     PWRCON(0) &= ~0x2080;
     vlog("PWRCON bits 7+13 enabled (compositor clocks)");
 
@@ -651,8 +660,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* === Phase 5: Configure buffer addresses and scaling === */
     vlog("Phase 5: Configuring buffers and scaling");
 
-    /* Pixel format: YUV 4:2:0 */
-    MIXER_PIXFMT = (MIXER_PIXFMT & 0xFFFFF0FF) | 0x200;
+    /* Pixel format: marathon batch 4 agent 4 found Apple NEVER sets
+     * bits[11:8] of MIXER+0x00C. mixer_init already zeroed it.
+     * The 0x200 value was speculative — no RE evidence. REMOVED. */
 
     /* Buffer addresses */
     CLCD_Y_ADDR  = (uint32_t)y_plane;
@@ -696,14 +706,20 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Layer enables already set in Phase 4b */
 
-    /* === Phase 6: Per-frame trigger (DISP GO already done in Phase 4b) === */
-    vlog("Phase 6: Per-frame trigger");
+    /* === Phase 6: Alpha + DISP GO (marathon batch 5: pure VPP, no compositor) ===
+     *
+     * CRITICAL DISCOVERY (batch 5, 3 agents confirmed):
+     * The compositor at 0x38900000 is a SEPARATE display backend (for photos/UI),
+     * NOT part of the VPP video path. FUN_0014deec has zero static callers.
+     * VPP and compositor are MUTUALLY EXCLUSIVE backends.
+     * VPP outputs via ENVID hardware mux directly to LCD pins.
+     * ALL compositor init code (v25-v50) was unnecessary and removed.
+     *
+     * VPP-only signal path: CLCD → MIXER → DISP → ENVID mux → LCD pins
+     */
+    vlog("Phase 6: Alpha + DISP GO (pure VPP, no compositor)");
 
-    /* Step A: vtable[0x58] equivalent — enable video layer + set alpha */
-    /* vtable[0x58] does two things:
-     * 1. MIXER+0x008 |= 0x10000 (bit 16 = video layer alpha enable)
-     * 2. MIXER+0x008 = (val & ~0xFF) | 0xFF (alpha = fully opaque)
-     * Net result: MIXER+0x008 = 0x100FF */
+    /* vtable[0x58]: enable video layer alpha */
     MIXER_REG(0x008) |= 0x10000;
     MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
     vlog("  MIXER+0x008 = 0x%08lx (expect 0x100FF)",
@@ -723,7 +739,14 @@ enum plugin_status plugin_start(const void *parameter)
      *   3. FUN_000d7384(0x40,0x40,0,1,1) — compositor channel config
      * All verified from ROM decompilation + raw bytes. */
 
-    /* PWRCON bits 7+13: already enabled in Phase 2 (moved per marathon batch 3). */
+    /* PWRCON bits 7+13: REMOVED — compositor backend only, not VPP (batch 5) */
+
+    /* Marathon batch 5 (3 agents confirmed): compositor at 0x38900000 is a
+     * SEPARATE display backend for photos/UI. VPP outputs via ENVID mux
+     * directly to LCD pins. All compositor + LCD passthrough code DISABLED. */
+    /* v52: RE-ENABLED — 3 batch 6 agents confirmed compositor IS in HW path.
+     * LCD pins hardwired to MCU controller → data MUST flow through compositor
+     * + MCU passthrough. Batch 5 was wrong (software xrefs ≠ hardware path). */
 
     /* Step B2: Display compositor at 0x38900000 (ROM 0x14df08).
      * This block sits between VPP output and MCU LCD controller.
@@ -844,12 +867,24 @@ enum plugin_status plugin_start(const void *parameter)
                  (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
                  (unsigned long)iboot_timing[4]);
 
-            /* v43: DON'T TOUCH timing regs. Leave at POR/persisted values.
-             * v38 zeroed ALL timing including +0x1F4 (POR=0x10) → DMA DIED.
-             * v37 had non-zero timing (garbage or POR 0x10) → DMA ACTIVE.
-             * Hypothesis: +0x1F4 MUST be non-zero (POR=0x10).
-             * Zeroing it may disable the compositor. */
-            vlog("  Compositor timing: UNTOUCHED (POR/persist: %08lx %08lx %08lx %08lx %08lx)",
+            /* v55: SRAM values at 0x0890D2DC are stale Rockbox data, not
+             * real iBoot timing (v54 log: values truncate to nonsense).
+             * Use POR defaults: +0x1F4=0x10 (FIFO threshold), rest=0.
+             * DMA was active in v37 with these POR values. */
+            {
+                vlog("  iBoot SRAM (stale): %08lx %08lx %08lx %08lx %08lx",
+                     (unsigned long)iboot_timing_save[0],
+                     (unsigned long)iboot_timing_save[1],
+                     (unsigned long)iboot_timing_save[2],
+                     (unsigned long)iboot_timing_save[3],
+                     (unsigned long)iboot_timing_save[4]);
+                comp[0x1EC/4] = 0;
+                comp[0x1F0/4] = 0;
+                comp[0x1F4/4] = 0x10;  /* FIFO threshold — POR default */
+                comp[0x1F8/4] = 0;
+                comp[0x1FC/4] = 0;
+            }
+            vlog("  Compositor timing: %08lx %08lx %08lx %08lx %08lx",
                  (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
                  (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
                  (unsigned long)comp[0x1FC/4]);
@@ -910,15 +945,40 @@ enum plugin_status plugin_start(const void *parameter)
      * Pattern: Apple's FUN_000d16a8 saves LCD_CON, switches to cmd mode,
      * sends commands, FUN_000d16e8 restores LCD_CON. We replicate this. */
 
-    /* Step 1: Set LCD_CON to Apple's passthrough value FIRST */
+    /* LCD passthrough setup — Apple's two-function ordering (batch 4 agent 5):
+     *
+     * Function 1: lcd_mcu_passthrough_init (ROM 0xca178, runs at LCD init):
+     *   LCD_CON = 0x81100DB9
+     *   LCD+0x88 = 0x01000000
+     *   LCD+0x20 = 0x33          ← was MISSING from our code!
+     *   LCD+0x7C = 0x402
+     *
+     * Function 2: FUN_0014deec (ROM 0x14deec, runs at video init):
+     *   LCD+0x78 = 0xA000A       (porch timing — FIRST)
+     *   COMP+0x3AC = 0x04004003  (compositor channel — already set above)
+     *   vtable[0x0C] GRAM cmds   (panel write mode)
+     *   LCD+0x74 = 0xF00140      (resolution)
+     *   LCD+0x70 = 1             (passthrough enable — LAST!)
+     */
+
+    /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
     LCD_CON = 0x81100DB9;
+    *(volatile uint32_t *)(0x38300088) = 0x01000000;
+    *(volatile uint32_t *)(0x38300020) = 0x33;  /* NEW — was missing! */
+    *(volatile uint32_t *)(0x3830007C) = 0x00000402;
+    vlog("  LCD_CON=0x%08lx +0x20=0x33 +0x7C=0x402 +0x88=0x01000000",
+         (unsigned long)LCD_CON);
 
-    /* Step 2: Save LCD_CON, switch to cmd mode, send GRAM commands */
+    /* Part 2: Passthrough enable sequence (FUN_0014deec equivalent) */
+    /* Step 1: Porch timing FIRST */
+    *(volatile uint32_t *)(0x38300078) = 0x000A000A;
+
+    /* Step 2: COMP+0x3AC already set in compositor init above */
+
+    /* Step 3: Panel GRAM commands (between porch and resolution) */
     {
-        uint32_t saved_con = LCD_CON;  /* save 0x81100DB9 */
-
+        uint32_t saved_con = LCD_CON;
         if (panel_type >= 2) {
-            /* TYPE 2/3 (ILI9320): P18 cmd mode, register-index commands */
             vpp_lcd_config(0x80000DA8);
             vpp_lcd_cmd(0x210); vpp_lcd_data(0);
             vpp_lcd_cmd(0x211); vpp_lcd_data(239);
@@ -928,7 +988,6 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_cmd(0x201); vpp_lcd_data(0);
             vpp_lcd_cmd(0x202);
         } else {
-            /* TYPE 0/1 (ILI9341): P8 cmd mode, MIPI DBI */
             vpp_lcd_config(0x80000c20);
             vpp_lcd_cmd(0x2A);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
@@ -938,27 +997,21 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
             vpp_lcd_cmd(0x2C);
         }
-
-        /* Step 3: Restore LCD_CON to Apple's value (FUN_000d16e8 pattern) */
         vpp_lcd_config(saved_con);
     }
-    vlog("  Panel GRAM + LCD_CON=0x%08lx", (unsigned long)LCD_CON);
+    vlog("  Panel GRAM done");
 
-    /* LCD undocumented + passthrough registers */
-    *(volatile uint32_t *)(0x3830007C) = 0x00000402;
-    *(volatile uint32_t *)(0x38300088) = 0x01000000;
-    *(volatile uint32_t *)(0x38300078) = 0x000A000A;
+    /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
+
+    /* Step 5: Passthrough enable — MUST BE LAST */
     *(volatile uint32_t *)(0x38300070) = 1;
-    vlog("  LCD_CON=0x%08lx passthrough=0x%08lx",
-         (unsigned long)LCD_CON,
+    vlog("  Passthrough enabled: LCD+0x70=%08lx",
          (unsigned long)*(volatile uint32_t *)(0x38300070));
 
-    /* === Phase 7: DISP GO — must be AFTER compositor + passthrough ===
-     * Marathon batch 3 agent 5: Apple fires DISP GO as the ABSOLUTE LAST
-     * VPP operation. Previous versions had it in Phase 4b (before compositor)
-     * which meant VPP output hit an unconfigured compositor → backpressure
-     * → CLCD DMA stalled. This explains "DMA only works with persisted state." */
+    /* === Phase 7: DISP GO — LAST VPP operation ===
+     * Marathon batch 5: VPP outputs directly via ENVID, no compositor needed.
+     * DISP GO is the last step per Apple's FUN_00168450 flow. */
     vlog("Phase 7: DISP GO + trigger");
     disp_go_lcd();
     vlog("  DISP GO: CTRL=0x%08lx MODE=0x%08lx",
@@ -982,6 +1035,12 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions did ~90 register reads + fdprintf calls here.
      * This could interfere with pipeline timing or ATA bus contention.
      * v38: just hold for 10 seconds, then dump AFTER. */
+
+    /* v55: Re-fire compositor GO AFTER pipeline trigger.
+     * The compositor GO may go idle if fired before VPP data arrives.
+     * Re-triggering ensures compositor starts pulling from DISP output. */
+    *(volatile uint32_t *)0x38900000 = 1;  /* compositor GO re-trigger */
+    vlog("  Compositor GO re-triggered after pipeline");
 
     /* === Phase 7: Hold display — LOOK AT LCD NOW === */
     vlog("Phase 7: Holding 10 seconds — WATCH THE SCREEN!");

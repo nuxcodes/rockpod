@@ -109,9 +109,9 @@ static bool skinlist_is_configured(enum screen_type screen,
         return false;
     if (list && list->selected_size != 1)
         return false;
-    /* Bypass skinned renderer when list has custom line height
-     * that doesn't match the theme's %Lb() height (e.g. thumbnail items) */
-    if (list && list->line_height[screen] > 0
+    /* Bypass skinned renderer when a margin callback sets a custom
+     * line height that doesn't match the theme's %Lb() height */
+    if (list && list->callback_draw_margin
         && list->line_height[screen] != listcfg[screen]->height)
         return false;
     return true;
