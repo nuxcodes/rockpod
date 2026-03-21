@@ -355,7 +355,7 @@ static void disp_init_lcd(void)
         DISP_REG(i) = 0;
 
     /* CSC bypass (bit 4) */
-    DISP_CSC_MODE = (DISP_CSC_MODE & 0xFFFFFFE0) | 0x10;  /* v68: Apple BIC #0x1f preserves bits 5-31 */
+    DISP_CSC_MODE = (DISP_CSC_MODE & 0xFFFFFFE0) | 0x10;  /* v73: Apple BIC #0x1f preserves bits 5-31 */
     DISP_CSC_Y = 0x800000;     /* 1.0 in 8.24 FP */
     DISP_CSC_CBCR = 0x800000;
     DISP_CSC_OFS = 0x80;       /* 128 for unsigned chroma */
@@ -532,9 +532,11 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v80 ===");
+    vlog("=== VPP Pipeline Test v81 ===");
 
     uint32_t saved_lcd_con = 0;
+    uint32_t saved_pwrcon0 = 0;
+    uint32_t saved_pwrcon1 = 0;
 
     /* Get audio buffer for test frame data */
     size_t buf_size;
@@ -564,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v80");
+    rb->splashf(HZ, "VPP v81");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -575,22 +577,39 @@ enum plugin_status plugin_start(const void *parameter)
     rb->lcd_scroll_stop();
 
     /* === Phase 2: Enable VPP clocks + GPIO 7.1 === */
-    /* v80: suppress ALL logging in critical section (clock enable → trigger)
-     * to eliminate race condition from 58 file I/O calls */
-#define vlog(...) do {} while(0)
+    /* v81: Log LCD+0x080 and PWRCON BEFORE critical section */
     vlog("Phase 2: Enabling clocks");
+    vlog("LCD+0x80 BEFORE = 0x%08lx (0=VPP, nonzero=CPU owns bus)",
+         (unsigned long)*(volatile uint32_t *)(0x38300080));
+    vlog("PWRCON0 BEFORE = 0x%08lx", (unsigned long)PWRCON(0));
+    vlog("PWRCON1 BEFORE = 0x%08lx", (unsigned long)PWRCON(1));
 
-    uint32_t pwrcon_before = PWRCON(0);
-    vlog("PWRCON0 before: 0x%08lx", (unsigned long)pwrcon_before);
+    /* v81: Save PWRCON for restore on shutdown */
+    saved_pwrcon0 = PWRCON(0);
+    saved_pwrcon1 = PWRCON(1);
+
+    /* v81: Brute-force enable ALL clock gates.
+     * Agent finding: Apple enables PWRCON bits 8+12 for VPP power path.
+     * We never did. PWRCON=0 enables all clocks — safe because idle
+     * peripherals stay at POR state. SVID/VPP clocks also enabled. */
+    PWRCON(0) = 0;
+    PWRCON(1) = 0;
+    vlog("PWRCON0 = 0x%08lx (all enabled)", (unsigned long)PWRCON(0));
+
+    /* v81: Explicitly clear LCD+0x080 = 0 (bus ownership).
+     * Agent finding: LCD+0x080=1 means CPU owns LCD bus, compositor
+     * output is locked out. POR=0 but verify and force. */
+    *(volatile uint32_t *)(0x38300080) = 0;
+
+    /* v80: suppress ALL logging in critical section (clock enable → trigger) */
+#define vlog(...) do {} while(0)
 
     vpp_svid_enable(true);
     { volatile int d; for (d = 0; d < 500000; d++); } /* v80: no scheduler yield */
     vpp_clocks_enable(true);
 
+    uint32_t pwrcon_before = PWRCON(0);
     uint32_t pwrcon_after = PWRCON(0);
-    vlog("PWRCON0 after:  0x%08lx", (unsigned long)pwrcon_after);
-    vlog("Bits 14-16 cleared: %s",
-         ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
 
     /* GPIO 7.1: Apple sets HIGH during VPP power-on (ROM 0x167be4) but
      * this is for CE-ATA only. On PATA/SSD iPods, pin 7.1 = ATA D1.
@@ -1130,6 +1149,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
 
+    /* v81: Clear LCD bus ownership AGAIN right before passthrough.
+     * Ensures compositor can drive LCD bus. */
+    *(volatile uint32_t *)(0x38300080) = 0;
+
     /* Step 5: Passthrough enable — MUST BE LAST */
     *(volatile uint32_t *)(0x38300070) = 1;
     vlog("  Passthrough enabled: LCD+0x70=%08lx",
@@ -1162,21 +1185,30 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  Pipeline running — LOOK AT LCD NOW!");
 
     vlog("Phase 7b: Holding 10 seconds");
+    vlog("  PWRCON0=%08lx PWRCON1=%08lx LCD+0x80=%08lx",
+         (unsigned long)PWRCON(0), (unsigned long)PWRCON(1),
+         (unsigned long)*(volatile uint32_t *)(0x38300080));
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
         for (int sec = 0; sec < 10; sec++) {
             uint32_t start = USEC_TIMER;
             while ((USEC_TIMER - start) < 1000000);
-            vlog("  t=%d: CLCD=%08lx +10=%08lx MIXER=%08lx DISP=%08lx",
-                 sec, (unsigned long)CLCD_CTRL, (unsigned long)CLCD_REG(0x010),
+            uint32_t dma = CLCD_REG(0x010);
+            vlog("  t=%d: CLCD=%08lx DMA=%08lx MIXER=%08lx DISP=%08lx",
+                 sec, (unsigned long)CLCD_CTRL, (unsigned long)dma,
                  (unsigned long)MIXER_CTRL, (unsigned long)DISP_CTRL);
-            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx",
+            /* v81: decode DMA bits */
+            vlog("      DMA: armed=%d rd=%d scale=%d b6=%d fifo=%d out=%d",
+                 (dma >> 0) & 1, (dma >> 2) & 1, (dma >> 3) & 1,
+                 (dma >> 6) & 1, (dma >> 8) & 1, (dma >> 9) & 1);
+            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx +0x80=%08lx",
                  (unsigned long)LCD_STATUS, (unsigned long)LCD_CON,
-                 (unsigned long)*(volatile uint32_t *)(0x38300070));
-            vlog("      COMP=%08lx +0x8=%08lx +0x200=%08lx",
+                 (unsigned long)*(volatile uint32_t *)(0x38300070),
+                 (unsigned long)*(volatile uint32_t *)(0x38300080));
+            vlog("      COMP=%08lx +0x8=%08lx +0x10=%08lx +0x200=%08lx",
                  (unsigned long)comp[0], (unsigned long)comp[0x008/4],
+                 (unsigned long)comp[0x010/4],
                  (unsigned long)comp[0x200/4]);
-            /* v65: probe gap regs while pipeline running */
             if (sec == 0 || sec == 5) {
                 vlog("      GAP +010=%08lx +014=%08lx +018=%08lx +01C=%08lx",
                      (unsigned long)comp[0x010/4],
@@ -1298,7 +1330,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable RGB passthrough + compositor */
     *(volatile uint32_t *)(0x38300070) = 0;
     *(volatile uint32_t *)0x38900000 = 0;  /* compositor off */
-    PWRCON(0) |= 0x2080;  /* re-gate bits 7+13 */
+    /* v81: restore PWRCON to original values */
+    PWRCON(0) = saved_pwrcon0;
+    PWRCON(1) = saved_pwrcon1;
 
     /* Restore LCD_CON to Rockbox value */
     LCD_CON = saved_lcd_con;
