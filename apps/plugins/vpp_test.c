@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v82 ===");
+    vlog("=== VPP Pipeline Test v83 ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v82");
+    rb->splashf(HZ, "VPP v83");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -601,12 +601,9 @@ enum plugin_status plugin_start(const void *parameter)
      * output is locked out. POR=0 but verify and force. */
     *(volatile uint32_t *)(0x38300080) = 0;
 
-    /* v82: GPIO 7.1 = VPP power domain enable. Apple sets HIGH in
-     * FUN_00167be4 during VPP power-on. Tested in v3 (no effect, but
-     * v3 had many other bugs). PATA/SSD conflict: GPIO 7.1 shares ATA D1.
-     * Safety: set AFTER log_open(), restore BEFORE log_close(). No disk
-     * I/O while GPIO 7.1 is HIGH (all vlog goes to memory buffer). */
-    GPIOCMD = 0x0007010F;  /* GPIO 7.1 HIGH */
+    /* v82: GPIO 7.1 REMOVED — v82 test proved it corrupts ATA on PATA/SSD,
+     * causes USB failure and panic. Log file not written. LOCKED: do NOT
+     * set GPIO 7.1 on PATA/SSD iPods. CE-ATA only. */
 
     /* v82: Enable CG16_2L — same register as CG16_LCD on S5L8720.
      * Disabled by Rockbox system_preinit(). Conflicting agent results
@@ -1352,11 +1349,6 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  LCD_CON restored to 0x%08lx", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");
-
-    /* v82: GPIO 7.1 LOW — restore ATA D1 before any disk I/O.
-     * Must happen BEFORE log_close() which flushes to disk. */
-    GPIOCMD = 0x0007010E;  /* GPIO 7.1 LOW */
-
     log_close();
 
     /* Force full LCD redraw to restore Rockbox UI */
