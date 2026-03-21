@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v85b ===");
+    vlog("=== VPP Pipeline Test v85c ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v85b");
+    rb->splashf(HZ, "VPP v85c");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -900,24 +900,7 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
              (unsigned long)comp[0]);
 
-        /* v85b: Full compositor register dump — unsuppress for this block */
-#undef vlog
-        vlog("  --- Full POR dump (non-zero only) ---");
-        {
-            int dump_count = 0;
-            for (int ri = 0; ri < 256 && dump_count < 32; ri++) {
-                uint32_t rv = comp[ri];
-                if (rv != 0) {
-                    vlog("    +%03x = 0x%08lx", ri * 4, (unsigned long)rv);
-                    dump_count++;
-                }
-            }
-            if (dump_count >= 32)
-                vlog("    ... (truncated at 32)");
-        }
-        vlog("  TRIGCON before init: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
-        vlog("  LCD+0x8C = 0x%08lx (0=bus idle)", (unsigned long)*(volatile uint32_t *)(0x3830008C));
-#define vlog(...) do {} while(0)
+        /* v85b: POR dump + diagnostics — capture to buffer, log AFTER critical section */
 
         /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
@@ -1202,6 +1185,15 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* v73: buffer addresses REMOVED (writing breaks DMA in bypass mode) */
     vlog("  Pipeline running — LOOK AT LCD NOW!");
+
+    /* v85b: Diagnostics AFTER critical section (no timing interference) */
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+        vlog("  TRIGCON: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
+        vlog("  LCD+0x8C = 0x%08lx (0=bus idle)",
+             (unsigned long)*(volatile uint32_t *)(0x3830008C));
+        vlog("  comp+0x014 = 0x%08lx", (unsigned long)comp[0x014/4]);
+    }
 
     vlog("Phase 7b: Holding 10 seconds");
     vlog("  PWRCON0=%08lx PWRCON1=%08lx LCD+0x80=%08lx",
