@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v83 ===");
+    vlog("=== VPP Pipeline Test v84a ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v83");
+    rb->splashf(HZ, "VPP v84a");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -601,20 +601,8 @@ enum plugin_status plugin_start(const void *parameter)
      * output is locked out. POR=0 but verify and force. */
     *(volatile uint32_t *)(0x38300080) = 0;
 
-    /* v82: GPIO 7.1 REMOVED — v82 test proved it corrupts ATA on PATA/SSD,
-     * causes USB failure and panic. Log file not written. LOCKED: do NOT
-     * set GPIO 7.1 on PATA/SSD iPods. CE-ATA only. */
-
-    /* v82: Enable CG16_2L — same register as CG16_LCD on S5L8720.
-     * Disabled by Rockbox system_preinit(). Conflicting agent results
-     * (ROM never enables gate 0xF vs MCU doesn't need pixel clock)
-     * but zero risk to try. Set same config as SVID = PLL2/4 = 54MHz. */
-    {
-        volatile uint32_t *cg32 = (volatile uint32_t *)(0x3C500008);
-        uint32_t val = *cg32;
-        val = (val & 0xFFFF0000) | 0x3003;  /* lower 16 = CG16_2L */
-        *cg32 = val;
-    }
+    /* v82: GPIO 7.1 REMOVED — v82 test proved it corrupts ATA on PATA/SSD. */
+    /* v84a: CG16_2L REMOVED — isolating v83 regression (DMA 0x034d→0x249). */
 
     /* v80: suppress ALL logging in critical section (clock enable → trigger) */
 #define vlog(...) do {} while(0)
@@ -1103,13 +1091,7 @@ enum plugin_status plugin_start(const void *parameter)
      *   LCD+0x70 = 1             (passthrough enable — LAST!)
      */
 
-    /* v82: LCD controller gate/ungate reset — clear MCU-mode internal
-     * state contamination from Rockbox's lcd_update() calls. Reset to
-     * POR, then configure passthrough on clean hardware. */
-    PWRCON(0) |= (1 << 1);   /* gate LCD clock = hardware reset to POR */
-    for (volatile int d = 0; d < 50000; d++);
-    PWRCON(0) &= ~(1 << 1);  /* ungate = LCD at POR, clean state */
-    for (volatile int d = 0; d < 50000; d++);
+    /* v84a: LCD gate/ungate REMOVED — isolating v83 regression. */
 
     /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
     LCD_CON = 0x81100DB9;
