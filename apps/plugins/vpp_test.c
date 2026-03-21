@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v84a ===");
+    vlog("=== VPP Pipeline Test v85a ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v84a");
+    rb->splashf(HZ, "VPP v85a");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -684,7 +684,7 @@ enum plugin_status plugin_start(const void *parameter)
      * Bit 1 = deinterlace path (vpp_set_deinterlace for LCD)
      * Bit 2 = interlace flag (vpp_set_interlace — NOT for progressive!)
      * v1-v47 had 0x07 (all 3 bits) — bit 2 WRONG for progressive LCD. */
-    MIXER_L5_EN = 0x03;
+    MIXER_L5_EN = 0x02;  /* v85a: bit 1 only. Bit 0 was NEVER set by Apple (ROM verified). */
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -809,13 +809,22 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v82: SKIP compositor reset. Apple NEVER resets the compositor
-         * during VPP startup (confirmed by 2 agents). Our gate/ungate may
-         * destroy internal state that iBoot configured. Just ensure clocks
-         * are on and overwrite registers directly. */
-        PWRCON(0) &= ~0x2080;  /* ensure compositor clocks ON */
+        /* v85a: RESTORE compositor gate/ungate reset (v76 gold).
+         * Apple never resets because iBoot state persists. But Rockbox's
+         * syscon_preinit() FREEZES compositor mid-operation. Gate/ungate
+         * gets it to clean idle. Skip-reset gave DMA 0x249 (v83/v84a). */
+        PWRCON(0) &= ~0x2080;  /* enable compositor clocks */
         for (volatile int d = 0; d < 50000; d++);
-        vlog("  Compositor clocks enabled (NO reset — Apple never resets)");
+        comp[0x000/4] &= ~1;   /* software disable */
+        { int i; for (i = 0; i < 100; i++) {
+            if (comp[0x000/4] & 2) break;  /* wait for idle */
+            for (volatile int d = 0; d < 10000; d++);
+        }}
+        PWRCON(0) |= 0x2080;   /* gate = freeze clean idle */
+        for (volatile int d = 0; d < 50000; d++);
+        PWRCON(0) &= ~0x2080;  /* ungate = resume from clean idle */
+        for (volatile int d = 0; d < 50000; d++);
+        vlog("  Compositor reset done (v76 gold gate/ungate)");
 
         /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");
@@ -891,6 +900,21 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
              (unsigned long)comp[0]);
 
+        /* v85a: Full compositor register dump — find any non-zero POR regs */
+        vlog("  --- Full POR dump (non-zero only) ---");
+        {
+            int dump_count = 0;
+            for (int ri = 0; ri < 256 && dump_count < 32; ri++) {
+                uint32_t rv = comp[ri];
+                if (rv != 0) {
+                    vlog("    +%03x = 0x%08lx", ri * 4, (unsigned long)rv);
+                    dump_count++;
+                }
+            }
+            if (dump_count >= 32)
+                vlog("    ... (truncated at 32)");
+        }
+
         /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
          * setting bit 30 before viewport → invalid state → backpressure
@@ -932,6 +956,7 @@ enum plugin_status plugin_start(const void *parameter)
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
         comp[0x200/4] |= 0x10080;
+        vlog("  TRIGCON after write: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
         /* Zero unused layer format registers (layers 0-4) to prevent
          * stale iBoot data from overlaying video output */
         comp[0x05C/4] = 0;  /* layer 0 */
@@ -1017,6 +1042,7 @@ enum plugin_status plugin_start(const void *parameter)
         /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
          * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
         comp[0x3AC/4] = 0x04004003;
+        vlog("  TRIGCON after GO: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
     }
     vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,
@@ -1091,7 +1117,11 @@ enum plugin_status plugin_start(const void *parameter)
      *   LCD+0x70 = 1             (passthrough enable — LAST!)
      */
 
-    /* v84a: LCD gate/ungate REMOVED — isolating v83 regression. */
+    /* v85a: Log LCD+0x8C bus readiness BEFORE passthrough config.
+     * Apple polls (LCD+0x8C & 3)==0 in FUN_000be7fc at ROM 0xbe7fc.
+     * We just log it for Part A diagnostics. Part B will add the poll. */
+    vlog("  LCD+0x8C BEFORE passthrough = 0x%08lx (0=bus idle)",
+         (unsigned long)*(volatile uint32_t *)(0x3830008C));
 
     /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
     LCD_CON = 0x81100DB9;
