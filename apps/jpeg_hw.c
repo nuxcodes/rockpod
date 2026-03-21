@@ -689,15 +689,6 @@ static int decode_scan(struct jpeg_hw_state *j,
     int16_t blocks[6][64]; /* Y0,Y1,Y2,Y3,Cb,Cr */
     uint8_t *active;
 
-    /* Uncacheable aliases for CPU access to DMA buffers.
-     * VPU-A DMA uses physical addresses (0x08xxxxxx) via sa_phys/sb_phys/coeff_phys.
-     * CPU reads/writes through uncacheable VA (0x48xxxxxx) to bypass D-cache entirely.
-     * Eliminates all commit_dcache()/commit_discard_dcache() calls (~61% of decode time).
-     * Apple uses the same approach (0x8xxxxxxx uncacheable aliases in OF). */
-    uint32_t *coeff_uc = S5L8702_UNCACHED_ADDR(coeff_buf);
-    uint8_t *small_a_uc = S5L8702_UNCACHED_ADDR(small_a);
-    uint8_t *small_b_uc = S5L8702_UNCACHED_ADDR(small_b);
-
     for (mb_row = 0; mb_row < j->mb_h; mb_row++)
     {
         for (mb_col = 0; mb_col < j->mb_w; mb_col++)
@@ -731,30 +722,42 @@ static int decode_scan(struct jpeg_hw_state *j,
             decode_block(j, 1, blocks[4]); /* Cb */
             decode_block(j, 2, blocks[5]); /* Cr */
 
-            /* Sub-call 1: Y-top (Y0, Y1) */
-            active = (toggle == 0) ? small_a_uc : small_b_uc;
-            pack_coeff_pair(coeff_uc, blocks[0], blocks[1]);
+            /* Sub-call 1: Y-top (Y0, Y1)
+             * Range-based cache ops: flush coeff to DRAM for VPU-A DMA read,
+             * invalidate small bufs so CPU sees VPU-A DMA output.
+             * ~80 cache lines vs 512 for full cache ops = ~6x faster. */
+            active = (toggle == 0) ? small_a : small_b;
+            pack_coeff_pair(coeff_buf, blocks[0], blocks[1]);
+            commit_dcache_range(coeff_buf, COEFF_BUF_SIZE);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
                 return -1;
+            discard_dcache_range(small_a, SMALL_BUF_SIZE);
+            discard_dcache_range(small_b, SMALL_BUF_SIZE);
             readback_luma(active, frame_y, mb_col, mb_row, 0, y_stride);
             toggle ^= 1;
 
             /* Sub-call 2: Y-bottom (Y2, Y3) */
-            active = (toggle == 0) ? small_a_uc : small_b_uc;
-            pack_coeff_pair(coeff_uc, blocks[2], blocks[3]);
+            active = (toggle == 0) ? small_a : small_b;
+            pack_coeff_pair(coeff_buf, blocks[2], blocks[3]);
+            commit_dcache_range(coeff_buf, COEFF_BUF_SIZE);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
                 return -1;
+            discard_dcache_range(small_a, SMALL_BUF_SIZE);
+            discard_dcache_range(small_b, SMALL_BUF_SIZE);
             readback_luma(active, frame_y, mb_col, mb_row, 8, y_stride);
             toggle ^= 1;
 
             /* Sub-call 3: Chroma (Cb, Cr) */
-            active = (toggle == 0) ? small_a_uc : small_b_uc;
-            pack_coeff_pair(coeff_uc, blocks[4], blocks[5]);
+            active = (toggle == 0) ? small_a : small_b;
+            pack_coeff_pair(coeff_buf, blocks[4], blocks[5]);
+            commit_dcache_range(coeff_buf, COEFF_BUF_SIZE);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 1) < 0)
                 return -1;
+            discard_dcache_range(small_a, SMALL_BUF_SIZE);
+            discard_dcache_range(small_b, SMALL_BUF_SIZE);
             readback_chroma(active, frame_cb, frame_cr,
                             mb_col, mb_row, c_stride);
             toggle ^= 1;
@@ -767,7 +770,8 @@ static int decode_scan(struct jpeg_hw_state *j,
     {
         int16_t zeros[64];
         memset(zeros, 0, sizeof(zeros));
-        pack_coeff_pair(coeff_uc, zeros, zeros);
+        pack_coeff_pair(coeff_buf, zeros, zeros);
+        commit_dcache_range(coeff_buf, COEFF_BUF_SIZE);
         hw_mb_submit(coeff_phys, sa_phys, sb_phys, toggle, 0);
     }
 

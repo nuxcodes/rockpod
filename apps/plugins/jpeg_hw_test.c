@@ -612,13 +612,6 @@ enum plugin_status plugin_start(const void *parameter)
 
         uint32_t *coeff_buf = (uint32_t *)(void *)coeff_mem;
 
-        /* Uncacheable aliases for CPU access to DMA buffers.
-         * VPU-A DMA uses physical addresses (0x08xxxxxx).
-         * CPU reads/writes through uncacheable VA (0x48xxxxxx). */
-        uint32_t *coeff_uc = UNCACHED(coeff_buf);
-        uint8_t *small_a_uc = UNCACHED(small_a);
-        uint8_t *small_b_uc = UNCACHED(small_b);
-
         if ((uintptr_t)p > (uintptr_t)buf + buf_size)
         {
             tlog("Not enough buffer (need %lu, have %lu)",
@@ -631,6 +624,8 @@ enum plugin_status plugin_start(const void *parameter)
 
         rb->memset(dma_work, 0, DMA_WORK_SIZE);
         rb->memset(work_buf1, 0, WORK_BUF_SIZE);
+        rb->memset(small_a, 0, SMALL_BUF_SIZE);
+        rb->memset(small_b, 0, SMALL_BUF_SIZE);
         rb->memset(frame_y, 0, y_size);
         rb->memset(frame_cb, 0x80, c_size);
         rb->memset(frame_cr, 0x80, c_size);
@@ -773,31 +768,33 @@ enum plugin_status plugin_start(const void *parameter)
                     }
 
                     /* Y-top */
-                    active = (toggle == 0) ? small_a_uc : small_b_uc;
-                    pack_coeff_pair(coeff_uc, blocks[0], blocks[1]);
+                    active = (toggle == 0) ? small_a : small_b;
+                    pack_coeff_pair(coeff_buf, blocks[0], blocks[1]);
 
                     /* Diagnostic: dump packed buffer for first MCU */
                     if (restart_count == 0)
                     {
                         tlog("Packed Y-top buf (first 8 words):");
                         tlog("  b0: %08lx %08lx %08lx %08lx",
-                             (unsigned long)coeff_uc[0],
-                             (unsigned long)coeff_uc[1],
-                             (unsigned long)coeff_uc[2],
-                             (unsigned long)coeff_uc[3]);
+                             (unsigned long)coeff_buf[0],
+                             (unsigned long)coeff_buf[1],
+                             (unsigned long)coeff_buf[2],
+                             (unsigned long)coeff_buf[3]);
                         tlog("  b1: %08lx %08lx %08lx %08lx",
-                             (unsigned long)coeff_uc[64],
-                             (unsigned long)coeff_uc[65],
-                             (unsigned long)coeff_uc[66],
-                             (unsigned long)coeff_uc[67]);
+                             (unsigned long)coeff_buf[64],
+                             (unsigned long)coeff_buf[65],
+                             (unsigned long)coeff_buf[66],
+                             (unsigned long)coeff_buf[67]);
                         lflush();
                     }
 
+                    rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
                                      (uint32_t)(uintptr_t)small_b,
                                      toggle, 0) < 0)
                         timeouts++;
+                    rb->commit_discard_dcache();
 
                     /* Diagnostic: dump VPU-A output for first MCU */
                     if (restart_count == 0)
@@ -829,24 +826,28 @@ enum plugin_status plugin_start(const void *parameter)
                     toggle ^= 1;
 
                     /* Y-bottom */
-                    active = (toggle == 0) ? small_a_uc : small_b_uc;
-                    pack_coeff_pair(coeff_uc, blocks[2], blocks[3]);
+                    active = (toggle == 0) ? small_a : small_b;
+                    pack_coeff_pair(coeff_buf, blocks[2], blocks[3]);
+                    rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
                                      (uint32_t)(uintptr_t)small_b,
                                      toggle, 0) < 0)
                         timeouts++;
+                    rb->commit_discard_dcache();
                     readback_luma(active, frame_y, mb_col, mb_row, 8, y_stride);
                     toggle ^= 1;
 
                     /* Chroma */
-                    active = (toggle == 0) ? small_a_uc : small_b_uc;
-                    pack_coeff_pair(coeff_uc, blocks[4], blocks[5]);
+                    active = (toggle == 0) ? small_a : small_b;
+                    pack_coeff_pair(coeff_buf, blocks[4], blocks[5]);
+                    rb->commit_dcache();
                     if (hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                                      (uint32_t)(uintptr_t)small_a,
                                      (uint32_t)(uintptr_t)small_b,
                                      toggle, 1) < 0)
                         timeouts++;
+                    rb->commit_discard_dcache();
                     readback_chroma(active, frame_cb, frame_cr,
                                     mb_col, mb_row, c_stride);
                     toggle ^= 1;
@@ -866,7 +867,8 @@ enum plugin_status plugin_start(const void *parameter)
             {
                 int16_t zeros[64];
                 rb->memset(zeros, 0, sizeof(zeros));
-                pack_coeff_pair(coeff_uc, zeros, zeros);
+                pack_coeff_pair(coeff_buf, zeros, zeros);
+                rb->commit_dcache();
                 hw_mb_submit((uint32_t)(uintptr_t)coeff_mem,
                              (uint32_t)(uintptr_t)small_a,
                              (uint32_t)(uintptr_t)small_b,

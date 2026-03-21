@@ -42,12 +42,51 @@
 #include "skin_engine/skin_display.h"
 #include "skin_engine/skin_albumart_color.h"
 #include "appevents.h"
+#include "bmp.h"
 
 static struct listitem_viewport_cfg *listcfg[NB_SCREENS] = {NULL};
 static struct gui_synclist *current_list;
 
 static int current_row;
 static int current_column;
+
+/* Corner overlay BMP loaded from the current theme's SBS directory */
+#define CORNER_BMP_BUF_SIZE 2048
+static struct bitmap corner_overlay_bm;
+static unsigned char corner_overlay_buf[CORNER_BMP_BUF_SIZE] CACHEALIGN_ATTR;
+static bool corner_overlay_loaded = false;
+static bool corner_overlay_tried = false;
+
+static void load_margin_corner_bmp(void)
+{
+    static const char *filenames[] = {
+        "LabelEdgeLeft.bmp",
+        "StatusOverlayLeft.bmp",
+        NULL
+    };
+    char path[MAX_PATH];
+    int i;
+
+    corner_overlay_tried = true;
+    corner_overlay_loaded = false;
+    corner_overlay_bm.data = corner_overlay_buf;
+
+    for (i = 0; filenames[i]; i++)
+    {
+        snprintf(path, sizeof(path), ROCKBOX_DIR "/wps/%s/%s",
+                 global_settings.sbs_file, filenames[i]);
+        corner_overlay_bm.width = 0;
+        corner_overlay_bm.height = 0;
+        if (read_bmp_file(path, &corner_overlay_bm, CORNER_BMP_BUF_SIZE,
+                          FORMAT_ANY | FORMAT_TRANSPARENT, NULL) > 0
+            && corner_overlay_bm.width > 0
+            && corner_overlay_bm.height > 0)
+        {
+            corner_overlay_loaded = true;
+            return;
+        }
+    }
+}
 
 void skinlist_set_cfg(enum screen_type screen,
                       struct listitem_viewport_cfg *cfg)
@@ -66,8 +105,16 @@ void skinlist_set_cfg(enum screen_type screen,
 static bool skinlist_is_configured(enum screen_type screen,
                                     struct gui_synclist *list)
 {
-    return (listcfg[screen] != NULL) &&
-            (!list || (list && list->selected_size == 1));
+    if (listcfg[screen] == NULL)
+        return false;
+    if (list && list->selected_size != 1)
+        return false;
+    /* Bypass skinned renderer when list has custom line height
+     * that doesn't match the theme's %Lb() height (e.g. thumbnail items) */
+    if (list && list->line_height[screen] > 0
+        && list->line_height[screen] != listcfg[screen]->height)
+        return false;
+    return true;
 }
 static int current_drawing_line;
 static int offset_to_item(int offset, bool wrap)
@@ -319,6 +366,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 margin_vp.width = fill_w;
                 margin_vp.height = item_h;
                 display->set_viewport(&margin_vp);
+
+                if (!corner_overlay_tried)
+                    load_margin_corner_bmp();
+
                 display->set_drawmode(DRMODE_SOLID);
                 display->set_foreground(margin_fill_color);
                 display->fillrect(0, 0, fill_w, item_h);
@@ -328,20 +379,40 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                     0, 0, margin_w, item_h,
                     is_selected, list->data);
 
-                /* Rounded left corners — simple binary mask */
+                /* Draw theme corner overlay on top of thumbnail */
+                if (corner_overlay_loaded)
                 {
-                    static const int cmask[] = {4, 3, 2, 1, 1, 0};
-                    int r;
+                    int cw = corner_overlay_bm.width;
+                    int ch;
+                    unsigned old_fg = display->get_foreground();
+                    int old_mode = lcd_get_drawmode();
+
                     display->set_foreground(parent->bg_pattern);
-                    for (r = 0; r < 6 && r < item_h / 2; r++)
+                    lcd_set_drawmode(DRMODE_FG);
+
+                    /* TL corner: top portion of overlay BMP */
+                    ch = (corner_overlay_bm.height > cw * 2)
+                         ? cw : corner_overlay_bm.height;
+                    if (ch > item_h / 2)
+                        ch = item_h / 2;
+                    display->bmp_part(&corner_overlay_bm,
+                                      0, 0, 0, 0, cw, ch);
+
+                    /* BL corner: bottom portion (full-height strips) */
+                    if (corner_overlay_bm.height > cw * 2)
                     {
-                        if (cmask[r] > 0)
-                        {
-                            display->hline(0, cmask[r] - 1, r);
-                            display->hline(0, cmask[r] - 1,
-                                           item_h - 1 - r);
-                        }
+                        int bch = cw;
+                        if (bch > item_h / 2)
+                            bch = item_h / 2;
+                        display->bmp_part(&corner_overlay_bm,
+                                          0,
+                                          corner_overlay_bm.height - bch,
+                                          0, item_h - bch,
+                                          cw, bch);
                     }
+
+                    display->set_foreground(old_fg);
+                    lcd_set_drawmode(old_mode);
                 }
 
                 margin_painted = true;

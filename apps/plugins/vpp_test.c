@@ -332,12 +332,13 @@ static void disp_init_lcd(void)
     /* Reset (preserve busy bit only) */
     DISP_CTRL = DISP_CTRL & 2;
 
-    /* DE (Data Enable) mode for LCD video — CRITICAL!
-     * Value 5 = DE mode: DISP actively PULLS data from Mixer FIFO
-     * Value 6 = free-running: generates sync but does NOT pull data
-     * Using 6 caused CLCD stall (bit 2) in v1-v12 because DISP
-     * never consumed data from the pipeline. */
-    DISP_OUTPUT = 5;
+    /* DISP output mode — CRITICAL (marathon batch 1+2, triple-verified)!
+     * Value 6 = progressive mode: continuous scan, pulls from FIFO
+     * Value 5 = interlaced mode: field-alternating timing
+     * ROM evidence: 0x167c5c (movne r0,#6), 0x167ecc (unconditional 6)
+     * Value 5 only used when context[+2]==1 (interlaced source).
+     * v13-v46 had value 5 — WRONG for progressive LCD! */
+    DISP_OUTPUT = 6;
     DISP_ENABLE = 1;
 
     /* Identity color matrix (S0.11 FP, 0x800 = 1.0) — 6 entries */
@@ -433,17 +434,24 @@ static void disp_go_lcd(void)
      * Apple's GO does: &= 0x3F (preserve 0-5), |= 0x200, |= 0x1000.
      * Problem: stale bit 5 is indeterminate. Use &= 0x1F to clear it.
      * We replicate FUN_00168180 (bit 1) + FUN_00168240 (bit 4 clear) inline. */
-    DISP_MODE = (DISP_MODE & 0xFFFFFFF0) | 0x02;  /* FUN_00168180: set bit 1 */
+    /* DISP_MODE setup (marathon batch 1+2, agents 3+4):
+     * For progressive LCD:
+     *   vpp_set_interlace(0): &= 0xFFFFFFF0 (clear bits 0-3, do NOT set bit 1)
+     *   vpp_set_deinterlace: &= ~0x10 (clear bit 4)
+     *   GO: &= 0x3F (clear bits 6-31), |= 0x200, |= 0x1000
+     * Bit 1 = interlace enable — v13-v46 had it SET (wrong for progressive!)
+     * v46 DISP_MODE was 0x1202 — should be 0x1200 for progressive. */
+    DISP_MODE &= 0xFFFFFFF0;     /* FUN_00168180: clear bits 0-3 (progressive = no bit 1) */
     DISP_MODE &= ~0x10;          /* FUN_00168240: clear bit 4 (LCD mode) */
-    DISP_MODE &= 0x1F;           /* GO step 1: clear bits 5-31 (NOT 0x3F — bit 5 must be 0) */
-    DISP_MODE |= 0x200;          /* GO step 2: bit 9 sync enable */
-    DISP_MODE |= 0x1000;         /* GO step 3: bit 12 pipeline enable */
+    DISP_MODE &= 0x1F;           /* GO: clear bits 5-31 (defensive: bit 5 stale) */
+    DISP_MODE |= 0x200;          /* GO: bit 9 sync enable */
+    DISP_MODE |= 0x1000;         /* GO: bit 12 pipeline enable */
 
-    /* DISP+0x034: Full checklist agent found Apple sets 0x200 for LCD VIDEO
-     * mode (state[2]==1 AND state[3]==1 = video content on LCD output).
-     * v13-v15 had 0x200 but other bugs (DISP+0x00C=6, stale bit5) masked it.
-     * v16 reverted to 0 — but those bugs are now fixed. Try 0x200 again. */
-    DISP_REG(0x034) = 0x200;
+    /* DISP+0x034: Agent B proved 0x200 is ONLY for interlaced content.
+     * ROM 0x168378-0x168390: strne r1,[r0,#0x34] (r1=0) for progressive,
+     * streq r2,[r0,#0x34] (r2=0x200) ONLY when state[2]==1 AND state[3]==1.
+     * Checklist agent was WRONG. Progressive LCD = 0. */
+    DISP_REG(0x034) = 0;
 
     /* Color correction coefficients: CHIPID_REG_TWO bit 8 selects variant.
      * ROM 0x168354: ldr r2,[r7,#0x4] (CHIPID+4), ROM 0x168358: tst r2,#0x100.
@@ -545,6 +553,12 @@ enum plugin_status plugin_start(const void *parameter)
      * Both MMIO trace agents confirmed: NOT needed for VPP pipeline.
      * REMOVED — do not re-add. */
 
+    /* Enable compositor clocks BEFORE VPP (marathon batch 3 agent 5):
+     * Apple does PWRCON bits 7+13 as the FIRST step of FUN_0014deec,
+     * which runs BEFORE FUN_00168450 (VPP init). */
+    PWRCON(0) &= ~0x2080;
+    vlog("PWRCON bits 7+13 enabled (compositor clocks)");
+
     int panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
     vlog("CG16_SVID = 0x%04x (expect 0x3003 = PLL2/4 = 54MHz)",
@@ -599,24 +613,28 @@ enum plugin_status plugin_start(const void *parameter)
     disp_init_lcd();
     vlog("  Display engine init done");
 
-    /* === Phase 4b: DISP GO (Apple does this during startup, BEFORE first frame) === */
-    /* Apple's order: init blocks → modes → display config → layer enable → gamma → GO */
-    /* Then per-frame: panel cmds → buffers → CLCD enable → mixer commit → latch */
-    /* The GO must happen FIRST, with time for DISP state machine to start */
-    MIXER_L5_EN = 0x07;  /* all layer enables (Apple: vtable[0x20] + FUN_00168180 + FUN_00168240) */
-    DISP_GAMMA_COMMIT = 0;  /* Apple: FUN_000b3cf4 right before GO */
-    disp_go_lcd();
-    {
-        uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
-        vlog("  DISP GO done (DISP_CTRL=0x%08lx DISP_MODE=0x%08lx)",
-             (unsigned long)DISP_CTRL, (unsigned long)DISP_MODE);
-        vlog("  CHIPID_REG_TWO=0x%08lx (bit8=%d → variant %c)",
-             (unsigned long)chipid2, (chipid2 >> 8) & 1,
-             (chipid2 & 0x100) ? 'B' : 'A');
-    }
-    /* DISP_CTRL=0x01 is the normal running state (agent 3, ROM 0x166e00:
-     * bit 1 = "stopped/drained" confirmation, NOT "busy"). DISP generates
-     * sync continuously. Apple has no explicit delay before first frame. */
+    /* === Phase 4b: Layer enables + gamma commit ===
+     * DISP GO is DEFERRED to after compositor init (Phase 6).
+     * Apple's order: compositor init → LCD passthrough → DISP GO.
+     * We had DISP GO here (before compositor) which is WRONG.
+     * Connection agent: "DISP GO before compositor = data to dead endpoint." */
+    /* v42: DISP GO RESTORED to Phase 4b (before compositor).
+     * v39-v41 deferred DISP GO after compositor → CLCD DMA=0 (BROKEN).
+     * v37 had DISP GO here → CLCD DMA=0x030d (ACTIVE).
+     * DISP must generate sync FIRST so compositor can lock onto it. */
+    /* MIXER+0x004 layer enables (marathon batch 3 agent 2):
+     * Bit 0 = video output enable (vtable[0x20])
+     * Bit 1 = deinterlace path (vpp_set_deinterlace for LCD)
+     * Bit 2 = interlace flag (vpp_set_interlace — NOT for progressive!)
+     * v1-v47 had 0x07 (all 3 bits) — bit 2 WRONG for progressive LCD. */
+    MIXER_L5_EN = 0x03;
+    DISP_GAMMA_COMMIT = 0;
+    /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
+     * Apple fires DISP GO as the LAST operation, AFTER compositor
+     * and LCD passthrough are configured. Firing it before compositor
+     * means VPP output hits an unconfigured block → DMA stalls.
+     * This was the root cause of "DMA only works with persisted state." */
+    vlog("  DISP GO deferred to Phase 7 (after compositor + passthrough)");
 
     /* Readback key registers to verify init */
     vlog("  CLCD  scale[0x28]=0x%08lx (expect 0x8000000)",
@@ -705,11 +723,7 @@ enum plugin_status plugin_start(const void *parameter)
      *   3. FUN_000d7384(0x40,0x40,0,1,1) — compositor channel config
      * All verified from ROM decompilation + raw bytes. */
 
-    /* Step B1: Enable PWRCON bits 7+13 (ROM 0x14df00).
-     * Apple does this FIRST, before any passthrough config.
-     * Bits 7+13 = 0x2080. Clear = enable clocks. */
-    PWRCON(0) &= ~0x2080;
-    vlog("  PWRCON bits 7+13 enabled (0x%08lx)", (unsigned long)PWRCON(0));
+    /* PWRCON bits 7+13: already enabled in Phase 2 (moved per marathon batch 3). */
 
     /* Step B2: Display compositor at 0x38900000 (ROM 0x14df08).
      * This block sits between VPP output and MCU LCD controller.
@@ -791,16 +805,17 @@ enum plugin_status plugin_start(const void *parameter)
          * (FUN_0014deec at ROM 0x14df2c), not in FUN_0014d240. Moved below. */
         /* DO NOT touch +0x1EC-0x1FC — timing from iBoot, preserve Apple values */
 
-        /* Layer 5 (video overlay) config — FUN_0014cc90 case 5.
-         * Without these, compositor doesn't know VPP data format/layout.
-         * ROM evidence: 0x14ce5c (format), 0x14ce88 (stride), 0x14cebc (window) */
-        comp[0x028/4] = 0x100;              /* YUV 4:2:0 planar (ROM: moveq r1,#0x100) */
-        comp[0x02C/4] = 320 | (160 << 16);  /* Y_stride=320, UV_stride=160 */
-        comp[0x030/4] = 0;                  /* window start: (0,0) */
-        comp[0x034/4] = (240 << 16) | 320;  /* window end: (320, 240) */
-        comp[0x04C/4] = 0x10001000;         /* scale 1:1 (H=0x1000, V=0x1000 in 4.12 FP) */
-        comp[0x050/4] = 0;                  /* no position offset */
-        comp[0x054/4] = (240 << 16) | 320;  /* scale dims: (height<<16)|width = 0x00F00140 */
+        /* Layer 5 (video overlay) config — BEFORE GO (Apple steps 10-15).
+         * v45 wrongly moved after GO based on confusing LCD (0x383) with
+         * compositor (0x389). Agent proved: all 6 layers at steps 10-15,
+         * GO at step 25. Post-GO call writes to LCD passthrough, NOT layer 5. */
+        comp[0x028/4] = 0x100;              /* YUV 4:2:0 planar */
+        comp[0x02C/4] = 320 | (160 << 16);  /* Y=320, UV=160 stride */
+        comp[0x030/4] = 0;                  /* window start (0,0) */
+        comp[0x034/4] = (240 << 16) | 320;  /* window end (320,240) */
+        comp[0x04C/4] = 0x10001000;         /* scale 1:1 */
+        comp[0x050/4] = 0;                  /* no offset */
+        comp[0x054/4] = (240 << 16) | 320;  /* dims (240<<16)|320 */
 
         /* Gamma LUTs — CRITICAL. Without identity LUT, all pixels map to BLACK.
          * Apple inits 256 entries per channel with value = i*4 (10-bit output).
@@ -829,23 +844,15 @@ enum plugin_status plugin_start(const void *parameter)
                  (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
                  (unsigned long)iboot_timing[4]);
 
-            if (iboot_timing[0] != 0 || iboot_timing[1] != 0) {
-                /* iBoot values found! Use them. */
-                comp[0x1EC/4] = iboot_timing[0];
-                comp[0x1F0/4] = iboot_timing[1];
-                comp[0x1F4/4] = iboot_timing[2];
-                comp[0x1F8/4] = iboot_timing[3];
-                comp[0x1FC/4] = iboot_timing[4];
-                vlog("  Compositor timing: loaded from iBoot SRAM!");
-            } else {
-                /* SRAM overwritten — use educated guesses */
-                comp[0x1EC/4] = 0x00000015;
-                comp[0x1F0/4] = 0x00000005;
-                comp[0x1F4/4] = 0x00000010;
-                comp[0x1F8/4] = 0x00000003;
-                comp[0x1FC/4] = 0x00000001;
-                vlog("  Compositor timing: iBoot SRAM empty, using guesses");
-            }
+            /* v43: DON'T TOUCH timing regs. Leave at POR/persisted values.
+             * v38 zeroed ALL timing including +0x1F4 (POR=0x10) → DMA DIED.
+             * v37 had non-zero timing (garbage or POR 0x10) → DMA ACTIVE.
+             * Hypothesis: +0x1F4 MUST be non-zero (POR=0x10).
+             * Zeroing it may disable the compositor. */
+            vlog("  Compositor timing: UNTOUCHED (POR/persist: %08lx %08lx %08lx %08lx %08lx)",
+                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+                 (unsigned long)comp[0x1FC/4]);
         }
 
         /* NOW set bit 30 (display output enable) — Apple does this LAST.
@@ -859,10 +866,12 @@ enum plugin_status plugin_start(const void *parameter)
          * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
         comp[0x3AC/4] = 0x04004003;
     }
-    vlog("  Compositor: CTRL=0x%08lx CFG=0x%08lx VP=0x%08lx",
+    vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,
-         (unsigned long)*(volatile uint32_t *)0x38900008,
-         (unsigned long)*(volatile uint32_t *)0x38900214);
+         (unsigned long)*(volatile uint32_t *)0x38900008);
+
+    /* Layer 5 is now BEFORE GO (correct Apple order). Post-GO call in
+     * FUN_0014deec writes to LCD passthrough (0x383), NOT compositor. */
 
     /* Step B3: MCU LCD controller RGB passthrough (ROM 0x14df10-0x14df6c).
      * +0x78 = porch timing, +0x74 = resolution, +0x70 = bypass enable.
@@ -892,40 +901,48 @@ enum plugin_status plugin_start(const void *parameter)
      * TYPE 2/3: ILI9320 register-index (0x210-0x213, 0x202) in P18 mode
      * Using wrong command set = panel never enters GRAM write mode.
      * RE: Rockbox displaylcd_setup() at lcd-s5l8702.c:330-361. */
-    if (panel_type >= 2) {
-        /* TYPE 2/3: 16-bit register-index command set (ILI9320/ILI9326).
-         * lcd_cmd_mode = LCD_MODE_P18 = 0x80000DA8 for these panels.
-         * Register writes: WCMD=index, WDATA=16-bit value. */
-        vpp_lcd_config(0x80000DA8);  /* P18 mode for register-index cmds */
-        /* ILI9320: WCMD=register index, WDATA=16-bit value (single write).
-         * Matches Rockbox s5l_lcd_write_reg() pattern. */
-        vpp_lcd_cmd(0x210); vpp_lcd_data(0);    /* HORIZ_ADDR_START = 0 */
-        vpp_lcd_cmd(0x211); vpp_lcd_data(239);  /* HORIZ_ADDR_END = 239 */
-        vpp_lcd_cmd(0x212); vpp_lcd_data(0);    /* VERT_ADDR_START = 0 */
-        vpp_lcd_cmd(0x213); vpp_lcd_data(319);  /* VERT_ADDR_END = 319 */
-        vpp_lcd_cmd(0x200); vpp_lcd_data(0);    /* HORIZ_GRAM_ADDR = 0 */
-        vpp_lcd_cmd(0x201); vpp_lcd_data(0);    /* VERT_GRAM_ADDR = 0 */
-        vpp_lcd_cmd(0x202);  /* WRITE_DATA_TO_GRAM */
-        vlog("  Panel type 2/3: ILI9320 GRAM window 240x320 + GRAM write");
-    } else {
-        /* TYPE 0/1: MIPI DBI 8-bit command set (ILI9340).
-         * COLMOD 0x3A REMOVED (Agent 8: Apple never sends during VPP,
-         * Rockbox boot already set 0x06, overwriting to 0x66 may be harmful). */
-        vpp_lcd_config(0x80000c20);  /* P8 mode */
-        vpp_lcd_cmd(0x2A);  /* CASET */
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-        vpp_lcd_cmd(0x2B);  /* PASET */
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-        vpp_lcd_cmd(0x2C);  /* RAMWR */
-        vlog("  Panel type 0/1: MIPI CASET/PASET/RAMWR 240x320");
-    }
+    /* Panel GRAM commands RESTORED (v40). GRAM agent proved definitively:
+     * Apple ALWAYS sends GRAM commands via vtable[0x0C] in FUN_0014deec.
+     * vtable pointer is NEVER null for detected panels (FUN_0009f2c0).
+     * Passthrough = MCU-to-MCU. Panel MUST be in GRAM write mode.
+     * v38-v39 removed GRAM = panel ignored all passthrough data.
+     *
+     * Pattern: Apple's FUN_000d16a8 saves LCD_CON, switches to cmd mode,
+     * sends commands, FUN_000d16e8 restores LCD_CON. We replicate this. */
 
-    /* NOW set LCD_CON to Apple's value — MUST stay for entire VPP period.
-     * Bit 24=data lane routing, bit 0=RGB input enable.
-     * RE: FUN_000ca178, literal pool 0xca1a0 = 0x81100DB9. */
+    /* Step 1: Set LCD_CON to Apple's passthrough value FIRST */
     LCD_CON = 0x81100DB9;
+
+    /* Step 2: Save LCD_CON, switch to cmd mode, send GRAM commands */
+    {
+        uint32_t saved_con = LCD_CON;  /* save 0x81100DB9 */
+
+        if (panel_type >= 2) {
+            /* TYPE 2/3 (ILI9320): P18 cmd mode, register-index commands */
+            vpp_lcd_config(0x80000DA8);
+            vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x211); vpp_lcd_data(239);
+            vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x213); vpp_lcd_data(319);
+            vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x202);
+        } else {
+            /* TYPE 0/1 (ILI9341): P8 cmd mode, MIPI DBI */
+            vpp_lcd_config(0x80000c20);
+            vpp_lcd_cmd(0x2A);
+            vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+            vpp_lcd_cmd(0x2B);
+            vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+            vpp_lcd_cmd(0x2C);
+        }
+
+        /* Step 3: Restore LCD_CON to Apple's value (FUN_000d16e8 pattern) */
+        vpp_lcd_config(saved_con);
+    }
+    vlog("  Panel GRAM + LCD_CON=0x%08lx", (unsigned long)LCD_CON);
 
     /* LCD undocumented + passthrough registers */
     *(volatile uint32_t *)(0x3830007C) = 0x00000402;
@@ -937,98 +954,72 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)LCD_CON,
          (unsigned long)*(volatile uint32_t *)(0x38300070));
 
-    /* Step C: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
-    CLCD_CTRL |= 1;          /* input enable (starts reading YUV) */
-    vlog("  After CLCD enable: CLCD_CTRL=0x%08lx", (unsigned long)CLCD_CTRL);
+    /* === Phase 7: DISP GO — must be AFTER compositor + passthrough ===
+     * Marathon batch 3 agent 5: Apple fires DISP GO as the ABSOLUTE LAST
+     * VPP operation. Previous versions had it in Phase 4b (before compositor)
+     * which meant VPP output hit an unconfigured compositor → backpressure
+     * → CLCD DMA stalled. This explains "DMA only works with persisted state." */
+    vlog("Phase 7: DISP GO + trigger");
+    disp_go_lcd();
+    vlog("  DISP GO: CTRL=0x%08lx MODE=0x%08lx",
+         (unsigned long)DISP_CTRL, (unsigned long)DISP_MODE);
 
-    MIXER_CTRL = 7;           /* mixer commit (ENVID=1, takes over LCD pins) */
-    vlog("  After mixer commit: MIXER_CTRL=0x%08lx", (unsigned long)MIXER_CTRL);
+    /* One-time pipeline trigger (marathon batch 3 agent 1).
+     * Apple fires this ONCE after init, gated by a dirty flag (context+0x8).
+     * ROM 0x166C28-0x166C64 in FUN_001669C8 (render dispatch):
+     *   CLCD_CTRL |= 1     (arms CLCD for data input)
+     *   MIXER_CTRL = 7     (adds GO bit 0 to init value of 6)
+     *   DISP+0x3C |= 1,2,4 (latches config+buffer+output)
+     * Fires AFTER DISP GO and all config is complete. */
+    CLCD_CTRL |= 1;
+    MIXER_CTRL = 7;
+    DISP_TRIGGER |= 1;
+    DISP_TRIGGER |= 2;
+    DISP_TRIGGER |= 4;
+    vlog("  Pipeline trigger fired — LOOK AT LCD NOW!");
 
-    DISP_REG(0x03C) |= 1;    /* latch config */
-    DISP_REG(0x03C) |= 2;    /* latch buffers */
-    DISP_REG(0x03C) |= 4;    /* latch output */
-    vlog("  After latch: DISP+03C=0x%08lx", (unsigned long)DISP_REG(0x03C));
+    /* === MINIMAL HOLD — no register dumps, no disk I/O between trigger and display ===
+     * Previous versions did ~90 register reads + fdprintf calls here.
+     * This could interfere with pipeline timing or ATA bus contention.
+     * v38: just hold for 10 seconds, then dump AFTER. */
 
-    /* Re-trigger compositor GO AFTER pipeline is running.
-     * The GO strobe may require data at input before it latches.
-     * Apple writes GO during init (before pipeline), but the
-     * compositor may need re-triggering when data starts flowing. */
-    *(volatile uint32_t *)0x38900000 = 1;
-    vlog("  Compositor GO re-triggered");
+    /* === Phase 7: Hold display — LOOK AT LCD NOW === */
+    vlog("Phase 7: Holding 10 seconds — WATCH THE SCREEN!");
 
-    /* Dump all block states immediately after trigger */
-    vlog("  === POST-TRIGGER STATE ===");
-    vlog("  CLCD: CTRL=0x%08lx Y=0x%08lx Cb=0x%08lx Cr=0x%08lx",
-         (unsigned long)CLCD_CTRL,
-         (unsigned long)CLCD_Y_ADDR,
-         (unsigned long)CLCD_CB_ADDR,
-         (unsigned long)CLCD_CR_ADDR);
-    vlog("  CLCD: SRC=%dx%d OUT=%dx%d H=%lu V=%lu",
-         (int)CLCD_SRC_W, (int)CLCD_SRC_H,
-         (int)CLCD_OUT_W, (int)CLCD_OUT_H,
-         (unsigned long)CLCD_H_STEP, (unsigned long)CLCD_V_STEP);
-    vlog("  CLCD: YUV_MODE=0x%08lx LSTRIDE=0x%08lx CSTRIDE=0x%08lx",
-         (unsigned long)CLCD_YUV_MODE,
-         (unsigned long)CLCD_LUMA_STRIDE,
-         (unsigned long)CLCD_CHROMA_STRIDE);
-    vlog("  MIXER: CTRL=0x%08lx L5EN=0x%08lx PIXFMT=0x%08lx",
-         (unsigned long)MIXER_CTRL,
-         (unsigned long)MIXER_L5_EN,
-         (unsigned long)MIXER_PIXFMT);
-    vlog("  DISP: CTRL=0x%08lx MODE=0x%08lx OUT=0x%08lx EN=0x%08lx",
-         (unsigned long)DISP_CTRL,
-         (unsigned long)DISP_MODE,
-         (unsigned long)DISP_OUTPUT,
-         (unsigned long)DISP_ENABLE);
-    /* CLCD YUV pipeline regs (critical — confirm planar mode + strides) */
-    vlog("  CLCD: +0x3C0=0x%08lx +0x3C4=0x%08lx +0x3C8=0x%08lx +0x3CC=0x%08lx",
-         (unsigned long)CLCD_REG(0x3C0), (unsigned long)CLCD_REG(0x3C4),
-         (unsigned long)CLCD_REG(0x3C8), (unsigned long)CLCD_REG(0x3CC));
-    /* LCD_STATUS + compositor status */
-    vlog("  LCD_STATUS=0x%08lx COMP_CTRL=0x%08lx COMP+0x200=0x%08lx",
-         (unsigned long)LCD_STATUS,
-         (unsigned long)*(volatile uint32_t *)0x38900000,
-         (unsigned long)*(volatile uint32_t *)(0x38900200));
-    /* Scan first 16 regs of each block for anything unexpected */
-    vlog("  --- CLCD regs 0x00-0x3C ---");
-    for (int i = 0; i <= 0x3C; i += 4)
-        vlog("    +0x%02x = 0x%08lx", i, (unsigned long)CLCD_REG(i));
-    vlog("  --- MIXER regs 0x00-0x0C ---");
-    for (int i = 0; i <= 0x0C; i += 4)
-        vlog("    +0x%02x = 0x%08lx", i, (unsigned long)MIXER_REG(i));
-    vlog("  --- DISP regs 0x00-0x18 ---");
-    for (int i = 0; i <= 0x18; i += 4)
-        vlog("    +0x%02x = 0x%08lx", i, (unsigned long)DISP_REG(i));
+    /* Diagnostic hold: sample key registers every second for 10 seconds.
+     * Log LCD_STATUS, CLCD DMA status, compositor state, LCD passthrough.
+     * This tells us WHERE data stops flowing. */
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+        for (int sec = 0; sec < 10; sec++) {
+            /* Busy-wait 1 second */
+            uint32_t start = USEC_TIMER;
+            while ((USEC_TIMER - start) < 1000000);
 
-    /* Extended register dump: CLCD DMA/filter + DISP timing */
-    vlog("  --- CLCD DMA/filter 0x200-0x238 ---");
-    for (int i = 0x200; i <= 0x238; i += 4)
-        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)CLCD_REG(i));
-    vlog("  --- DISP timing 0x200-0x26C ---");
-    for (int i = 0x200; i <= 0x26C; i += 4)
-        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)DISP_REG(i));
-    vlog("  --- DISP pipeline 0x3C0-0x3D4 ---");
-    for (int i = 0x3C0; i <= 0x3D4; i += 4)
-        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)DISP_REG(i));
-    vlog("  LCD_CON=0x%08lx PWRCON0=0x%08lx",
-         (unsigned long)LCD_CON, (unsigned long)PWRCON(0));
+            vlog("  t=%d: CLCD=%08lx +0x10=%08lx MIXER=%08lx DISP=%08lx",
+                 sec,
+                 (unsigned long)CLCD_CTRL,
+                 (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)MIXER_CTRL,
+                 (unsigned long)DISP_CTRL);
+            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx",
+                 (unsigned long)LCD_STATUS,
+                 (unsigned long)LCD_CON,
+                 (unsigned long)*(volatile uint32_t *)(0x38300070));
+            vlog("      COMP=%08lx +0x8=%08lx +0x200=%08lx +0x3AC=%08lx",
+                 (unsigned long)comp[0],
+                 (unsigned long)comp[0x008/4],
+                 (unsigned long)comp[0x200/4],
+                 (unsigned long)comp[0x3AC/4]);
+        }
+    }
 
-    /* === Phase 7: Check pipeline is running === */
-    vlog("Phase 7: Pipeline status check");
-
-    /* CLCD_CTRL bit 2 = "actively processing" (NOT stall/error).
-     * MIXER_CTRL bit 2 = config mode bit (Apple writes 6 init, 7 run).
-     * RE evidence: Apple NEVER checks bit 2. Only polls bit 1 for
-     * shutdown drain (ROM 0x166E98). CTRL=0x05 is NORMAL running state.
-     * Pipeline runs continuously — never goes idle on its own. */
-    rb->sleep(HZ / 10);  /* 100ms for pipeline to start flowing */
+    /* NOW dump status (after the hold) */
     uint32_t clcd_s = CLCD_CTRL;
     uint32_t mixer_s = MIXER_CTRL;
     uint32_t disp_s = DISP_CTRL;
-    vlog("  CLCD_CTRL=0x%08lx (bit0=%d bit2=%d) %s",
-         (unsigned long)clcd_s, clcd_s & 1, (clcd_s >> 2) & 1,
-         (clcd_s == 0x05) ? "RUNNING" :
-         (clcd_s == 0x01) ? "enabled-no-activity" : "unexpected");
+    vlog("  CLCD_CTRL=0x%08lx %s",
+         (unsigned long)clcd_s, (clcd_s == 0x05) ? "RUNNING" : "other");
     vlog("  MIXER_CTRL=0x%08lx %s",
          (unsigned long)mixer_s,
          (mixer_s == 0x05 || mixer_s == 0x07) ? "RUNNING" : "unexpected");

@@ -43,7 +43,6 @@
 #include <stdio.h>
 
 #define MAX_VIDEO_ENTRIES 256
-#define CORNER_RADIUS 8
 
 /* Thumbnail storage: one THUMB_SIZE x THUMB_SIZE RGB565 bitmap per video */
 #define MAX_THUMBS 64
@@ -306,33 +305,9 @@ static void video_margin_draw(int item_index, struct screen *display,
     if (item_index >= 0 && item_index < MAX_THUMBS
         && thumb_valid[item_index])
     {
-        int thumb_x = x;
-        int thumb_y = y + (height - THUMB_SIZE) / 2;
-        struct viewport *vp = lcd_current_viewport;
-        int abs_x = vp->x + thumb_x;
-        int abs_y = vp->y + thumb_y;
-        int r = CORNER_RADIUS;
-        int r2x4 = 4 * r * r;
-        int px, py;
-        fb_data bg;
-
-        bg = *FBADDR(abs_x, abs_y);
-
         display->bitmap(thumb_bitmaps[item_index],
-                        thumb_x, thumb_y, THUMB_SIZE, THUMB_SIZE);
-
-        for (py = 0; py < r; py++)
-            for (px = 0; px < r; px++)
-            {
-                int dx = 2 * r - 1 - 2 * px;
-                int dy = 2 * r - 1 - 2 * py;
-                if (dx * dx + dy * dy > r2x4)
-                {
-                    *FBADDR(abs_x + px, abs_y + py) = bg;
-                    *FBADDR(abs_x + px,
-                            abs_y + THUMB_SIZE - 1 - py) = bg;
-                }
-            }
+                        x, y + (height - THUMB_SIZE) / 2,
+                        THUMB_SIZE, THUMB_SIZE);
     }
 }
 
@@ -576,10 +551,14 @@ int videos_screen(void)
     struct cat_menu_ctx cat_ctx;
     int action;
     int i;
+    int ret = GO_TO_PREVIOUS;
+
+    push_current_activity(ACTIVITY_VIDEOS);
 
     if (ensure_video_lib() <= 0)
     {
         splash(HZ * 2, "No videos found");
+        pop_current_activity();
         return GO_TO_PREVIOUS;
     }
 
@@ -609,19 +588,30 @@ int videos_screen(void)
                 {
                     int sub_ret = show_category(cat_ctx.types[sel]);
                     if (sub_ret == GO_TO_ROOT)
-                        return GO_TO_ROOT;
+                    {
+                        ret = GO_TO_ROOT;
+                        goto out;
+                    }
                     gui_synclist_draw(&list);
                 }
                 break;
             }
 
             case ACTION_STD_CANCEL:
-                return GO_TO_PREVIOUS;
+                ret = GO_TO_PREVIOUS;
+                goto out;
 
             default:
                 if (default_event_handler(action) == SYS_USB_CONNECTED)
-                    return GO_TO_ROOT;
+                {
+                    ret = GO_TO_ROOT;
+                    goto out;
+                }
                 break;
         }
     }
+
+out:
+    pop_current_activity();
+    return ret;
 }
