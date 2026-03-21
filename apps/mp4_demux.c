@@ -1119,7 +1119,10 @@ static bool read_chunk_elst(struct mp4_parse_ctx *ctx, size_t chunk_len)
     entry_count = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
-    for (i = 0; i < entry_count && size_remaining >= 12; i++)
+    {
+        size_t entry_size = ((version_flags >> 24) == 0) ? 12 : 20;
+
+    for (i = 0; i < entry_count && size_remaining >= entry_size; i++)
     {
         int32_t media_time;
 
@@ -1144,6 +1147,7 @@ static bool read_chunk_elst(struct mp4_parse_ctx *ctx, size_t chunk_len)
          * edts comes before mdia, so track type isn't known yet. */
         if (i == 0 && media_time > 0)
             ctx->pending_lead_trim = (uint32_t)media_time;
+    }
     }
 
     if (size_remaining > 0)
@@ -1186,9 +1190,12 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
     size_t size_remaining = chunk_len - 8;
 
-    /* Reset per-track state */
+    /* Reset per-track state (pending fields MUST be reset to prevent
+     * stale values from one trak leaking into the next) */
     ctx->in_video_trak = false;
     ctx->in_audio_trak = false;
+    ctx->pending_timescale = 0;
+    ctx->pending_lead_trim = 0;
 
     while (size_remaining > 8)
     {

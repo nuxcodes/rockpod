@@ -36,7 +36,7 @@
  * work:      scratch buffer for JPEG source data (>= jpeg_size)
  * work_size: size of scratch buffer
  *
- * VPU-A frame/work buffers are allocated internally via core_alloc.
+ * VPU-A frame/work buffers use a static internal buffer (no core_alloc).
  * Returns true on success.  On any failure (unsupported format,
  * HW timeout, alloc failure), returns false without modifying out. */
 bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,

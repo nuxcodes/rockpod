@@ -1839,6 +1839,19 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
+    /* Wait for audio pre-fill (~200ms) before starting video decode.
+     * Without this, the first frames stutter as video waits for
+     * the audio clock to start advancing. */
+    if (ps.has_audio)
+    {
+        int prefill_wait = 0;
+        while (!video_audio_ready() && prefill_wait < HZ)
+        {
+            sleep(1);
+            prefill_wait++;
+        }
+    }
+
     /* Start playing */
     ps.state = PB_PLAYING;
     cpu_boost(true);

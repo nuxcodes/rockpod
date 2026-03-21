@@ -29,7 +29,7 @@
 #include "system.h"
 #include "kernel.h"
 #include "s5l87xx.h"
-#include "core_alloc.h"
+/* core_alloc not needed — VPU-A uses static vpu_frame_buf */
 #include "file.h"
 #include "jpeg_hw.h"
 
@@ -65,6 +65,13 @@
 #define ALIGN32(x)  (((uintptr_t)(x) + 31) & ~31)
 #define ALIGN4K(x)  (((uintptr_t)(x) + 0xFFF) & ~0xFFF)
 
+/* Static frame buffer for VPU-A decode — avoids core_alloc() which
+ * would trigger audio buffer shrink callback and stop playback.
+ * 768KB handles sources up to ~640×640 4:2:0 (720×480 DVD, 800×480 wide).
+ * Larger sources fall back to SW decoder. */
+#define VPU_FRAME_BUF_SIZE  0xC0000
+static uint8_t vpu_frame_buf[VPU_FRAME_BUF_SIZE] CACHEALIGN_ATTR;
+
 /* JPEG zigzag scan order → raster position mapping.
  * DQT marker stores Q values in zigzag order; XFORM registers
  * are indexed by raster position.  Apple de-zigzags Q tables
@@ -92,11 +99,13 @@ static void vpua_power_on(void)
     cg &= ~0x80000000;
     cg |= 0x30000000;
     REG32(CLK_BASE + 0x08) = cg;
-    sleep(HZ / 5);
+    /* No delay needed: PLL2 already locked (system clock), CG16_SVID
+     * is just a gate/divider.  Apple FW has zero delay here.
+     * All Rockbox drivers (LCD, ATA, USB) access registers immediately
+     * after clockgate_enable() with zero delay. */
 
     pw = PWRCON(0);
     PWRCON(0) = pw & ~((7 << 14) | (1 << 18));
-    sleep(HZ / 5);
 
     REG32(VPU_MODE_REG) &= ~1; /* JPEG mode */
 
@@ -666,6 +675,15 @@ static int decode_scan(struct jpeg_hw_state *j,
     int16_t blocks[6][64]; /* Y0,Y1,Y2,Y3,Cb,Cr */
     uint8_t *active;
 
+    /* Uncacheable aliases for CPU access to DMA buffers.
+     * VPU-A DMA uses physical addresses (0x08xxxxxx) via sa_phys/sb_phys/coeff_phys.
+     * CPU reads/writes through uncacheable VA (0x48xxxxxx) to bypass D-cache entirely.
+     * Eliminates all commit_dcache()/commit_discard_dcache() calls (~61% of decode time).
+     * Apple uses the same approach (0x8xxxxxxx uncacheable aliases in OF). */
+    uint32_t *coeff_uc = S5L8702_UNCACHED_ADDR(coeff_buf);
+    uint8_t *small_a_uc = S5L8702_UNCACHED_ADDR(small_a);
+    uint8_t *small_b_uc = S5L8702_UNCACHED_ADDR(small_b);
+
     for (mb_row = 0; mb_row < j->mb_h; mb_row++)
     {
         for (mb_col = 0; mb_col < j->mb_w; mb_col++)
@@ -700,41 +718,29 @@ static int decode_scan(struct jpeg_hw_state *j,
             decode_block(j, 2, blocks[5]); /* Cr */
 
             /* Sub-call 1: Y-top (Y0, Y1) */
-            active = (toggle == 0) ? small_a : small_b;
-            pack_coeff_pair(coeff_buf, blocks[0], blocks[1]);
-            memset(small_a, 0, SMALL_BUF_SIZE);
-            memset(small_b, 0, SMALL_BUF_SIZE);
-            commit_dcache();
+            active = (toggle == 0) ? small_a_uc : small_b_uc;
+            pack_coeff_pair(coeff_uc, blocks[0], blocks[1]);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
                 return -1;
-            commit_discard_dcache();
             readback_luma(active, frame_y, mb_col, mb_row, 0, y_stride);
             toggle ^= 1;
 
             /* Sub-call 2: Y-bottom (Y2, Y3) */
-            active = (toggle == 0) ? small_a : small_b;
-            pack_coeff_pair(coeff_buf, blocks[2], blocks[3]);
-            memset(small_a, 0, SMALL_BUF_SIZE);
-            memset(small_b, 0, SMALL_BUF_SIZE);
-            commit_dcache();
+            active = (toggle == 0) ? small_a_uc : small_b_uc;
+            pack_coeff_pair(coeff_uc, blocks[2], blocks[3]);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 0) < 0)
                 return -1;
-            commit_discard_dcache();
             readback_luma(active, frame_y, mb_col, mb_row, 8, y_stride);
             toggle ^= 1;
 
             /* Sub-call 3: Chroma (Cb, Cr) */
-            active = (toggle == 0) ? small_a : small_b;
-            pack_coeff_pair(coeff_buf, blocks[4], blocks[5]);
-            memset(small_a, 0, SMALL_BUF_SIZE);
-            memset(small_b, 0, SMALL_BUF_SIZE);
-            commit_dcache();
+            active = (toggle == 0) ? small_a_uc : small_b_uc;
+            pack_coeff_pair(coeff_uc, blocks[4], blocks[5]);
             if (hw_mb_submit(coeff_phys, sa_phys, sb_phys,
                              toggle, 1) < 0)
                 return -1;
-            commit_discard_dcache();
             readback_chroma(active, frame_cb, frame_cr,
                             mb_col, mb_row, c_stride);
             toggle ^= 1;
@@ -747,12 +753,8 @@ static int decode_scan(struct jpeg_hw_state *j,
     {
         int16_t zeros[64];
         memset(zeros, 0, sizeof(zeros));
-        active = (toggle == 0) ? small_a : small_b;
-        pack_coeff_pair(coeff_buf, zeros, zeros);
-        memset(active, 0, SMALL_BUF_SIZE);
-        commit_dcache();
+        pack_coeff_pair(coeff_uc, zeros, zeros);
         hw_mb_submit(coeff_phys, sa_phys, sb_phys, toggle, 0);
-        commit_discard_dcache();
     }
 
     return 0;
@@ -775,7 +777,7 @@ static void ycbcr_to_rgb565_scaled(const uint8_t *fy, const uint8_t *fcb,
                                    fb_data *out, int out_w, int out_h)
 {
     int dst_w, dst_h, pad_x, pad_y;
-    int x, y;
+    int x, y, cw;
 
     /* Letterbox: fit source aspect into output dimensions */
     dst_w = out_w;
@@ -787,29 +789,45 @@ static void ycbcr_to_rgb565_scaled(const uint8_t *fy, const uint8_t *fcb,
     }
     pad_x = (out_w - dst_w) / 2;
     pad_y = (out_h - dst_h) / 2;
+    cw = src_w / 2;
 
     memset(out, 0, out_w * out_h * sizeof(fb_data));
 
+    /* Precompute source coordinate LUTs to avoid per-pixel divides
+     * (ARM926 has no HW divide — ~50 cycles each via libgcc) */
+    int sy_lut[dst_h], sx_lut[dst_w];
     for (y = 0; y < dst_h; y++)
     {
-        int sy = y * src_h / dst_h;
-        if (sy >= src_h) sy = src_h - 1;
+        sy_lut[y] = y * src_h / dst_h;
+        if (sy_lut[y] >= src_h) sy_lut[y] = src_h - 1;
+    }
+    for (x = 0; x < dst_w; x++)
+    {
+        sx_lut[x] = x * src_w / dst_w;
+        if (sx_lut[x] >= src_w) sx_lut[x] = src_w - 1;
+    }
+
+    for (y = 0; y < dst_h; y++)
+    {
+        int sy = sy_lut[y];
+        const uint8_t *y_row = fy + sy * src_w;
+        const uint8_t *cb_row = fcb + (sy / 2) * cw;
+        const uint8_t *cr_row = fcr + (sy / 2) * cw;
+        fb_data *dst_row = out + (y + pad_y) * out_w + pad_x;
+
         for (x = 0; x < dst_w; x++)
         {
-            int sx = x * src_w / dst_w;
-            if (sx >= src_w) sx = src_w - 1;
-
-            int cw = src_w / 2;
-            uint8_t yv  = fy[sy * src_w + sx];
-            uint8_t cbv = fcb[(sy / 2) * cw + (sx / 2)];
-            uint8_t crv = fcr[(sy / 2) * cw + (sx / 2)];
+            int sx = sx_lut[x];
+            uint8_t yv  = y_row[sx];
+            uint8_t cbv = cb_row[sx / 2];
+            uint8_t crv = cr_row[sx / 2];
 
             int r = clamp8(yv + (((int)crv - 128) * 359 >> 8));
             int g = clamp8(yv - (((int)cbv - 128) * 88 >> 8)
                               - (((int)crv - 128) * 183 >> 8));
             int b = clamp8(yv + (((int)cbv - 128) * 454 >> 8));
 
-            out[(y + pad_y) * out_w + (x + pad_x)] =
+            dst_row[x] =
                 (fb_data)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
         }
     }
@@ -825,7 +843,6 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
 {
     struct jpeg_hw_state js;
     unsigned long entropy_off;
-    int vpu_handle = -1;
     bool result = false;
 
     /* Read JPEG data into work buffer */
@@ -849,33 +866,24 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
     js.bitbuf = 0;
     js.bits_left = 0;
 
-    /* Allocate VPU-A buffers from core */
+    /* Use static frame buffer for VPU-A working memory.
+     * Avoids core_alloc() which would shrink the audio buffer. */
     {
         int frame_w = js.mb_w * 16;
         int frame_h = js.mb_h * 16;
         size_t y_size  = frame_w * frame_h;
         size_t c_size  = (frame_w / 2) * (frame_h / 2);
-        size_t need = 0;
+        size_t frame_need = y_size + c_size * 2;
+        size_t fixed_overhead = DMA_WORK_SIZE + 32 + WORK_BUF_SIZE + 32
+            + SMALL_BUF_SIZE + 4096 + SMALL_BUF_SIZE + 4096
+            + COEFF_BUF_SIZE + 32 + 4096 + 64;
 
-        need += 32;                   /* alignment slack */
-        need += DMA_WORK_SIZE + 32;
-        need += WORK_BUF_SIZE + 32;
-        need += SMALL_BUF_SIZE + 4096; /* small_a, 4K-aligned */
-        need += SMALL_BUF_SIZE + 4096; /* small_b, 4K-aligned */
-        need += COEFF_BUF_SIZE + 32;
-        need += y_size + 4096;        /* frame_y, 4K-aligned */
-        need += c_size + 32;          /* Cb */
-        need += c_size + 32;          /* Cr */
-
-        vpu_handle = core_alloc(need);
-        if (vpu_handle < 0)
+        if (frame_need + fixed_overhead > VPU_FRAME_BUF_SIZE)
             return false;
-        core_pin(vpu_handle);
     }
 
     {
-        uint8_t *buf = (uint8_t *)core_get_data(vpu_handle);
-        uint8_t *p = (uint8_t *)ALIGN32(buf);
+        uint8_t *p = (uint8_t *)ALIGN32(vpu_frame_buf);
         uint8_t *dma_work, *work_buf1, *small_a, *small_b;
         uint8_t *coeff_mem, *frame_y, *frame_cb, *frame_cr;
         uint32_t *coeff_buf;
@@ -948,7 +956,5 @@ bool jpeg_hw_decode_fd(int fd, unsigned long jpeg_size,
         vpua_power_off();
     }
 
-    core_unpin(vpu_handle);
-    core_free(vpu_handle);
     return result;
 }

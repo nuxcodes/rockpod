@@ -120,13 +120,13 @@ static void vpp_lcd_config(uint32_t config)
     LCD_CON = config;
 }
 
-static void vpp_lcd_cmd(uint8_t cmd)
+static void vpp_lcd_cmd(uint16_t cmd)
 {
     while (LCD_STATUS & 0x10);
     LCD_WCMD = cmd;
 }
 
-static void vpp_lcd_data(uint8_t data)
+static void vpp_lcd_data(uint16_t data)
 {
     while (LCD_STATUS & 0x10);
     LCD_WDATA = data;
@@ -490,6 +490,8 @@ enum plugin_status plugin_start(const void *parameter)
     log_open();
     vlog("=== VPP Pipeline Test ===");
 
+    uint32_t saved_lcd_con = 0;  /* saved before passthrough, restored after */
+
     /* Get audio buffer for test frame data */
     size_t buf_size;
     uint8_t *buf = rb->plugin_get_audio_buffer(&buf_size);
@@ -536,35 +538,22 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Bits 14-16 cleared: %s",
          ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
 
-    /* GPIO 7.1: Apple sets HIGH during VPP power-on (ROM 0x167be4:
-     * FUN_0036d3f0(0x39, 1, 1) → GPIOCMD = 0x7010f). Likely enables
-     * CLCD RGB output driver. On PATA/SSD iPods, port 7 pin 1 = ATA D1.
-     * GPIOCMD is per-pin (verified from ROM), so only pin 1 changes.
-     * Must sleep ATA first to avoid data corruption. */
-    rb->storage_spindown(0);
-    rb->storage_sleep();
-    rb->sleep(HZ / 2);  /* wait for ATA sleep to complete */
-    GPIOCMD = 0x0007010F;  /* port 7 pin 1 = output HIGH (per-pin) */
-    vlog("GPIO 7.1 = output HIGH (ATA sleeping)");
+    /* GPIO 7.1: Apple sets HIGH during VPP power-on (ROM 0x167be4) but
+     * this is for CE-ATA only. On PATA/SSD iPods, pin 7.1 = ATA D1.
+     * v23 test proved: setting it corrupts ALL disk I/O (log was garbage).
+     * Both MMIO trace agents confirmed: NOT needed for VPP pipeline.
+     * REMOVED — do not re-add. */
 
     int panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
     vlog("CG16_SVID = 0x%04x (expect 0x3003 = PLL2/4 = 54MHz)",
          (unsigned)CG16_SVID);
 
-    /* Send panel RGB interface command (0xB0) — enables RGB input mode.
-     * Type-1 panels get this during boot; type-0 may not.
-     * Sending it unconditionally is harmless (idempotent). */
-    static const uint8_t rgb_cfg[] = {
-        0x3a, 0x3a, 0x80, 0x80, 0x0a, 0x0a, 0x0a, 0x0a,
-        0x0a, 0x0a, 0x0a, 0x0a, 0x3c, 0x30, 0x0f, 0x00,
-        0x01, 0x54, 0x06, 0x66, 0x66,
-    };
-    vpp_lcd_config(LCD_CMD_MODE);
-    vpp_lcd_cmd(0xB0);
-    for (int i = 0; i < 21; i++)
-        vpp_lcd_data(rgb_cfg[i]);
-    vlog("Panel 0xB0 (RGB interface) sent: 21 bytes");
+    /* Panel 0xB0 (RGB Interface Signal Control): REMOVED in v24.
+     * Agent 3 decoded all 4 Apple LCD init sequences in ROM — NONE send 0xB0.
+     * Apple relies on SoC ENVID hardware mux, not panel RGB mode config.
+     * Rockbox's lcd_init_seq_1 has 0xB0 (from panel datasheet, not Apple).
+     * Sending 0xB0 here may misconfigure RGB interface timing. */
 
     /* === Phase 3: Read back VPP registers (verify alive) === */
     vlog("Phase 3: Register readback");
@@ -652,9 +641,12 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_CR_ADDR = (uint32_t)cr_plane;
     CLCD_CLEAR34 = 0;
 
-    /* Source buffer dimensions */
-    CLCD_SRC_BUF_W = src_w;
-    CLCD_SRC_BUF_H = src_h;
+    /* CLCD +0x03C/+0x040: DO NOT WRITE here! These are filter config regs
+     * (tap count=0x40, precision=0x10), set during clcd_init(). Writing
+     * src_w/src_h here CORRUPTS the scaler filter pipeline. Agent found:
+     * Apple (FUN_00167288) writes 0x40/0x10 at init, never per-frame.
+     * Actual source dimensions go to +0x05C/+0x060 (CLCD_SRC_W/SRC_H).
+     * BUG WAS PRESENT IN ALL VERSIONS v1-v24! */
 
     /* YUV mode and strides */
     CLCD_YUV_MODE    = 1;          /* planar 4:2:0 */
@@ -704,11 +696,208 @@ enum plugin_status plugin_start(const void *parameter)
      * Rockbox enables it permanently in lcd_init_device(). We must gate
      * it off before VPP's CLCD drives the shared LCD data pins.
      * CLOCKGATE_LCD = 1 → PWRCON(0) bit 1. Set = disabled. */
-    while (!(LCD_STATUS & 0x2))
-        ;  /* wait for MCU LCD idle */
-    vlog("  LCD_CON before=0x%08lx", (unsigned long)LCD_CON);
-    PWRCON(0) |= (1 << 1);  /* disable MCU LCD clock gate */
-    vlog("  MCU LCD clock disabled (PWRCON bit 1 set)");
+    /* === Step B: Enable additional clocks + display compositor ===
+     * FUN_0014deec (video app init, ROM 0x14deec) does THREE things
+     * before setting the LCD passthrough registers:
+     *   1. thunk_EXT_FUN_22000318(0x2080, 0, 1) — enable PWRCON bits 7+13
+     *   2. FUN_0014d240(param) — full compositor init at 0x38900000
+     *   3. FUN_000d7384(0x40,0x40,0,1,1) — compositor channel config
+     * All verified from ROM decompilation + raw bytes. */
+
+    /* Step B1: Enable PWRCON bits 7+13 (ROM 0x14df00).
+     * Apple does this FIRST, before any passthrough config.
+     * Bits 7+13 = 0x2080. Clear = enable clocks. */
+    PWRCON(0) &= ~0x2080;
+    vlog("  PWRCON bits 7+13 enabled (0x%08lx)", (unsigned long)PWRCON(0));
+
+    /* Step B2: Display compositor at 0x38900000 (ROM 0x14df08).
+     * This block sits between VPP output and MCU LCD controller.
+     *
+     * IMPORTANT: Timing regs +0x1EC-0x1FC are set by iBoot (SRAM 0x890d2dc),
+     * NOT by the ROM. Rockbox doesn't touch 0x38900000 at all, so Apple's
+     * boot values should still be in the hardware registers. We must NOT
+     * clobber them with a full re-init.
+     *
+     * Strategy: dump current state, then do MINIMAL config — only set
+     * what we need, preserve Apple's boot state where possible. */
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+
+        /* Dump Apple boot state BEFORE we touch anything */
+        vlog("  --- Compositor boot state (0x38900000) ---");
+        vlog("    CTRL=0x%08lx CFG=0x%08lx MODE=0x%08lx",
+             (unsigned long)comp[0], (unsigned long)comp[0x008/4],
+             (unsigned long)comp[0x00C/4]);
+        vlog("    +0x200=0x%08lx +0x210=0x%08lx +0x214=0x%08lx",
+             (unsigned long)comp[0x200/4], (unsigned long)comp[0x210/4],
+             (unsigned long)comp[0x214/4]);
+        vlog("    timing: 1EC=0x%08lx 1F0=0x%08lx 1F4=0x%08lx 1F8=0x%08lx 1FC=0x%08lx",
+             (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+             (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+             (unsigned long)comp[0x1FC/4]);
+        vlog("    ch: D8=0x%08lx E0=0x%08lx E8=0x%08lx 3AC=0x%08lx",
+             (unsigned long)comp[0x0D8/4], (unsigned long)comp[0x0E0/4],
+             (unsigned long)comp[0x0E8/4], (unsigned long)comp[0x3AC/4]);
+
+        /* Minimal init: set only what we need, preserve timing regs.
+         * FUN_0014d240 does full init but we avoid clobbering boot state. */
+        comp[0x004/4] = 1;
+        comp[0x020/4] = 1;
+        /* Per-channel identity gain (0x1000 = 1.0 in 4.12 FP) */
+        comp[0x0D8/4] = 0x00001000;
+        comp[0x0DC/4] = 0;
+        comp[0x0E0/4] = 0x00001000;
+        comp[0x0E4/4] = 0;
+        comp[0x0E8/4] = 0x00001000;
+        comp[0x0EC/4] = 0;
+        /* Mode config = 0x41118101 (NOT 0x40008101 — was missing pixel fmt!)
+         * bit 0=enable, bit 8=bypass, bit 15=video overlay enable,
+         * bits[17:16]=01 output fmt, bits[21:20]=01 input fmt B,
+         * bits[25:24]=01 input fmt A, bit 30=display output enable.
+         * FUN_000bf820(0,0,0x00010101,1): param3 bytes set bits 24,20,16. */
+        comp[0x008/4] = 0x41118101;
+        comp[0x00C/4] = 0x000F0F0F;
+        /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
+         * Bit 0 of +0x200 is NOT master enable (that's +0x000).
+         * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
+        comp[0x200/4] |= 0x10080;
+        /* Zero unused layer format registers (layers 0-4) to prevent
+         * stale iBoot data from overlaying video output */
+        comp[0x05C/4] = 0;  /* layer 0 */
+        comp[0x074/4] = 0;  /* layer 1 */
+        comp[0x08C/4] = 0;  /* layer 2 */
+        comp[0x0A4/4] = 0;  /* layer 3 */
+        comp[0x0BC/4] = 0;  /* layer 4 */
+        comp[0x204/4] = 2;
+        comp[0x208/4] = 0;
+        comp[0x20C/4] = 2;
+        /* Viewport: full screen */
+        comp[0x210/4] = 0x00010110;
+        comp[0x214/4] = 0x00EF013F;     /* (239<<16)|319 */
+        /* Channel config from FUN_000d7384 (ROM 0x14df2c) */
+        comp[0x3AC/4] = 0x04004003;
+        /* DO NOT touch +0x1EC-0x1FC — timing from iBoot, preserve Apple values */
+
+        /* Layer 5 (video overlay) config — FUN_0014cc90 case 5.
+         * Without these, compositor doesn't know VPP data format/layout.
+         * ROM evidence: 0x14ce5c (format), 0x14ce88 (stride), 0x14cebc (window) */
+        comp[0x028/4] = 0x100;              /* YUV 4:2:0 planar (ROM: moveq r1,#0x100) */
+        comp[0x02C/4] = 320 | (160 << 16);  /* Y_stride=320, UV_stride=160 */
+        comp[0x030/4] = 0;                  /* window start: (0,0) */
+        comp[0x034/4] = (240 << 16) | 320;  /* window end: (320, 240) */
+        comp[0x04C/4] = 0x10001000;         /* scale 1:1 (H=0x1000, V=0x1000 in 4.12 FP) */
+        comp[0x050/4] = 0;                  /* no position offset */
+        comp[0x054/4] = (240 << 16) | 320;  /* scale dims: (height<<16)|width = 0x00F00140 */
+
+        /* Gamma LUTs — CRITICAL. Without identity LUT, all pixels map to BLACK.
+         * Apple inits 256 entries per channel with value = i*4 (10-bit output).
+         * ROM evidence: FUN_00088d8c writes to 0x38900400/0x800/0xC00.
+         * Bypass mode (bit 8 of +0x008) does NOT skip gamma — Apple loads
+         * identity values AND sets bypass; if bypass skipped gamma, loading
+         * identity gamma would be dead code. */
+        for (int i = 0; i < 256; i++) {
+            comp[0x400/4 + i] = i * 4;  /* R channel */
+            comp[0x800/4 + i] = i * 4;  /* G channel */
+            comp[0xC00/4 + i] = i * 4;  /* B channel */
+        }
+
+        /* Timing registers: write non-zero defaults if currently zero.
+         * Apple loads from iBoot SRAM (0x890d2dc) — values irrecoverable.
+         * But zero timing may prevent compositor from starting.
+         * Try reasonable values based on 320x240 LCD panel. */
+        if (comp[0x1EC/4] == 0 && comp[0x1F0/4] == 0) {
+            /* Timing appears uninitialized — write educated guesses.
+             * Format unknown, but non-zero values better than zeros. */
+            comp[0x1EC/4] = 0x00000015;  /* H timing param 1 (~21) */
+            comp[0x1F0/4] = 0x00000005;  /* H timing param 2 (~5) */
+            comp[0x1F4/4] = 0x00000010;  /* V timing param 1 (16, matches POR) */
+            comp[0x1F8/4] = 0x00000003;  /* V timing param 2 (~3) */
+            comp[0x1FC/4] = 0x00000001;  /* enable/mode? */
+            vlog("  Compositor timing: wrote non-zero defaults");
+        } else {
+            vlog("  Compositor timing: preserved (non-zero)");
+        }
+
+        /* Master enable — write but DON'T read back yet.
+         * It's a GO strobe that auto-clears. */
+        comp[0x000/4] = 1;
+    }
+    vlog("  Compositor: CTRL=0x%08lx CFG=0x%08lx VP=0x%08lx",
+         (unsigned long)*(volatile uint32_t *)0x38900000,
+         (unsigned long)*(volatile uint32_t *)0x38900008,
+         (unsigned long)*(volatile uint32_t *)0x38900214);
+
+    /* Step B3: MCU LCD controller RGB passthrough (ROM 0x14df10-0x14df6c).
+     * +0x78 = porch timing, +0x74 = resolution, +0x70 = bypass enable.
+     * All values from literal pool at ROM 0x14df78-0x14df84 (bit-exact).
+     *
+     * ALSO: +0x7C and +0x88 from Apple's LCD init (FUN_000ca178, ROM 0xca178).
+     * These configure the LCD controller's RGB input mode. Rockbox's
+     * syscon_preinit() power-cycles LCD clock gate, resetting them to POR
+     * defaults. Neither Rockbox nor previous plugin versions set them.
+     * +0x7C = 0x402 (RGB input format/timing control)
+     * +0x88 = 0x01000000 (RGB DMA/data path enable)
+     * RE: ROM 0xca198 str r1,[r0,#0x7c], ROM 0xca188 str r1,[r0,#0x88] */
+    /* LCD_CON: Rockbox uses 0x80100DB0 (P16 mode) but Apple uses 0x81100DB9.
+     * CRITICAL differences — bit 24 (data lane routing), bit 0 (RGB enable?).
+     * If passthrough data arrives on D[8:1] but controller expects D[17:10],
+     * pixels never reach the panel. RE: FUN_000ca178, literal pool 0xca1a0.
+     * Must switch to Apple's value BEFORE enabling passthrough. */
+    /* v31 FIX: Send panel commands FIRST (in cmd mode), THEN set LCD_CON.
+     * v30 BUG: set LCD_CON=0x81100DB9 then vpp_lcd_config() overwrote it.
+     * Apple's pattern: save LCD_CON → cmd mode → commands → restore.
+     * We do: cmd mode → commands → set Apple's LCD_CON (stays for VPP). */
+    saved_lcd_con = LCD_CON;
+    vlog("  LCD_CON before=0x%08lx", saved_lcd_con);
+
+    /* Panel GRAM window setup — TYPE-SPECIFIC command set.
+     * TYPE 0/1: MIPI DBI 8-bit (0x2A/0x2B/0x2C) in P8 mode
+     * TYPE 2/3: ILI9320 register-index (0x210-0x213, 0x202) in P18 mode
+     * Using wrong command set = panel never enters GRAM write mode.
+     * RE: Rockbox displaylcd_setup() at lcd-s5l8702.c:330-361. */
+    if (panel_type >= 2) {
+        /* TYPE 2/3: 16-bit register-index command set (ILI9320/ILI9326).
+         * lcd_cmd_mode = LCD_MODE_P18 = 0x80000DA8 for these panels.
+         * Register writes: WCMD=index, WDATA=16-bit value. */
+        vpp_lcd_config(0x80000DA8);  /* P18 mode for register-index cmds */
+        /* ILI9320: WCMD=register index, WDATA=16-bit value (single write).
+         * Matches Rockbox s5l_lcd_write_reg() pattern. */
+        vpp_lcd_cmd(0x210); vpp_lcd_data(0);    /* HORIZ_ADDR_START = 0 */
+        vpp_lcd_cmd(0x211); vpp_lcd_data(239);  /* HORIZ_ADDR_END = 239 */
+        vpp_lcd_cmd(0x212); vpp_lcd_data(0);    /* VERT_ADDR_START = 0 */
+        vpp_lcd_cmd(0x213); vpp_lcd_data(319);  /* VERT_ADDR_END = 319 */
+        vpp_lcd_cmd(0x200); vpp_lcd_data(0);    /* HORIZ_GRAM_ADDR = 0 */
+        vpp_lcd_cmd(0x201); vpp_lcd_data(0);    /* VERT_GRAM_ADDR = 0 */
+        vpp_lcd_cmd(0x202);  /* WRITE_DATA_TO_GRAM */
+        vlog("  Panel type 2/3: ILI9320 GRAM window 240x320 + GRAM write");
+    } else {
+        /* TYPE 0/1: MIPI DBI 8-bit command set (ILI9340). */
+        vpp_lcd_config(0x80000c20);  /* P8 mode */
+        vpp_lcd_cmd(0x3A); vpp_lcd_data(0x66);  /* COLMOD: 18-bit RGB+MCU */
+        vpp_lcd_cmd(0x2A);  /* CASET */
+        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+        vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+        vpp_lcd_cmd(0x2B);  /* PASET */
+        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+        vpp_lcd_cmd(0x2C);  /* RAMWR */
+        vlog("  Panel type 0/1: MIPI CASET/PASET/RAMWR 240x320");
+    }
+
+    /* NOW set LCD_CON to Apple's value — MUST stay for entire VPP period.
+     * Bit 24=data lane routing, bit 0=RGB input enable.
+     * RE: FUN_000ca178, literal pool 0xca1a0 = 0x81100DB9. */
+    LCD_CON = 0x81100DB9;
+
+    /* LCD undocumented + passthrough registers */
+    *(volatile uint32_t *)(0x3830007C) = 0x00000402;
+    *(volatile uint32_t *)(0x38300088) = 0x01000000;
+    *(volatile uint32_t *)(0x38300078) = 0x000A000A;
+    *(volatile uint32_t *)(0x38300074) = 0x00F00140;
+    *(volatile uint32_t *)(0x38300070) = 1;
+    vlog("  LCD_CON=0x%08lx passthrough=0x%08lx",
+         (unsigned long)LCD_CON,
+         (unsigned long)*(volatile uint32_t *)(0x38300070));
 
     /* Step C: Per-frame trigger — Apple's exact order from FUN_001669c8 case 5 */
     CLCD_CTRL |= 1;          /* input enable (starts reading YUV) */
@@ -721,6 +910,13 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_REG(0x03C) |= 2;    /* latch buffers */
     DISP_REG(0x03C) |= 4;    /* latch output */
     vlog("  After latch: DISP+03C=0x%08lx", (unsigned long)DISP_REG(0x03C));
+
+    /* Re-trigger compositor GO AFTER pipeline is running.
+     * The GO strobe may require data at input before it latches.
+     * Apple writes GO during init (before pipeline), but the
+     * compositor may need re-triggering when data starts flowing. */
+    *(volatile uint32_t *)0x38900000 = 1;
+    vlog("  Compositor GO re-triggered");
 
     /* Dump all block states immediately after trigger */
     vlog("  === POST-TRIGGER STATE ===");
@@ -746,6 +942,15 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)DISP_MODE,
          (unsigned long)DISP_OUTPUT,
          (unsigned long)DISP_ENABLE);
+    /* CLCD YUV pipeline regs (critical — confirm planar mode + strides) */
+    vlog("  CLCD: +0x3C0=0x%08lx +0x3C4=0x%08lx +0x3C8=0x%08lx +0x3CC=0x%08lx",
+         (unsigned long)CLCD_REG(0x3C0), (unsigned long)CLCD_REG(0x3C4),
+         (unsigned long)CLCD_REG(0x3C8), (unsigned long)CLCD_REG(0x3CC));
+    /* LCD_STATUS + compositor status */
+    vlog("  LCD_STATUS=0x%08lx COMP_CTRL=0x%08lx COMP+0x200=0x%08lx",
+         (unsigned long)LCD_STATUS,
+         (unsigned long)*(volatile uint32_t *)0x38900000,
+         (unsigned long)*(volatile uint32_t *)(0x38900200));
     /* Scan first 16 regs of each block for anything unexpected */
     vlog("  --- CLCD regs 0x00-0x3C ---");
     for (int i = 0; i <= 0x3C; i += 4)
@@ -756,6 +961,19 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  --- DISP regs 0x00-0x18 ---");
     for (int i = 0; i <= 0x18; i += 4)
         vlog("    +0x%02x = 0x%08lx", i, (unsigned long)DISP_REG(i));
+
+    /* Extended register dump: CLCD DMA/filter + DISP timing */
+    vlog("  --- CLCD DMA/filter 0x200-0x238 ---");
+    for (int i = 0x200; i <= 0x238; i += 4)
+        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)CLCD_REG(i));
+    vlog("  --- DISP timing 0x200-0x26C ---");
+    for (int i = 0x200; i <= 0x26C; i += 4)
+        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)DISP_REG(i));
+    vlog("  --- DISP pipeline 0x3C0-0x3D4 ---");
+    for (int i = 0x3C0; i <= 0x3D4; i += 4)
+        vlog("    +0x%03x = 0x%08lx", i, (unsigned long)DISP_REG(i));
+    vlog("  LCD_CON=0x%08lx PWRCON0=0x%08lx",
+         (unsigned long)LCD_CON, (unsigned long)PWRCON(0));
 
     /* === Phase 7: Check pipeline is running === */
     vlog("Phase 7: Pipeline status check");
@@ -831,17 +1049,18 @@ enum plugin_status plugin_start(const void *parameter)
     /* === Phase 10: Restore Rockbox LCD + ATA === */
     vlog("Phase 10: Restoring LCD and ATA");
 
-    /* Release GPIO 7.1 before re-enabling ATA (per-pin restore) */
-    GPIOCMD = 0x00070104;  /* port 7 pin 1 = function 4 (ATA) */
-    vlog("  GPIO 7.1 restored to ATA function");
+    /* Disable RGB passthrough + compositor */
+    *(volatile uint32_t *)(0x38300070) = 0;
+    *(volatile uint32_t *)0x38900000 = 0;  /* compositor off */
+    PWRCON(0) |= 0x2080;  /* re-gate bits 7+13 */
 
-    /* Restore ATA spindown timer — next disk access auto-calls
-     * ata_power_up() which blasts PCON(7)=0x44444444 (all pins ATA) */
-    rb->storage_spindown(7);
-
-    /* Re-enable MCU LCD clock gate (disabled in Phase 6) */
-    PWRCON(0) &= ~(1 << 1);  /* clear bit 1 = enable LCD clock */
-    vlog("  MCU LCD clock re-enabled");
+    /* Restore LCD_CON to Rockbox value and COLMOD to MCU-only */
+    LCD_CON = saved_lcd_con;
+    vpp_lcd_config(0x80000c20);
+    vpp_lcd_cmd(0x3A);
+    vpp_lcd_data(0x06);  /* restore MCU-only pixel format */
+    vpp_lcd_config(saved_lcd_con);
+    vlog("  LCD_CON restored to 0x%08lx", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");
     log_close();

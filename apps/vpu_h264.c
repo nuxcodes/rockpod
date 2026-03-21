@@ -395,22 +395,23 @@ static void vpub_power_on(void)
 {
     uint32_t cg, pw;
 
+    /* Gate VPP clocks + VPU-B clock as initial state */
     VPU_MODE_REG &= ~1;
     PWRCON(0) |= (1 << 17) | (7 << 14);
-    sleep(HZ/2);
+    /* No delay: Apple FW, all Rockbox drivers use zero delay after PWRCON */
 
+    /* Enable CG16_SVID (PLL2 source, already locked as system clock) */
     cg = REG32(CLK_BASE + 0x08);
     cg &= ~0x80000000;
     cg |= 0x30000000;
     REG32(CLK_BASE + 0x08) = cg;
-    sleep(HZ/5);
 
+    /* Enable VPP clocks */
     pw = PWRCON(0);
     PWRCON(0) = pw & ~(7 << 14);
-    sleep(HZ/5);
 
+    /* H.264 mode */
     VPU_MODE_REG |= 1;
-    sleep(HZ/10);
 
     /* Zero stale registers */
     PWRCON(0) = PWRCON(0) & ~(1 << 17);

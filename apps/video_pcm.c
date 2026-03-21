@@ -103,6 +103,7 @@ void video_pcm_init(uint32_t sample_rate)
     clock_samples = 0;
     clock_base_ms = 0;
     clock_sample_rate = sample_rate;
+    flush_pending = false;
     memset(silence, 0, sizeof(silence));
 
     /* Set sample rate BEFORE starting playback
@@ -188,6 +189,7 @@ void video_pcm_pause(bool pause)
 
 void video_pcm_stop(void)
 {
+    flush_pending = false;
     mixer_channel_stop(PCM_MIXER_CHAN_PLAYBACK);
 
     /* Restore original sample rate */
