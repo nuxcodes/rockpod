@@ -31,8 +31,9 @@
 
 #define CLIP(x, lo, hi) (MAX(MIN((x), (hi)), (lo)))
 
-/* Thread stack: 12KB — libfaad decode uses 8-16KB of stack */
-#define AUDIO_STACK_SIZE  (12 * 1024)
+/* Thread stack: 16KB — libfaad uses ~700 bytes but 16KB provides
+ * generous headroom for complex audio content or deep call paths. */
+#define AUDIO_STACK_SIZE  (16 * 1024)
 static uint8_t audio_stack[AUDIO_STACK_SIZE];
 static unsigned int audio_thread_id;
 
@@ -207,7 +208,15 @@ static void audio_decode_thread(void)
                     audio_lead_trim = audio_demux->audio_lead_trim;
                 else
                     audio_lead_trim = 0;
-                NeAACDecPostSeekReset(decoder, (int32_t)audio_sample_idx);
+                /* Full decoder re-init instead of PostSeekReset.
+                 * PostSeekReset only sets a flag — doesn't clear
+                 * corrupted overlap buffers (fb_intermed). Full
+                 * re-init zeros everything and reconfigures. */
+                decoder = NeAACDecOpen();
+                NeAACDecInit2(decoder,
+                              (uint8_t *)audio_demux->audio_codecdata,
+                              audio_demux->audio_codecdata_len,
+                              &sample_rate_out, &channels_out);
                 break;
             }
 
@@ -247,6 +256,7 @@ static void audio_decode_thread(void)
                                              &offset, &size) < 0)
             {
                 audio_sample_idx++;
+                yield();
                 continue;
             }
 
@@ -257,6 +267,7 @@ static void audio_decode_thread(void)
             if (read(audio_fd, audio_read_buf, size) != (ssize_t)size)
             {
                 audio_sample_idx++;
+                yield();
                 continue;
             }
 
@@ -267,6 +278,7 @@ static void audio_decode_thread(void)
             if (frame_info.error != 0 || frame_info.samples == 0)
             {
                 audio_sample_idx++;
+                yield();
                 continue;
             }
 

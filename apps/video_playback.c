@@ -508,7 +508,7 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                if (ps.osd_visible)
+                if (ps.osd_visible || ps.vol_show_until)
                     scale_and_blit_fb(y, cb, cr, w, h);
                 else
                     scale_and_blit(y, cb, cr, w, h);
@@ -1369,6 +1369,16 @@ static void button_loop(const char *filepath)
                 osd_draw();
                 ps.need_osd_redraw = false;
             }
+            else if (ps.vol_show_until
+                     && TIME_BEFORE(current_tick, ps.vol_show_until))
+            {
+                /* Volume visible without OSD: video already in FB
+                 * from scale_and_blit_fb. Composite overlay + push. */
+                if (ret != 1)
+                    blit_last_frame_fb();
+                draw_volume_overlay();
+                lcd_update();
+            }
 
             /* Frame pacing: audio-master clock when available,
              * system-tick based otherwise. */
@@ -1380,7 +1390,33 @@ static void button_loop(const char *filepath)
                 {
                     /* Audio clock = ground truth */
                     uint32_t audio_ms = video_pcm_get_clock_ms();
-                    int32_t drift = (int32_t)(ps.curr_time_ms - audio_ms);
+                    int32_t drift;
+
+                    /* Detect frozen audio clock: no PCM consumed for
+                     * 500ms means FAAD errors or no data written.
+                     * Without this, drift grows → main thread sleeps
+                     * progressively longer → fps drops to 2-3. */
+                    {
+                        static uint32_t last_audio_ms;
+                        static long last_audio_change_tick;
+
+                        if (audio_ms != last_audio_ms)
+                        {
+                            last_audio_ms = audio_ms;
+                            last_audio_change_tick = current_tick;
+                        }
+                        else if (last_audio_change_tick != 0
+                                 && TIME_AFTER(current_tick,
+                                               last_audio_change_tick
+                                               + HZ / 2))
+                        {
+                            ps.play_start_tick = current_tick;
+                            ps.play_start_time = ps.curr_time_ms;
+                            ps.audio_clock_lost = true;
+                        }
+                    }
+
+                    drift = (int32_t)(ps.curr_time_ms - audio_ms);
 
                     if (drift > 10)
                     {
@@ -1579,16 +1615,10 @@ static void button_loop(const char *filepath)
             osd_draw();
             ps.need_osd_redraw = false;
         }
-        else if (ps.vol_show_until &&
-                 TIME_BEFORE(current_tick, ps.vol_show_until))
-        {
-            /* Volume overlay without OSD — draw independently */
-            int box_w = (VOL_ICON_W + 6) + VOL_BAR_W + 2 * VOL_BOX_PAD;
-            int box_h = VOL_BAR_H + 2 * VOL_BOX_PAD;
-            int box_y = LCD_HEIGHT * 5 / 8 - box_h / 2;
-            draw_volume_overlay();
-            lcd_update_rect((LCD_WIDTH - box_w) / 2, box_y, box_w, box_h);
-        }
+        /* Volume overlay without OSD is now composited in the main
+         * render path above (scale_and_blit_fb + draw_volume_overlay
+         * + lcd_update), eliminating the flash caused by lcd_blit_yuv
+         * overwriting the overlay area each frame. */
     }
 
     /* Save resume position */
@@ -1870,6 +1900,11 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* Boost CPU for audio init, pre-fill, and playback */
     cpu_boost(true);
+
+    /* Re-apply hardware volume before starting audio output.
+     * audio_hard_stop() may leave CS42L55 at 0dB (power-on default).
+     * Normal playback calls sound_set_volume on cold start — match it. */
+    sound_settings_apply();
 
     /* Initialize audio if the MP4 has an audio track */
     if (demux.audio_format != 0 && demux.audio_codecdata_len > 0)
