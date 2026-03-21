@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v73r ===");
+    vlog("=== VPP Pipeline Test v80 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -564,7 +564,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v73r");
+    rb->splashf(HZ, "VPP v80");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -575,13 +575,16 @@ enum plugin_status plugin_start(const void *parameter)
     rb->lcd_scroll_stop();
 
     /* === Phase 2: Enable VPP clocks + GPIO 7.1 === */
+    /* v80: suppress ALL logging in critical section (clock enable → trigger)
+     * to eliminate race condition from 58 file I/O calls */
+#define vlog(...) do {} while(0)
     vlog("Phase 2: Enabling clocks");
 
     uint32_t pwrcon_before = PWRCON(0);
     vlog("PWRCON0 before: 0x%08lx", (unsigned long)pwrcon_before);
 
     vpp_svid_enable(true);
-    rb->sleep(HZ / 5);  /* PLL2 stabilize */
+    { volatile int d; for (d = 0; d < 500000; d++); } /* v80: no scheduler yield */
     vpp_clocks_enable(true);
 
     uint32_t pwrcon_after = PWRCON(0);
@@ -1153,6 +1156,7 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired");
+#undef vlog
 
     /* v73: buffer addresses REMOVED (writing breaks DMA in bypass mode) */
     vlog("  Pipeline running — LOOK AT LCD NOW!");
