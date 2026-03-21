@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v81 ===");
+    vlog("=== VPP Pipeline Test v82 ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
