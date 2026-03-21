@@ -108,10 +108,13 @@ static off_t stream_tell(struct mp4_stream *s)
 struct mp4_parse_ctx {
     struct mp4_stream stream;
     struct mp4v_demux_res *res;
-    bool found_video;   /* set when we find a video track */
-    bool in_video_trak; /* currently inside a video trak */
-    uint16_t tkhd_dw;   /* tkhd display width (pending video confirm) */
-    uint16_t tkhd_dh;   /* tkhd display height (pending video confirm) */
+    bool found_video;    /* set when we find a video track */
+    bool found_audio;    /* set when we find an audio track */
+    bool in_video_trak;  /* currently inside a video trak */
+    bool in_audio_trak;  /* currently inside an audio trak */
+    bool want_audio;     /* caller provided audio buffers */
+    uint16_t tkhd_dw;    /* tkhd display width (pending video confirm) */
+    uint16_t tkhd_dh;    /* tkhd display height (pending video confirm) */
 };
 
 /* Parse avcC box - H.264 decoder configuration record.
@@ -245,6 +248,388 @@ static bool read_chunk_stsd_video(struct mp4_parse_ctx *ctx, size_t chunk_len)
         stream_skip(&ctx->stream, size_remaining);
 
     return ctx->res->format != 0;
+}
+
+/* Read MPEG-4 descriptor length (variable-length, 7 bits/byte, high bit=continue).
+ * Ported from libm4a/demux.c:78-92. */
+static uint32_t read_mp4_descr_length(struct mp4_stream *s)
+{
+    uint8_t b;
+    uint8_t num_bytes = 0;
+    uint32_t length = 0;
+
+    do {
+        b = stream_read_uint8(s);
+        num_bytes++;
+        length = (length << 7) | (b & 0x7F);
+    } while ((b & 0x80) && num_bytes < 4);
+
+    return length;
+}
+
+/* Parse esds box — extract AudioSpecificConfig for AAC decoder init.
+ * Ported from libm4a/demux.c:95-154. */
+static bool read_chunk_esds(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint8_t tag;
+    uint32_t descr_len;
+
+    /* version + flags */
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    /* ES_Descriptor (tag 0x03) */
+    tag = stream_read_uint8(&ctx->stream);
+    descr_len = read_mp4_descr_length(&ctx->stream);
+    (void)descr_len;
+
+    if (tag == 0x03)
+    {
+        /* ES_ID(2) + streamPriority(1) */
+        stream_skip(&ctx->stream, 3);
+    }
+    else
+    {
+        /* Non-standard: skip 2 bytes instead */
+        stream_skip(&ctx->stream, 2);
+    }
+
+    /* DecoderConfigDescriptor (tag 0x04) */
+    tag = stream_read_uint8(&ctx->stream);
+    descr_len = read_mp4_descr_length(&ctx->stream);
+    (void)descr_len;
+
+    if (tag != 0x04)
+        return true; /* not fatal, just no codec data */
+
+    /* objectTypeIndication(1) + streamType(1) + bufferSizeDB(3) +
+       maxBitrate(4) + avgBitrate(4) = 13 bytes */
+    stream_skip(&ctx->stream, 13);
+
+    /* DecoderSpecificInfo (tag 0x05) = AudioSpecificConfig */
+    tag = stream_read_uint8(&ctx->stream);
+    descr_len = read_mp4_descr_length(&ctx->stream);
+
+    if (tag == 0x05 && descr_len > 0)
+    {
+        if (descr_len > sizeof(ctx->res->audio_codecdata))
+            descr_len = sizeof(ctx->res->audio_codecdata);
+
+        ctx->res->audio_codecdata_len = descr_len;
+        stream_read(&ctx->stream, ctx->res->audio_codecdata, descr_len);
+    }
+
+    return true;
+}
+
+/* Parse stsd for audio: expects mp4a sample entry.
+ * mp4a layout: reserved(6) + data_ref_index(2) + reserved(8) +
+ *   channels(2) + sample_size(2) + packet_size(2) + sample_rate(4, 16.16 FP) +
+ *   reserved(2) + sub-boxes (esds, etc.) */
+static bool read_chunk_stsd_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i;
+
+    stream_read_uint32(&ctx->stream); /* version + flags */
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    for (i = 0; i < numentries && size_remaining > 8; i++)
+    {
+        uint32_t entry_size = stream_read_uint32(&ctx->stream);
+        uint32_t format = stream_read_uint32(&ctx->stream);
+        uint32_t entry_remaining = entry_size - 8;
+
+        if (entry_size <= 8 || entry_size > size_remaining)
+            break;
+
+        if (format == MAKEFOURCC('m','p','4','a'))
+        {
+            ctx->res->audio_format = format;
+
+            /* reserved(6) + data_ref_index(2) */
+            stream_skip(&ctx->stream, 8);
+            entry_remaining -= 8;
+
+            /* reserved(8) */
+            stream_skip(&ctx->stream, 8);
+            entry_remaining -= 8;
+
+            ctx->res->audio_channels = stream_read_uint16(&ctx->stream);
+            stream_skip(&ctx->stream, 2); /* sample_size (bits) */
+            stream_skip(&ctx->stream, 2); /* packet_size */
+            entry_remaining -= 6;
+
+            {
+                uint32_t sr_fp = stream_read_uint32(&ctx->stream); /* 16.16 FP */
+                ctx->res->audio_sample_rate = sr_fp >> 16;
+            }
+            stream_skip(&ctx->stream, 2); /* reserved */
+            entry_remaining -= 6;
+
+            /* Walk sub-boxes for esds */
+            while (entry_remaining > 8)
+            {
+                uint32_t sub_len = stream_read_uint32(&ctx->stream);
+                uint32_t sub_id  = stream_read_uint32(&ctx->stream);
+
+                if (sub_len <= 8 || sub_len > entry_remaining)
+                    break;
+
+                if (sub_id == MAKEFOURCC('e','s','d','s'))
+                {
+                    if (!read_chunk_esds(ctx, sub_len))
+                        return false;
+                }
+                else
+                {
+                    stream_skip(&ctx->stream, sub_len - 8);
+                }
+
+                entry_remaining -= sub_len;
+            }
+
+            if (entry_remaining > 0)
+                stream_skip(&ctx->stream, entry_remaining);
+        }
+        else
+        {
+            stream_skip(&ctx->stream, entry_remaining);
+        }
+
+        size_remaining -= entry_size;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+/* Audio sample table parsers — write to audio_* fields in res */
+
+static bool read_chunk_stts_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i;
+
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    if (numentries > MP4V_MAX_STTS)
+        numentries = MP4V_MAX_STTS;
+
+    ctx->res->audio_num_stts = numentries;
+    for (i = 0; i < numentries; i++)
+    {
+        ctx->res->audio_stts[i].sample_count = stream_read_uint32(&ctx->stream);
+        ctx->res->audio_stts[i].sample_delta = stream_read_uint32(&ctx->stream);
+        size_remaining -= 8;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+static bool read_chunk_stsz_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t default_size, numsizes, i, cap;
+
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    default_size = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    numsizes = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    ctx->res->audio_num_samples = numsizes;
+    cap = (numsizes < ctx->res->audio_sample_sizes_cap)
+        ? numsizes : ctx->res->audio_sample_sizes_cap;
+
+    if (default_size != 0)
+    {
+        for (i = 0; i < cap; i++)
+            ctx->res->audio_sample_sizes[i] = default_size;
+    }
+    else
+    {
+        for (i = 0; i < cap; i++)
+        {
+            ctx->res->audio_sample_sizes[i] = stream_read_uint32(&ctx->stream);
+            size_remaining -= 4;
+        }
+        if (numsizes > cap)
+        {
+            stream_skip(&ctx->stream, (numsizes - cap) * 4);
+            size_remaining -= (numsizes - cap) * 4;
+        }
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+static bool read_chunk_stsc_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i;
+
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    if (numentries > MP4V_MAX_STSC)
+        numentries = MP4V_MAX_STSC;
+
+    ctx->res->audio_num_stsc = numentries;
+    for (i = 0; i < numentries; i++)
+    {
+        ctx->res->audio_stsc[i].first_chunk = stream_read_uint32(&ctx->stream);
+        ctx->res->audio_stsc[i].samples_per_chunk = stream_read_uint32(&ctx->stream);
+        ctx->res->audio_stsc[i].sample_desc_index = stream_read_uint32(&ctx->stream);
+        size_remaining -= 12;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+static bool read_chunk_stco_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i, cap;
+
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    cap = (numentries < ctx->res->audio_chunk_offsets_cap)
+        ? numentries : ctx->res->audio_chunk_offsets_cap;
+    ctx->res->audio_num_stco = cap;
+
+    for (i = 0; i < cap; i++)
+    {
+        ctx->res->audio_chunk_offsets[i] = stream_read_uint32(&ctx->stream);
+        size_remaining -= 4;
+    }
+
+    if (numentries > cap)
+    {
+        stream_skip(&ctx->stream, (numentries - cap) * 4);
+        size_remaining -= (numentries - cap) * 4;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+static bool read_chunk_co64_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t numentries, i, cap;
+
+    stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    numentries = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    cap = (numentries < ctx->res->audio_chunk_offsets_cap)
+        ? numentries : ctx->res->audio_chunk_offsets_cap;
+    ctx->res->audio_num_stco = cap;
+
+    for (i = 0; i < cap; i++)
+    {
+        uint32_t hi = stream_read_uint32(&ctx->stream);
+        uint32_t lo = stream_read_uint32(&ctx->stream);
+        (void)hi;
+        ctx->res->audio_chunk_offsets[i] = lo;
+        size_remaining -= 8;
+    }
+
+    if (numentries > cap)
+    {
+        stream_skip(&ctx->stream, (numentries - cap) * 8);
+        size_remaining -= (numentries - cap) * 8;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+/* Audio sample table container */
+static bool read_chunk_stbl_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+
+    while (size_remaining > 8)
+    {
+        uint32_t sub_len = stream_read_uint32(&ctx->stream);
+        uint32_t sub_id  = stream_read_uint32(&ctx->stream);
+
+        if (sub_len <= 1 || sub_len > size_remaining)
+            return false;
+
+        switch (sub_id)
+        {
+            case MAKEFOURCC('s','t','s','d'):
+                if (!read_chunk_stsd_audio(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('s','t','t','s'):
+                if (!read_chunk_stts_audio(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('s','t','s','z'):
+                if (!read_chunk_stsz_audio(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('s','t','s','c'):
+                if (!read_chunk_stsc_audio(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('s','t','c','o'):
+                if (!read_chunk_stco_audio(ctx, sub_len))
+                    return false;
+                break;
+            case MAKEFOURCC('c','o','6','4'):
+                if (!read_chunk_co64_audio(ctx, sub_len))
+                    return false;
+                break;
+            /* No stss for audio — all AAC frames are sync samples */
+            default:
+                stream_skip(&ctx->stream, sub_len - 8);
+                break;
+        }
+
+        size_remaining -= sub_len;
+    }
+
+    return true;
 }
 
 /* stts - time-to-sample table */
@@ -541,14 +926,20 @@ static bool read_chunk_minf(struct mp4_parse_ctx *ctx, size_t chunk_len)
                 stream_skip(&ctx->stream, sub_len - 8);
                 break;
             case MAKEFOURCC('s','m','h','d'):
-                /* Sound media header — skip this track */
+                /* Sound media header — this is an audio track */
                 ctx->in_video_trak = false;
+                ctx->in_audio_trak = true;
                 stream_skip(&ctx->stream, sub_len - 8);
                 break;
             case MAKEFOURCC('s','t','b','l'):
                 if (ctx->in_video_trak)
                 {
                     if (!read_chunk_stbl(ctx, sub_len))
+                        return false;
+                }
+                else if (ctx->in_audio_trak && ctx->want_audio)
+                {
+                    if (!read_chunk_stbl_audio(ctx, sub_len))
                         return false;
                 }
                 else
@@ -576,23 +967,33 @@ static bool read_chunk_mdhd(struct mp4_parse_ctx *ctx, size_t chunk_len)
     version = stream_read_uint32(&ctx->stream); /* version + flags */
     size_remaining -= 4;
 
-    if ((version >> 24) == 0)
     {
-        /* Version 0: 4-byte fields */
-        stream_skip(&ctx->stream, 4); /* creation_time */
-        stream_skip(&ctx->stream, 4); /* modification_time */
-        ctx->res->timescale = stream_read_uint32(&ctx->stream);
-        stream_skip(&ctx->stream, 4); /* duration */
-        size_remaining -= 16;
-    }
-    else
-    {
-        /* Version 1: 8-byte fields */
-        stream_skip(&ctx->stream, 8); /* creation_time */
-        stream_skip(&ctx->stream, 8); /* modification_time */
-        ctx->res->timescale = stream_read_uint32(&ctx->stream);
-        stream_skip(&ctx->stream, 8); /* duration */
-        size_remaining -= 28;
+        uint32_t ts;
+
+        if ((version >> 24) == 0)
+        {
+            /* Version 0: 4-byte fields */
+            stream_skip(&ctx->stream, 4); /* creation_time */
+            stream_skip(&ctx->stream, 4); /* modification_time */
+            ts = stream_read_uint32(&ctx->stream);
+            stream_skip(&ctx->stream, 4); /* duration */
+            size_remaining -= 16;
+        }
+        else
+        {
+            /* Version 1: 8-byte fields */
+            stream_skip(&ctx->stream, 8); /* creation_time */
+            stream_skip(&ctx->stream, 8); /* modification_time */
+            ts = stream_read_uint32(&ctx->stream);
+            stream_skip(&ctx->stream, 8); /* duration */
+            size_remaining -= 28;
+        }
+
+        /* Save timescale to the correct track (video vs audio) */
+        if (ctx->in_audio_trak)
+            ctx->res->audio_timescale = ts;
+        else
+            ctx->res->timescale = ts;
     }
 
     if (size_remaining > 0)
@@ -612,10 +1013,13 @@ static bool read_chunk_hdlr(struct mp4_parse_ctx *ctx, size_t chunk_len)
     handler_type = stream_read_uint32(&ctx->stream);
     size_remaining -= 12;
 
+    ctx->in_video_trak = false;
+    ctx->in_audio_trak = false;
+
     if (handler_type == MAKEFOURCC('v','i','d','e'))
         ctx->in_video_trak = true;
-    else
-        ctx->in_video_trak = false;
+    else if (handler_type == MAKEFOURCC('s','o','u','n'))
+        ctx->in_audio_trak = true;
 
     if (size_remaining > 0)
         stream_skip(&ctx->stream, size_remaining);
@@ -701,6 +1105,79 @@ static bool read_chunk_tkhd(struct mp4_parse_ctx *ctx, size_t chunk_len)
     return true;
 }
 
+/* edts/elst - edit list (extract media_time for encoder priming offset) */
+static bool read_chunk_elst(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+    uint32_t version_flags;
+    uint32_t entry_count, i;
+
+    version_flags = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    entry_count = stream_read_uint32(&ctx->stream);
+    size_remaining -= 4;
+
+    for (i = 0; i < entry_count && size_remaining >= 12; i++)
+    {
+        int32_t media_time;
+
+        if ((version_flags >> 24) == 0)
+        {
+            stream_skip(&ctx->stream, 4); /* segment_duration */
+            media_time = (int32_t)stream_read_uint32(&ctx->stream);
+            stream_skip(&ctx->stream, 4); /* media_rate (16.16) */
+            size_remaining -= 12;
+        }
+        else
+        {
+            stream_skip(&ctx->stream, 8); /* segment_duration (64-bit) */
+            stream_skip(&ctx->stream, 4); /* media_time high */
+            media_time = (int32_t)stream_read_uint32(&ctx->stream);
+            stream_skip(&ctx->stream, 4); /* media_rate */
+            size_remaining -= 20;
+        }
+
+        /* First non-empty edit: media_time > 0 = priming offset */
+        if (i == 0 && media_time > 0)
+            ctx->res->audio_lead_trim = (uint32_t)media_time;
+    }
+
+    if (size_remaining > 0)
+        stream_skip(&ctx->stream, size_remaining);
+
+    return true;
+}
+
+/* edts container — walk for elst */
+static bool read_chunk_edts(struct mp4_parse_ctx *ctx, size_t chunk_len)
+{
+    size_t size_remaining = chunk_len - 8;
+
+    while (size_remaining > 8)
+    {
+        uint32_t sub_len = stream_read_uint32(&ctx->stream);
+        uint32_t sub_id  = stream_read_uint32(&ctx->stream);
+
+        if (sub_len <= 1 || sub_len > size_remaining)
+            return false;
+
+        if (sub_id == MAKEFOURCC('e','l','s','t'))
+        {
+            if (!read_chunk_elst(ctx, sub_len))
+                return false;
+        }
+        else
+        {
+            stream_skip(&ctx->stream, sub_len - 8);
+        }
+
+        size_remaining -= sub_len;
+    }
+
+    return true;
+}
+
 /* trak - track container */
 static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
@@ -708,6 +1185,7 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
 
     /* Reset per-track state */
     ctx->in_video_trak = false;
+    ctx->in_audio_trak = false;
 
     while (size_remaining > 8)
     {
@@ -727,6 +1205,17 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
                 if (!read_chunk_mdia(ctx, sub_len))
                     return false;
                 break;
+            case MAKEFOURCC('e','d','t','s'):
+                if (ctx->in_audio_trak && ctx->want_audio)
+                {
+                    if (!read_chunk_edts(ctx, sub_len))
+                        return false;
+                }
+                else
+                {
+                    stream_skip(&ctx->stream, sub_len - 8);
+                }
+                break;
             default:
                 stream_skip(&ctx->stream, sub_len - 8);
                 break;
@@ -743,6 +1232,10 @@ static bool read_chunk_trak(struct mp4_parse_ctx *ctx, size_t chunk_len)
         ctx->res->display_width = ctx->tkhd_dw;
         ctx->res->display_height = ctx->tkhd_dh;
     }
+
+    /* If this trak had an audio track with mp4a data, mark as found */
+    if (ctx->in_audio_trak && ctx->res->audio_format != 0)
+        ctx->found_audio = true;
 
     return true;
 }
@@ -820,8 +1313,8 @@ static bool read_chunk_moov(struct mp4_parse_ctx *ctx, size_t chunk_len)
         switch (sub_id)
         {
             case MAKEFOURCC('t','r','a','k'):
-                /* Only parse if we haven't found a video track yet */
-                if (!ctx->found_video)
+                /* Parse until we have both video and audio (or all traks) */
+                if (!ctx->found_video || (ctx->want_audio && !ctx->found_audio))
                 {
                     if (!read_chunk_trak(ctx, sub_len))
                         return false;
@@ -849,7 +1342,9 @@ static bool read_chunk_moov(struct mp4_parse_ctx *ctx, size_t chunk_len)
 int mp4v_demux_open(const char *filepath,
                     struct mp4v_demux_res *res,
                     uint32_t *sample_buf, uint32_t sample_cap,
-                    uint32_t *chunk_buf, uint32_t chunk_cap)
+                    uint32_t *chunk_buf, uint32_t chunk_cap,
+                    uint32_t *audio_sample_buf, uint32_t audio_sample_cap,
+                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap)
 {
     struct mp4_parse_ctx ctx;
     int fd;
@@ -863,10 +1358,15 @@ int mp4v_demux_open(const char *filepath,
     res->sample_sizes_cap = sample_cap;
     res->chunk_offsets = chunk_buf;
     res->chunk_offsets_cap = chunk_cap;
+    res->audio_sample_sizes = audio_sample_buf;
+    res->audio_sample_sizes_cap = audio_sample_cap;
+    res->audio_chunk_offsets = audio_chunk_buf;
+    res->audio_chunk_offsets_cap = audio_chunk_cap;
 
     memset(&ctx, 0, sizeof(ctx));
     stream_init(&ctx.stream, fd);
     ctx.res = res;
+    ctx.want_audio = (audio_sample_buf != NULL && audio_chunk_buf != NULL);
 
     /* Walk top-level boxes */
     while (!ctx.stream.eof)
@@ -904,8 +1404,8 @@ int mp4v_demux_open(const char *filepath,
                     res->mdat_offset = (uint32_t)stream_tell(&ctx.stream);
                     res->mdat_len = chunk_len - 8;
                 }
-                /* If we already found video, we're done */
-                if (ctx.found_video)
+                /* If we already found everything we need, we're done */
+                if (ctx.found_video && (!ctx.want_audio || ctx.found_audio))
                     goto done;
                 stream_skip(&ctx.stream, chunk_len - 8);
                 break;
@@ -983,6 +1483,68 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
         {
             if (first_sample_in_chunk + j < res->num_samples)
                 chunk_offset += res->sample_sizes[first_sample_in_chunk + j];
+        }
+    }
+
+    *offset_out = chunk_offset;
+    return 0;
+}
+
+int mp4v_get_audio_sample_offset(const struct mp4v_demux_res *res,
+                                 uint32_t sample_index,
+                                 uint32_t *offset_out,
+                                 uint32_t *size_out)
+{
+    uint32_t chunk_index = 0;
+    uint32_t sample_in_chunk = 0;
+    uint64_t samples_so_far = 0;
+    uint32_t i;
+    uint32_t chunk_offset;
+
+    if (sample_index >= res->audio_num_samples ||
+        sample_index >= res->audio_sample_sizes_cap)
+        return -1;
+
+    *size_out = res->audio_sample_sizes[sample_index];
+
+    for (i = 0; i < res->audio_num_stsc; i++)
+    {
+        uint32_t first_chunk = res->audio_stsc[i].first_chunk - 1;
+        uint32_t spc = res->audio_stsc[i].samples_per_chunk;
+        uint32_t next_first;
+
+        if (i + 1 < res->audio_num_stsc)
+            next_first = res->audio_stsc[i + 1].first_chunk - 1;
+        else
+            next_first = res->audio_num_stco;
+
+        uint32_t chunks_in_run = next_first - first_chunk;
+        uint64_t samples_in_run = (uint64_t)chunks_in_run * spc;
+
+        if (samples_so_far + samples_in_run > sample_index)
+        {
+            uint32_t sample_offset_in_run = sample_index - samples_so_far;
+            chunk_index = first_chunk + (sample_offset_in_run / spc);
+            sample_in_chunk = sample_offset_in_run % spc;
+            break;
+        }
+
+        samples_so_far += samples_in_run;
+    }
+
+    if (chunk_index >= res->audio_num_stco)
+        return -1;
+
+    chunk_offset = res->audio_chunk_offsets[chunk_index];
+
+    {
+        uint32_t first_sample_in_chunk = sample_index - sample_in_chunk;
+        uint32_t j;
+
+        for (j = 0; j < sample_in_chunk; j++)
+        {
+            if (first_sample_in_chunk + j < res->audio_num_samples)
+                chunk_offset += res->audio_sample_sizes[first_sample_in_chunk + j];
         }
     }
 

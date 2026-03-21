@@ -45,6 +45,8 @@
 #include "vpu_h264.h"
 #include "core_alloc.h"
 #include "audio.h"
+#include "video_audio.h"
+#include "video_pcm.h"
 #include "file.h"
 #include "string-extra.h"
 #include "splash.h"
@@ -158,6 +160,10 @@ static struct {
     /* OSD animation (non-blocking, advances per frame) */
     int osd_anim_step;    /* 0 = idle, 1..OSD_ANIM_STEPS = in progress */
     bool osd_anim_show;   /* true = fly-in, false = fly-out */
+
+    /* Audio */
+    bool has_audio;
+    uint32_t audio_sample_rate;
 } ps;
 
 /* Tiny buffers for initial metadata-only demux pass */
@@ -1078,6 +1084,11 @@ static void play_pause(void)
     if (ps.state == PB_PLAYING)
     {
         ps.state = PB_PAUSED;
+        if (ps.has_audio)
+        {
+            video_audio_pause();
+            video_pcm_pause(true);
+        }
         cpu_boost(false);
     }
     else
@@ -1092,6 +1103,11 @@ static void play_pause(void)
         ps.play_start_time = ps.curr_time_ms;
         ps.state = PB_PLAYING;
         cpu_boost(true);
+        if (ps.has_audio)
+        {
+            video_audio_resume();
+            video_pcm_pause(false);
+        }
     }
 
     osd_show();
@@ -1110,6 +1126,8 @@ static void do_seek(int delta_ms)
     if ((uint32_t)t > ps.duration_ms) t = (int32_t)ps.duration_ms;
 
     cpu_boost(true);
+    if (ps.has_audio)
+        video_audio_seek((uint32_t)t);
     seek_to_time((uint32_t)t);
     cpu_boost(false);
     osd_show();
@@ -1327,30 +1345,69 @@ static void button_loop(const char *filepath)
                 ps.need_osd_redraw = false;
             }
 
-            /* Accurate frame pacing using absolute tick targets.
-             * This avoids cumulative rounding error from integer division. */
+            /* Frame pacing: audio-master clock when available,
+             * system-tick based otherwise. */
             {
-                long target_tick = ps.play_start_tick +
-                    (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
-                           * HZ / 1000);
-                long wait = target_tick - current_tick;
+                long wait;
 
-                /* Frame skip: if >66ms behind, decode without display
-                 * to catch up (max 3 frames). */
-                if (wait < -(long)(HZ / 15))
+                if (ps.has_audio)
                 {
-                    int skipped = 0;
-                    while (skipped < 3 && wait < 0)
+                    /* Audio clock = ground truth */
+                    uint64_t audio_pos = video_pcm_get_clock();
+                    uint32_t audio_ms = (uint32_t)(audio_pos * 1000
+                                                 / ps.audio_sample_rate);
+                    int32_t drift = (int32_t)(ps.curr_time_ms - audio_ms);
+
+                    if (drift > 10)
                     {
-                        int sr = decode_one_frame(false);
-                        if (sr <= 0) break;
-                        update_frame_time();
-                        skipped++;
-                        target_tick = ps.play_start_tick +
-                            (long)((uint64_t)(ps.curr_time_ms
-                                              - ps.play_start_time)
-                                   * HZ / 1000);
-                        wait = target_tick - current_tick;
+                        /* Video ahead of audio: wait */
+                        wait = (long)(drift * HZ / 1000);
+                    }
+                    else if (drift < -66)
+                    {
+                        /* Video behind audio: skip frames */
+                        int skipped = 0;
+                        while (skipped < 3 && drift < -33)
+                        {
+                            int sr = decode_one_frame(false);
+                            if (sr <= 0) break;
+                            update_frame_time();
+                            skipped++;
+                            audio_pos = video_pcm_get_clock();
+                            audio_ms = (uint32_t)(audio_pos * 1000
+                                                / ps.audio_sample_rate);
+                            drift = (int32_t)(ps.curr_time_ms - audio_ms);
+                        }
+                        wait = 0;
+                    }
+                    else
+                    {
+                        wait = 0; /* close enough */
+                    }
+                }
+                else
+                {
+                    /* No audio: tick-based pacing (original logic) */
+                    long target_tick = ps.play_start_tick +
+                        (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
+                               * HZ / 1000);
+                    wait = target_tick - current_tick;
+
+                    if (wait < -(long)(HZ / 15))
+                    {
+                        int skipped = 0;
+                        while (skipped < 3 && wait < 0)
+                        {
+                            int sr = decode_one_frame(false);
+                            if (sr <= 0) break;
+                            update_frame_time();
+                            skipped++;
+                            target_tick = ps.play_start_tick +
+                                (long)((uint64_t)(ps.curr_time_ms
+                                                  - ps.play_start_time)
+                                       * HZ / 1000);
+                            wait = target_tick - current_tick;
+                        }
                     }
                 }
 
@@ -1522,6 +1579,7 @@ void video_playback_start(const char *filepath, const char *title)
     size_t dec_size, alloc_size;
     uint8_t *mem, *p;
     uint32_t *sample_buf, *chunk_buf;
+    uint32_t *audio_sample_buf, *audio_chunk_buf;
     uint8_t *dec_buf;
 
     if (!filepath)
@@ -1546,7 +1604,8 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* Step 1: Quick metadata parse to get dimensions */
     if (mp4v_demux_open(filepath, &demux,
-                        pb_tmp_sample, 1, pb_tmp_chunk, 1) < 0)
+                        pb_tmp_sample, 1, pb_tmp_chunk, 1,
+                        NULL, 0, NULL, 0) < 0)
     {
         splashf(HZ * 2, "Cannot open:\n%s", filepath);
         return;
@@ -1584,8 +1643,10 @@ void video_playback_start(const char *filepath, const char *title)
          * 853x480 display for 16:9 content). 115KB is negligible. */
         size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
 
-        alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32
-                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32
+        alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32  /* video stsz */
+                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32  /* video stco */
+                   + MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32 /* audio stsz */
+                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32  /* audio stco */
                    + dec_size + 4096
                    + 256 * 1024 + 32
                    + scale_size;
@@ -1608,6 +1669,12 @@ void video_playback_start(const char *filepath, const char *title)
     chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
     p = (uint8_t *)(chunk_buf + MP4V_MAX_STCO);
 
+    audio_sample_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(audio_sample_buf + MP4V_MAX_SAMPLES);
+
+    audio_chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(audio_chunk_buf + MP4V_MAX_STCO);
+
     dec_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 4096);
     p = dec_buf + dec_size;
 
@@ -1627,10 +1694,12 @@ void video_playback_start(const char *filepath, const char *title)
         p = ps.scale_cr + (sw / 2) * (sh / 2);
     }
 
-    /* Step 2: Re-parse MP4 with full sample tables */
+    /* Step 2: Re-parse MP4 with full sample tables (video + audio) */
     if (mp4v_demux_open(filepath, &demux,
                         sample_buf, MP4V_MAX_SAMPLES,
-                        chunk_buf, MP4V_MAX_STCO) < 0)
+                        chunk_buf, MP4V_MAX_STCO,
+                        audio_sample_buf, MP4V_MAX_SAMPLES,
+                        audio_chunk_buf, MP4V_MAX_STCO) < 0)
     {
         splashf(HZ * 2, "MP4 parse failed");
         goto cleanup;
@@ -1753,6 +1822,17 @@ void video_playback_start(const char *filepath, const char *title)
         cpu_boost(false);
     }
 
+    /* Initialize audio if the MP4 has an audio track */
+    if (demux.audio_format != 0 && demux.audio_codecdata_len > 0)
+    {
+        if (video_audio_init(filepath, &demux) == 0)
+        {
+            ps.has_audio = true;
+            ps.audio_sample_rate = demux.audio_sample_rate;
+            video_audio_play();
+        }
+    }
+
     /* Start playing */
     ps.state = PB_PLAYING;
     cpu_boost(true);
@@ -1765,6 +1845,7 @@ void video_playback_start(const char *filepath, const char *title)
 
 cleanup:
     cpu_boost(false);
+    if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.vid_fd >= 0) { close(ps.vid_fd); ps.vid_fd = -1; }
     ps.demux = NULL;

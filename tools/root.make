@@ -130,6 +130,10 @@ else # core
   include $(APPSDIR)/apps.make
   include $(ROOTDIR)/lib/rbcodec/rbcodec.make
 
+  ifneq (,$(findstring ipod6g, $(MODELNAME)))
+    include $(ROOTDIR)/apps/libfaad_core.make
+  endif
+
   ifeq ($(ENABLEDPLUGINS),yes)
     include $(APPSDIR)/plugins/bitmaps/pluginbitmaps.make
     include $(APPSDIR)/plugins/plugins.make

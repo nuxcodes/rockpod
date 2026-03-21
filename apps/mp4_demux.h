@@ -110,31 +110,72 @@ struct mp4v_demux_res {
     uint32_t cover_offset;  /* 0 if no cover art */
     uint32_t cover_size;
     uint8_t  cover_type;    /* 13=JPEG, 14=PNG */
+
+    /* Audio track (populated when mp4a trak found) */
+    uint32_t audio_format;          /* fourcc: 'mp4a' or 0 if no audio */
+    uint32_t audio_timescale;       /* from audio mdhd */
+    uint32_t audio_sample_rate;     /* from mp4a sample entry */
+    uint16_t audio_channels;        /* from mp4a sample entry */
+    uint8_t  audio_codecdata[64];   /* AudioSpecificConfig from esds */
+    uint32_t audio_codecdata_len;
+    uint32_t audio_lead_trim;       /* encoder priming from edts/elst */
+
+    /* Audio sample sizes (stsz) */
+    uint32_t audio_num_samples;
+    uint32_t *audio_sample_sizes;   /* caller-provided buffer */
+    uint32_t audio_sample_sizes_cap;
+
+    /* Audio time-to-sample (stts) */
+    uint32_t audio_num_stts;
+    struct mp4v_stts_entry audio_stts[MP4V_MAX_STTS];
+
+    /* Audio sample-to-chunk (stsc) */
+    uint32_t audio_num_stsc;
+    struct mp4v_stsc_entry audio_stsc[MP4V_MAX_STSC];
+
+    /* Audio chunk offsets (stco) */
+    uint32_t audio_num_stco;
+    uint32_t *audio_chunk_offsets;  /* caller-provided buffer */
+    uint32_t audio_chunk_offsets_cap;
 };
 
-/* Open and parse an MP4 file, extracting the first H.264 video track.
+/* Open and parse an MP4 file, extracting video and audio tracks.
  *
- * filepath:     path to the .mp4/.m4v file
- * res:          output struct (caller allocates)
- * sample_buf:   buffer for sample_sizes array
- * sample_cap:   number of uint32_t entries in sample_buf
- * chunk_buf:    buffer for chunk_offsets array
- * chunk_cap:    number of uint32_t entries in chunk_buf
+ * filepath:         path to the .mp4/.m4v file
+ * res:              output struct (caller allocates)
+ * sample_buf:       buffer for video sample_sizes array
+ * sample_cap:       number of uint32_t entries in sample_buf
+ * chunk_buf:        buffer for video chunk_offsets array
+ * chunk_cap:        number of uint32_t entries in chunk_buf
+ * audio_sample_buf: buffer for audio sample_sizes (NULL to skip audio)
+ * audio_sample_cap: number of uint32_t entries in audio_sample_buf
+ * audio_chunk_buf:  buffer for audio chunk_offsets (NULL to skip audio)
+ * audio_chunk_cap:  number of uint32_t entries in audio_chunk_buf
  *
- * Returns 0 on success, -1 on error. */
+ * Returns 0 on success (video found), -1 on error.
+ * Audio track is optional — check res->audio_format != 0. */
 int mp4v_demux_open(const char *filepath,
                     struct mp4v_demux_res *res,
                     uint32_t *sample_buf, uint32_t sample_cap,
-                    uint32_t *chunk_buf, uint32_t chunk_cap);
+                    uint32_t *chunk_buf, uint32_t chunk_cap,
+                    uint32_t *audio_sample_buf, uint32_t audio_sample_cap,
+                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap);
 
-/* Get the file offset and size of sample N (0-based).
+/* Get the file offset and size of video sample N (0-based).
  * Returns 0 on success, -1 on error. */
 int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
                            uint32_t sample_index,
                            uint32_t *offset_out,
                            uint32_t *size_out);
 
-/* Check if sample N is a keyframe (sync sample).
+/* Get the file offset and size of audio sample N (0-based).
+ * Returns 0 on success, -1 on error. */
+int mp4v_get_audio_sample_offset(const struct mp4v_demux_res *res,
+                                 uint32_t sample_index,
+                                 uint32_t *offset_out,
+                                 uint32_t *size_out);
+
+/* Check if video sample N is a keyframe (sync sample).
  * Returns true if it's a keyframe or if no stss table exists
  * (meaning all samples are sync samples). */
 bool mp4v_is_keyframe(const struct mp4v_demux_res *res,
