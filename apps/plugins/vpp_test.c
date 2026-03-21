@@ -805,17 +805,34 @@ enum plugin_status plugin_start(const void *parameter)
          * Apple loads from iBoot SRAM (0x890d2dc) — values irrecoverable.
          * But zero timing may prevent compositor from starting.
          * Try reasonable values based on 320x240 LCD panel. */
-        if (comp[0x1EC/4] == 0 && comp[0x1F0/4] == 0) {
-            /* Timing appears uninitialized — write educated guesses.
-             * Format unknown, but non-zero values better than zeros. */
-            comp[0x1EC/4] = 0x00000015;  /* H timing param 1 (~21) */
-            comp[0x1F0/4] = 0x00000005;  /* H timing param 2 (~5) */
-            comp[0x1F4/4] = 0x00000010;  /* V timing param 1 (16, matches POR) */
-            comp[0x1F8/4] = 0x00000003;  /* V timing param 2 (~3) */
-            comp[0x1FC/4] = 0x00000001;  /* enable/mode? */
-            vlog("  Compositor timing: wrote non-zero defaults");
-        } else {
-            vlog("  Compositor timing: preserved (non-zero)");
+        /* Timing regs: Apple loads 5 words from SRAM at 0x0890d2dc.
+         * These are panel-specific values set by iBoot. The SRAM might
+         * still contain the values if Rockbox hasn't overwritten that region.
+         * Try reading from iBoot SRAM first, fall back to guesses. */
+        {
+            volatile uint32_t *iboot_timing = (volatile uint32_t *)0x0890d2dc;
+            vlog("  iBoot SRAM 0x890d2dc: %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)iboot_timing[0], (unsigned long)iboot_timing[1],
+                 (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
+                 (unsigned long)iboot_timing[4]);
+
+            if (iboot_timing[0] != 0 || iboot_timing[1] != 0) {
+                /* iBoot values found! Use them. */
+                comp[0x1EC/4] = iboot_timing[0];
+                comp[0x1F0/4] = iboot_timing[1];
+                comp[0x1F4/4] = iboot_timing[2];
+                comp[0x1F8/4] = iboot_timing[3];
+                comp[0x1FC/4] = iboot_timing[4];
+                vlog("  Compositor timing: loaded from iBoot SRAM!");
+            } else {
+                /* SRAM overwritten — use educated guesses */
+                comp[0x1EC/4] = 0x00000015;
+                comp[0x1F0/4] = 0x00000005;
+                comp[0x1F4/4] = 0x00000010;
+                comp[0x1F8/4] = 0x00000003;
+                comp[0x1FC/4] = 0x00000001;
+                vlog("  Compositor timing: iBoot SRAM empty, using guesses");
+            }
         }
 
         /* Master enable — write but DON'T read back yet.
@@ -871,9 +888,10 @@ enum plugin_status plugin_start(const void *parameter)
         vpp_lcd_cmd(0x202);  /* WRITE_DATA_TO_GRAM */
         vlog("  Panel type 2/3: ILI9320 GRAM window 240x320 + GRAM write");
     } else {
-        /* TYPE 0/1: MIPI DBI 8-bit command set (ILI9340). */
+        /* TYPE 0/1: MIPI DBI 8-bit command set (ILI9340).
+         * COLMOD 0x3A REMOVED (Agent 8: Apple never sends during VPP,
+         * Rockbox boot already set 0x06, overwriting to 0x66 may be harmful). */
         vpp_lcd_config(0x80000c20);  /* P8 mode */
-        vpp_lcd_cmd(0x3A); vpp_lcd_data(0x66);  /* COLMOD: 18-bit RGB+MCU */
         vpp_lcd_cmd(0x2A);  /* CASET */
         vpp_lcd_data(0x00); vpp_lcd_data(0x00);
         vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
@@ -1054,12 +1072,8 @@ enum plugin_status plugin_start(const void *parameter)
     *(volatile uint32_t *)0x38900000 = 0;  /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate bits 7+13 */
 
-    /* Restore LCD_CON to Rockbox value and COLMOD to MCU-only */
+    /* Restore LCD_CON to Rockbox value */
     LCD_CON = saved_lcd_con;
-    vpp_lcd_config(0x80000c20);
-    vpp_lcd_cmd(0x3A);
-    vpp_lcd_data(0x06);  /* restore MCU-only pixel format */
-    vpp_lcd_config(saved_lcd_con);
     vlog("  LCD_CON restored to 0x%08lx", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");

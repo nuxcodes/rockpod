@@ -526,9 +526,9 @@ static bool read_chunk_stco_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
+    ctx->res->audio_num_stco = numentries; /* real count from file */
     cap = (numentries < ctx->res->audio_chunk_offsets_cap)
         ? numentries : ctx->res->audio_chunk_offsets_cap;
-    ctx->res->audio_num_stco = cap;
 
     for (i = 0; i < cap; i++)
     {
@@ -559,9 +559,9 @@ static bool read_chunk_co64_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
+    ctx->res->audio_num_stco = numentries; /* real count from file */
     cap = (numentries < ctx->res->audio_chunk_offsets_cap)
         ? numentries : ctx->res->audio_chunk_offsets_cap;
-    ctx->res->audio_num_stco = cap;
 
     for (i = 0; i < cap; i++)
     {
@@ -759,9 +759,9 @@ static bool read_chunk_stco(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
+    ctx->res->num_stco = numentries; /* real count from file */
     cap = (numentries < ctx->res->chunk_offsets_cap)
         ? numentries : ctx->res->chunk_offsets_cap;
-    ctx->res->num_stco = cap;
 
     for (i = 0; i < cap; i++)
     {
@@ -795,9 +795,9 @@ static bool read_chunk_co64(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
+    ctx->res->num_stco = numentries; /* real count from file */
     cap = (numentries < ctx->res->chunk_offsets_cap)
         ? numentries : ctx->res->chunk_offsets_cap;
-    ctx->res->num_stco = cap;
 
     for (i = 0; i < cap; i++)
     {
@@ -1486,7 +1486,7 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
         samples_so_far += samples_in_run;
     }
 
-    if (chunk_index >= res->num_stco)
+    if (chunk_index >= res->chunk_offsets_cap)
         return -1;
 
     /* Get the chunk's file offset */
@@ -1550,7 +1550,7 @@ int mp4v_get_audio_sample_offset(const struct mp4v_demux_res *res,
         samples_so_far += samples_in_run;
     }
 
-    if (chunk_index >= res->audio_num_stco)
+    if (chunk_index >= res->audio_chunk_offsets_cap)
         return -1;
 
     chunk_offset = res->audio_chunk_offsets[chunk_index];

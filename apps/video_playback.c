@@ -1129,8 +1129,18 @@ static void do_seek(int delta_ms)
 
     cpu_boost(true);
     if (ps.has_audio)
+    {
+        /* Pause PCM during seek to prevent audio from running ahead
+         * while seek_to_time blocks decoding keyframes. */
+        video_pcm_pause(true);
         video_audio_seek((uint32_t)t);
-    seek_to_time((uint32_t)t);
+        seek_to_time((uint32_t)t);
+        video_pcm_pause(false);
+    }
+    else
+    {
+        seek_to_time((uint32_t)t);
+    }
     cpu_boost(false);
     osd_show();
 }
@@ -1583,6 +1593,7 @@ void video_playback_start(const char *filepath, const char *title)
     uint8_t *mem, *p;
     uint32_t *sample_buf, *chunk_buf;
     uint32_t *audio_sample_buf, *audio_chunk_buf;
+    uint32_t vid_samples, vid_chunks, aud_samples, aud_chunks;
     uint8_t *dec_buf;
 
     if (!filepath)
@@ -1605,13 +1616,18 @@ void video_playback_start(const char *filepath, const char *title)
         if (dot) *dot = '\0';
     }
 
-    /* Step 1: Quick metadata parse to get dimensions */
-    if (mp4v_demux_open(filepath, &demux,
-                        pb_tmp_sample, 1, pb_tmp_chunk, 1,
-                        NULL, 0, NULL, 0) < 0)
+    /* Step 1: Quick metadata parse to get dimensions + sample counts.
+     * Uses 1-entry buffers — only needs num_samples/num_stco counts,
+     * not the actual data. Audio buffers included to learn audio counts. */
     {
-        splashf(HZ * 2, "Cannot open:\n%s", filepath);
-        return;
+        static uint32_t tmp_asample[1], tmp_achunk[1];
+        if (mp4v_demux_open(filepath, &demux,
+                            pb_tmp_sample, 1, pb_tmp_chunk, 1,
+                            tmp_asample, 1, tmp_achunk, 1) < 0)
+        {
+            splashf(HZ * 2, "Cannot open:\n%s", filepath);
+            return;
+        }
     }
 
     /* Reject unsupported H.264 profiles */
@@ -1640,16 +1656,26 @@ void video_playback_start(const char *filepath, const char *title)
     /* Stop audio playback to free core memory for decode buffers */
     audio_hard_stop();
 
+    /* Use actual sample/chunk counts from step 1 for dynamic allocation.
+     * No hardcoded caps — handles any movie length (3+ hours). */
+    vid_samples = demux.num_samples;
+    vid_chunks = demux.num_stco;
+    aud_samples = demux.audio_num_samples;
+    aud_chunks = demux.audio_num_stco;
+
+    /* Sanity clamp to prevent absurd allocations on malformed files */
+    if (vid_samples > 2000000) vid_samples = 2000000;
+    if (vid_chunks > 500000) vid_chunks = 500000;
+    if (aud_samples > 2000000) aud_samples = 2000000;
+    if (aud_chunks > 500000) aud_chunks = 500000;
+
     {
-        /* Always allocate scale buffer — PAR from tkhd may require scaling
-         * even when coded dimensions fit in LCD (e.g., 640x480 coded but
-         * 853x480 display for 16:9 content). 115KB is negligible. */
         size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
 
-        alloc_size = MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32  /* video stsz */
-                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32  /* video stco */
-                   + MP4V_MAX_SAMPLES * sizeof(uint32_t) + 32 /* audio stsz */
-                   + MP4V_MAX_STCO * sizeof(uint32_t) + 32  /* audio stco */
+        alloc_size = vid_samples * sizeof(uint32_t) + 32  /* video stsz */
+                   + vid_chunks * sizeof(uint32_t) + 32   /* video stco */
+                   + aud_samples * sizeof(uint32_t) + 32  /* audio stsz */
+                   + aud_chunks * sizeof(uint32_t) + 32   /* audio stco */
                    + dec_size + 4096
                    + 256 * 1024 + 32
                    + scale_size;
@@ -1665,18 +1691,18 @@ void video_playback_start(const char *filepath, const char *title)
     mem = core_get_data(mem_handle);
     p = mem;
 
-    /* Bump-allocate from core block */
+    /* Bump-allocate from core block — sizes match actual file content */
     sample_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
-    p = (uint8_t *)(sample_buf + MP4V_MAX_SAMPLES);
+    p = (uint8_t *)(sample_buf + vid_samples);
 
     chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
-    p = (uint8_t *)(chunk_buf + MP4V_MAX_STCO);
+    p = (uint8_t *)(chunk_buf + vid_chunks);
 
     audio_sample_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
-    p = (uint8_t *)(audio_sample_buf + MP4V_MAX_SAMPLES);
+    p = (uint8_t *)(audio_sample_buf + aud_samples);
 
     audio_chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
-    p = (uint8_t *)(audio_chunk_buf + MP4V_MAX_STCO);
+    p = (uint8_t *)(audio_chunk_buf + aud_chunks);
 
     dec_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 4096);
     p = dec_buf + dec_size;
@@ -1699,10 +1725,10 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* Step 2: Re-parse MP4 with full sample tables (video + audio) */
     if (mp4v_demux_open(filepath, &demux,
-                        sample_buf, MP4V_MAX_SAMPLES,
-                        chunk_buf, MP4V_MAX_STCO,
-                        audio_sample_buf, MP4V_MAX_SAMPLES,
-                        audio_chunk_buf, MP4V_MAX_STCO) < 0)
+                        sample_buf, vid_samples,
+                        chunk_buf, vid_chunks,
+                        audio_sample_buf, aud_samples,
+                        audio_chunk_buf, aud_chunks) < 0)
     {
         splashf(HZ * 2, "MP4 parse failed");
         goto cleanup;
