@@ -207,4 +207,9 @@ bool video_pcm_empty(void)
     return pcm_used() == 0;
 }
 
+uint32_t video_pcm_buffered_samples(void)
+{
+    return pcm_used();
+}
+
 #endif /* IPOD_6G */

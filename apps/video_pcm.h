@@ -38,4 +38,7 @@ bool video_pcm_has_space(int stereo_samples);
 /* Check if ring buffer is empty (all data played). */
 bool video_pcm_empty(void);
 
+/* Return number of stereo samples currently buffered. */
+uint32_t video_pcm_buffered_samples(void);
+
 #endif /* VIDEO_PCM_H */

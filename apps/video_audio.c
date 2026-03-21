@@ -142,6 +142,16 @@ static void audio_decode_thread(void)
     bool running = true;
     bool playing = false;
 
+    /* Boost audio thread priority above the main (video) thread.
+     * Matches mpegplayer pattern (audio_thread.c:471).
+     * With priority 12 vs main's 16, the scheduler always picks
+     * the audio thread first at natural yield points (file I/O,
+     * VPU wait, DMA wait, button_get_w_tmo). */
+#ifdef HAVE_PRIORITY_SCHEDULING
+    int old_priority = thread_set_priority(thread_self(),
+                                           PRIORITY_PLAYBACK - 4);
+#endif
+
     /* Init libfaad (uses static allocation — no heap needed) */
     decoder = NeAACDecOpen();
     if (!decoder)
@@ -297,14 +307,23 @@ static void audio_decode_thread(void)
             }
         }
 
-        /* Yield only during normal playback, not pre-fill.
-         * Pre-fill is bounded by buffer size — no starvation risk.
-         * Skipping yield during pre-fill saves ~90ms (10ms/frame * 9). */
+        /* Yield only when buffer has enough data (>= 250ms).
+         * When buffer is low, keep decoding without yielding to
+         * prevent DMA underruns. With priority boost (12 vs 16),
+         * we run first at every natural yield point. Pre-fill
+         * skips yield entirely (bounded by buffer size). */
         if (audio_is_ready)
-            yield();
+        {
+            uint32_t buffered = video_pcm_buffered_samples();
+            if (buffered >= audio_sample_rate / 4)
+                yield();
+        }
     }
 
 thread_exit:
+#ifdef HAVE_PRIORITY_SCHEDULING
+    thread_set_priority(thread_self(), old_priority);
+#endif
     thread_exit();
 }
 
