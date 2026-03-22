@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v109 ===");
+    vlog("=== VPP Pipeline Test v110 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v109");
+    rb->splashf(HZ, "VPP v110");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1211,25 +1211,28 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 2: COMP+0x3AC already set in compositor init above */
 
     /* Step 3: Panel GRAM commands (between porch and resolution) */
+    /* v110: Use P18+div4 for GRAM commands (0x80000DA9 for type 2/3).
+     * P1: ILI9320 needs 16-bit bus width (P18) for register indices.
+     * P3: bit 0 = clock divider, keep div/4 to match passthrough timing. */
     {
         uint32_t saved_con = LCD_CON;
         if (panel_type >= 2) {
-            vpp_lcd_config(0x80000DA8);
+            vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
             vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-            vpp_lcd_cmd(0x211); vpp_lcd_data(319);  /* v105: was 239 (H/V swapped!) */
+            vpp_lcd_cmd(0x211); vpp_lcd_data(319);
             vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-            vpp_lcd_cmd(0x213); vpp_lcd_data(239);  /* v105: was 319 (H/V swapped!) */
+            vpp_lcd_cmd(0x213); vpp_lcd_data(239);
             vpp_lcd_cmd(0x200); vpp_lcd_data(0);
             vpp_lcd_cmd(0x201); vpp_lcd_data(0);
             vpp_lcd_cmd(0x202);
         } else {
-            vpp_lcd_config(0x80000c20);
+            vpp_lcd_config(0x80000C21);  /* P8 + div/4 */
             vpp_lcd_cmd(0x2A);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);  /* v105: col end=319 (was 0xEF=239) */
+            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
             vpp_lcd_cmd(0x2B);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);  /* v105: row end=239 (was 0x13F=319) */
+            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
             vpp_lcd_cmd(0x2C);
         }
         vpp_lcd_config(saved_con);
@@ -1381,13 +1384,19 @@ enum plugin_status plugin_start(const void *parameter)
         for (int pump = 0; pump < 200; pump++) {
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 1;
-            /* v109: NO LCD_CON switch inside LCD+0x80 bracket!
-             * R10+S1: Apple NEVER changes LCD_CON during passthrough push.
-             * GRAM commands work in P9 because RS pin is bus-width-independent. */
-            if (panel_type >= 2)
-                vpp_lcd_cmd(0x202);
-            else
-                vpp_lcd_cmd(0x2C);
+            /* v110: Use P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: P9 can't deliver 16-bit ILI9320 register indices (serializes as 2×9).
+             * P3: bit 0 = clock divider (div/4), must stay set to match passthrough.
+             * v109 (no switch) = no output. v108 (0x80000DA8, div/2) = garbled. */
+            {
+                uint32_t saved = LCD_CON;
+                vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                if (panel_type >= 2)
+                    vpp_lcd_cmd(0x202);
+                else
+                    vpp_lcd_cmd(0x2C);
+                LCD_CON = saved;
+            }
             *(volatile uint32_t *)(0x38300080) = 0;
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
         }
@@ -1414,25 +1423,31 @@ enum plugin_status plugin_start(const void *parameter)
             /* LCD+0x80 = 1 — START compositor push */
             *(volatile uint32_t *)(0x38300080) = 1;
 
-            /* v109: GRAM commands in P9 mode — NO LCD_CON switch!
-             * R10+S1: Apple NEVER changes LCD_CON inside LCD+0x80 bracket.
-             * RS pin is bus-width-independent — commands work in any mode. */
-            if (panel_type >= 2) {
-                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x202);
-            } else {
-                vpp_lcd_cmd(0x2A);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-                vpp_lcd_cmd(0x2B);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-                vpp_lcd_cmd(0x2C);
+            /* v110: P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: ILI9320 needs 16-bit bus (P18) for register indices.
+             * P3: keep div/4 clock (bit 0=1) to match passthrough timing. */
+            {
+                uint32_t saved = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                    vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                    vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x202);
+                } else {
+                    vpp_lcd_config(0x80000C21);  /* P8 + div/4 */
+                    vpp_lcd_cmd(0x2A);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                    vpp_lcd_cmd(0x2B);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                    vpp_lcd_cmd(0x2C);
+                }
+                LCD_CON = saved;
             }
 
             /* LCD+0x80 = 0 — STOP push */
@@ -1563,22 +1578,27 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable RGB passthrough + compositor */
     *(volatile uint32_t *)(0x38300080) = 0;  /* stop any active push */
     *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off */
+    /* v110: Bus-idle wait after passthrough teardown (P2 agent: panel needs
+     * time to transition out of passthrough-receiving state) */
+    { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
     *(volatile uint32_t *)0x38900000 = 0;    /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
-    /* v109: Restore ALL LCD regs + panel state (R3 agent found shutdown issues) */
+    /* v110: Clear ALL passthrough registers + restore panel state */
     *(volatile uint32_t *)(0x3830007C) = 0;         /* clear passthrough format */
     *(volatile uint32_t *)(0x38300088) = 0;         /* clear RGB DMA enable */
-    *(volatile uint32_t *)(0x38300074) = 0;         /* v109: clear resolution */
-    *(volatile uint32_t *)(0x38300078) = 0;         /* v109: clear porch timing */
-    LCD_CON = saved_lcd_con;
-    /* v109: Re-send ILI9320 Entry Mode to reset panel format after P9 passthrough.
-     * R3 agent: panel received 18-bit P9 data while configured for RGB565.
-     * Without re-sending reg 0x003, panel GRAM state is corrupted. */
+    *(volatile uint32_t *)(0x38300074) = 0;         /* clear resolution */
+    *(volatile uint32_t *)(0x38300078) = 0;         /* clear porch timing */
+    /* Use vpp_lcd_config (with bus-idle wait) instead of raw LCD_CON write */
+    vpp_lcd_config(saved_lcd_con);
+    /* v110: Re-send ILI9320 panel registers to reset state after P9 passthrough.
+     * P2 agent: raw LCD_CON write without bus-idle wait causes garbled commands.
+     * Also re-send reg 0x001 (Driver Output Control) for scan direction. */
     if (panel_type >= 2) {
-        vpp_lcd_config(0x80000DA8);  /* P18 cmd mode (OUTSIDE bracket, OK) */
+        vpp_lcd_config(0x80000DA8);  /* P18 cmd mode (outside bracket, div/2 OK) */
+        vpp_lcd_cmd(0x001); vpp_lcd_data(0x0110);  /* Driver Output Control */
         vpp_lcd_cmd(0x003); vpp_lcd_data(0x0230);  /* Entry Mode = RGB565 */
-        LCD_CON = saved_lcd_con;
+        vpp_lcd_config(saved_lcd_con);
     }
     vlog("  LCD regs restored (CON=%08lx)", (unsigned long)LCD_CON);
 
