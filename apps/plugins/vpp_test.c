@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v99 ===");
+    vlog("=== VPP Pipeline Test v100 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v99");
+    rb->splashf(HZ, "VPP v100");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1266,9 +1266,11 @@ enum plugin_status plugin_start(const void *parameter)
      * Also: add comp+0x030/034/04C/050/054 (per-layer geometry from FUN_0014d93c)
      * in case compositor IS needed in bypass mode. */
 
-    /* Test A: NO compositor passthrough — VPP direct to LCD MCU */
-    *(volatile uint32_t *)(0x38300070) = 0;
-    vlog("  LCD+0x70=0 (VPP direct mode, NO compositor passthrough)");
+    /* LCD+0x70 = 1: Passthrough REQUIRED (agent b11_comp_primer confirmed FATAL without it).
+     * v99 tested LCD+0x70=0 — no change in DMA. Passthrough must be enabled. */
+    *(volatile uint32_t *)(0x38300070) = 1;
+    vlog("  Passthrough enabled: LCD+0x70=%08lx",
+         (unsigned long)*(volatile uint32_t *)(0x38300070));
 
     /* v97: NOW fire compositor GO + comp+0x3AC AFTER LCD passthrough is ready.
      * This ensures the i80 output has a configured LCD to push data to.
@@ -1281,7 +1283,7 @@ enum plugin_status plugin_start(const void *parameter)
          * LOCKS the TRIGCON register — comp+0x200 writes are ignored.
          * v96 log proved: |= 0x82 to TRIGCON was completely ignored after
          * GO auto-cleared (bits didn't even momentarily set). */
-        comp[0x000/4] = 3;  /* bits 0+1 = ENVID + ENVID_F */
+        comp[0x000/4] = 1;  /* GO strobe (auto-clears). Apple writes exactly 1. */
         comp[0x3AC/4] = 0x04004003;
         vlog("  Compositor GO fired: CTRL=%08lx (expect persistent, not auto-clear)",
              (unsigned long)comp[0x000/4]);
