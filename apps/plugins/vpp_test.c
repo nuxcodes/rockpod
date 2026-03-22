@@ -553,8 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v103 ===");
-    /* v103: buffer writes moved to immediately before trigger (Apple ordering) */
+    vlog("=== VPP Pipeline Test v104 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v103");
+    rb->splashf(HZ, "VPP v104");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1018,7 +1017,7 @@ enum plugin_status plugin_start(const void *parameter)
          * complete may cause hardware to output before ready.
          * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
         comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
-        comp[0x00C/4] = 0x000F0F0F;  /* v88: Apple's background color */
+        comp[0x00C/4] = 0x00FF0000;  /* v104: bright RED background */
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
@@ -1374,56 +1373,57 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v102 regressed when LCD+0x80=1 was set BEFORE trigger.
-     * Working order (v101): trigger FIRST, then LCD+0x80=1. */
-
-    /* v102: CONTINUOUS frame pushing during hold period.
-     * LCD+0x80 = 1 opens the compositor→LCD gate.
-     * Keep it open and push frames continuously for 10 seconds. */
-    vlog("Phase 7b: Continuous frame push (10 seconds)");
+    /* v104: Per-frame push loop (Apple's Path B from ROM 0xa5064).
+     * Each iteration: LCD+0x80=1 → GRAM cmds → LCD+0x80=0 → wait idle.
+     * This is how Apple's DriverUpdateThread pushes compositor frames. */
+    vlog("Phase 7b: Per-frame push loop (10 seconds)");
     {
-        volatile uint32_t *lcd = (volatile uint32_t *)0x38300000;
-        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-
-        /* Keep LCD+0x80 = 1 for the entire duration */
-        lcd[0x80/4] = 1;
-        vlog("  LCD+0x80=1 (continuous frame push ON)");
-
         for (int sec = 0; sec < 10; sec++) {
-            uint32_t start = USEC_TIMER;
-            while ((USEC_TIMER - start) < 1000000);
-            uint32_t dma = CLCD_REG(0x010);
-            vlog("  t=%d: CLCD=%08lx DMA=%08lx MIXER=%08lx DISP=%08lx",
-                 sec, (unsigned long)CLCD_CTRL, (unsigned long)dma,
-                 (unsigned long)MIXER_CTRL, (unsigned long)DISP_CTRL);
-            /* v81: decode DMA bits */
-            vlog("      DMA: armed=%d rd=%d scale=%d b6=%d fifo=%d out=%d",
-                 (dma >> 0) & 1, (dma >> 2) & 1, (dma >> 3) & 1,
-                 (dma >> 6) & 1, (dma >> 8) & 1, (dma >> 9) & 1);
-            vlog("      LCD_S=%08lx LCD_CON=%08lx +0x70=%08lx +0x80=%08lx",
-                 (unsigned long)LCD_STATUS, (unsigned long)LCD_CON,
-                 (unsigned long)*(volatile uint32_t *)(0x38300070),
-                 (unsigned long)*(volatile uint32_t *)(0x38300080));
-            vlog("      COMP=%08lx +0x8=%08lx +0x10=%08lx +0x200=%08lx",
-                 (unsigned long)comp[0], (unsigned long)comp[0x008/4],
-                 (unsigned long)comp[0x010/4],
-                 (unsigned long)comp[0x200/4]);
-            if (sec == 0 || sec == 5) {
-                vlog("      GAP +010=%08lx +014=%08lx +018=%08lx +01C=%08lx",
-                     (unsigned long)comp[0x010/4],
-                     (unsigned long)comp[0x014/4],
-                     (unsigned long)comp[0x018/4],
-                     (unsigned long)comp[0x01C/4]);
-                vlog("      GAP +1E0=%08lx +1E4=%08lx +1E8=%08lx",
-                     (unsigned long)comp[0x1E0/4],
-                     (unsigned long)comp[0x1E4/4],
-                     (unsigned long)comp[0x1E8/4]);
-            }
-        }
+            /* Wait for LCD bus idle */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-        /* Stop frame push */
-        lcd[0x80/4] = 0;
-        vlog("  LCD+0x80=0 (frame push OFF)");
+            /* LCD+0x80 = 1 — START compositor push */
+            *(volatile uint32_t *)(0x38300080) = 1;
+
+            /* GRAM commands INSIDE LCD+0x80 bracket (Apple's exact pattern) */
+            {
+                uint32_t saved = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA8);
+                    vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x211); vpp_lcd_data(239);
+                    vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x213); vpp_lcd_data(319);
+                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x202);
+                } else {
+                    vpp_lcd_config(0x80000c20);
+                    vpp_lcd_cmd(0x2A);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                    vpp_lcd_cmd(0x2B);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                    vpp_lcd_cmd(0x2C);
+                }
+                LCD_CON = saved;
+            }
+
+            /* LCD+0x80 = 0 — STOP push */
+            *(volatile uint32_t *)(0x38300080) = 0;
+
+            /* Wait for completion */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+            /* Wait ~1 second */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
+
+            vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
+                 sec, (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)*(volatile uint32_t *)(0x38900010),
+                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
+        }
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
