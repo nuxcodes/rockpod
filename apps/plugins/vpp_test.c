@@ -444,11 +444,27 @@ static void disp_go_lcd(void)
      *   GO: &= 0x3F (clear bits 6-31), |= 0x200, |= 0x1000
      * Bit 1 = interlace enable — v13-v46 had it SET (wrong for progressive!)
      * v46 DISP_MODE was 0x1202 — should be 0x1200 for progressive. */
-    DISP_MODE &= 0xFFFFFFF0;     /* FUN_00168180: clear bits 0-3 (progressive = no bit 1) */
-    DISP_MODE &= ~0x10;          /* FUN_00168240: clear bit 4 (LCD mode) */
-    DISP_MODE &= 0x1F;           /* GO: clear bits 5-31 (defensive: bit 5 stale) */
-    DISP_MODE |= 0x200;          /* GO: bit 9 sync enable */
-    DISP_MODE |= 0x1000;         /* GO: bit 12 pipeline enable */
+    /* v94: Add self-write barriers per Apple ROM pattern.
+     * S5L8702 VPP uses double-buffered registers — writing a register
+     * back to itself (even unchanged) forces the shadow→active latch.
+     * Without this, config changes stay in staging and never take effect!
+     * Agent found Apple does TWO self-writes at ROM 0x168394-0x1683a0
+     * between clearing mode bits and setting enable bits. Missing barriers
+     * could explain DMA non-determinism — stale active register values. */
+
+    /* vpp_set_interlace(0): clear bits 0-3 + self-write barrier */
+    DISP_MODE &= 0xFFFFFFF0;
+    { uint32_t tmp = DISP_MODE; DISP_MODE = tmp; }  /* barrier (ROM 0x168208) */
+
+    /* vpp_set_deinterlace: clear bit 4 */
+    DISP_MODE &= ~0x10;
+
+    /* GO: clear bits 5-31, then TWO self-write barriers before enables */
+    DISP_MODE &= 0x1F;
+    { uint32_t tmp = DISP_MODE; DISP_MODE = tmp; }  /* barrier #1 (ROM 0x168398) */
+    { uint32_t tmp = DISP_MODE; DISP_MODE = tmp; }  /* barrier #2 (ROM 0x1683a0) */
+    DISP_MODE |= 0x200;          /* bit 9 sync enable */
+    DISP_MODE |= 0x1000;         /* bit 12 pipeline enable */
 
     /* DISP+0x034: Agent B proved 0x200 is ONLY for interlaced content.
      * ROM 0x168378-0x168390: strne r1,[r0,#0x34] (r1=0) for progressive,
@@ -474,9 +490,11 @@ static void disp_go_lcd(void)
         }
     }
 
-    /* GO: clear then enable. ROM 0x1683dc-0x1683e8. */
+    /* GO: clear then enable with MMIO fence. ROM 0x1683dc-0x1683e8.
+     * Apple does: STR 0, LDR (fence), ORR #1, STR. The LDR forces the
+     * "0" write to complete on the AHB bus before the "1" write. */
     DISP_CTRL = 0;
-    DISP_CTRL |= 1;
+    { uint32_t tmp = DISP_CTRL; DISP_CTRL = tmp | 1; }  /* read-fence + enable */
 }
 
 /* ---- Test Pattern Generation ---- */
@@ -535,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v93 ===");
+    vlog("=== VPP Pipeline Test v94 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -567,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v93");
+    rb->splashf(HZ, "VPP v94");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -702,7 +720,13 @@ enum plugin_status plugin_start(const void *parameter)
      * Bit 1 = deinterlace path (vpp_set_deinterlace for LCD)
      * Bit 2 = interlace flag (vpp_set_interlace — NOT for progressive!)
      * v1-v47 had 0x07 (all 3 bits) — bit 2 WRONG for progressive LCD. */
-    MIXER_L5_EN = 0x03;  /* v85b: reverted — 0x02 dropped DMA bit 2 */
+    /* v94: Apple's vpp_set_interlace does BIC #4 then self-write on MIXER+0x004.
+     * vpp_set_deinterlace does BIC #2 then ORR #2. vtable[0x20] does ORR #1.
+     * Replicate with self-write barriers between each RMW step. */
+    MIXER_L5_EN = (MIXER_L5_EN & ~0x4);  /* vpp_set_interlace(0): clear bit 2 */
+    { uint32_t tmp = MIXER_L5_EN; MIXER_L5_EN = tmp; }  /* barrier */
+    MIXER_L5_EN = (MIXER_L5_EN & ~0x2) | 0x2;  /* vpp_set_deinterlace(1): set bit 1 */
+    MIXER_L5_EN = MIXER_L5_EN | 0x1;  /* vtable[0x20](1): set bit 0 */
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
