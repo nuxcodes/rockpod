@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v101 ===");
+    vlog("=== VPP Pipeline Test v102 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v101");
+    rb->splashf(HZ, "VPP v102");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1413,12 +1413,18 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("  Pipeline running — LOOK AT LCD NOW!");
 
-    vlog("Phase 7b: Holding 10 seconds");
-    vlog("  PWRCON0=%08lx PWRCON1=%08lx LCD+0x80=%08lx",
-         (unsigned long)PWRCON(0), (unsigned long)PWRCON(1),
-         (unsigned long)*(volatile uint32_t *)(0x38300080));
+    /* v102: CONTINUOUS frame pushing during hold period.
+     * LCD+0x80 = 1 opens the compositor→LCD gate.
+     * Keep it open and push frames continuously for 10 seconds. */
+    vlog("Phase 7b: Continuous frame push (10 seconds)");
     {
+        volatile uint32_t *lcd = (volatile uint32_t *)0x38300000;
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+
+        /* Keep LCD+0x80 = 1 for the entire duration */
+        lcd[0x80/4] = 1;
+        vlog("  LCD+0x80=1 (continuous frame push ON)");
+
         for (int sec = 0; sec < 10; sec++) {
             uint32_t start = USEC_TIMER;
             while ((USEC_TIMER - start) < 1000000);
@@ -1450,6 +1456,10 @@ enum plugin_status plugin_start(const void *parameter)
                      (unsigned long)comp[0x1E8/4]);
             }
         }
+
+        /* Stop frame push */
+        lcd[0x80/4] = 0;
+        vlog("  LCD+0x80=0 (frame push OFF)");
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
