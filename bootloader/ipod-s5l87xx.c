@@ -777,35 +777,7 @@ void main(void)
 
     usec_timer_init();
 
-#ifdef IPOD_6G
-    /* Capture iBoot compositor timing from DRAM BEFORE bss_init() zeros it.
-     * Address 0x0890d2dc: 5 x uint32 used by RetailOS FUN_000d972c to
-     * configure compositor (0x38900000) regs +0x1EC-0x1FC.
-     * No ROM function writes here — iBoot populates it.
-     * BSS starts at 0x08800000 and WILL zero this area.
-     * Also capture compositor HW regs and iBoot's PWRCON(0) state. */
-    volatile uint32_t *iboot_dram = (volatile uint32_t *)0x0890d2dc;
-    uint32_t comp_timing[5];
-    comp_timing[0] = iboot_dram[0];
-    comp_timing[1] = iboot_dram[1];
-    comp_timing[2] = iboot_dram[2];
-    comp_timing[3] = iboot_dram[3];
-    comp_timing[4] = iboot_dram[4];
-    volatile uint32_t *comp_hw = (volatile uint32_t *)0x38900000;
-    uint32_t comp_hw_timing[5] = {0xDEAD0001, 0xDEAD0002, 0xDEAD0003,
-                                   0xDEAD0004, 0xDEAD0005};
-    uint32_t comp_hw_ctrl = 0xDEADC0DE;
-    uint32_t pwrcon0_boot = *(volatile uint32_t *)0x3C500048; /* PWRCON(0) */
-    /* Only read compositor HW if its clock is enabled (bits 7+13 clear) */
-    if ((pwrcon0_boot & 0x2080) != 0x2080) {
-        comp_hw_ctrl = comp_hw[0];
-        comp_hw_timing[0] = comp_hw[0x1EC/4];
-        comp_hw_timing[1] = comp_hw[0x1F0/4];
-        comp_hw_timing[2] = comp_hw[0x1F4/4];
-        comp_hw_timing[3] = comp_hw[0x1F8/4];
-        comp_hw_timing[4] = comp_hw[0x1FC/4];
-    }
-#endif
+    /* diagnostic capture removed */
 
 #ifdef S5L87XX_DEVELOPMENT_BOOTLOADER
     piezo_seq(alive);
@@ -880,30 +852,7 @@ void main(void)
     printf("Rockbox boot loader");
     printf("Version: %s", rbversion);
 
-#ifdef IPOD_6G
-    /* Display compositor timing captured before bss_init() */
-    printf("COMP TIMING (iBoot DRAM 0x890d2dc):");
-    printf(" %08lx %08lx %08lx",
-           (unsigned long)comp_timing[0],
-           (unsigned long)comp_timing[1],
-           (unsigned long)comp_timing[2]);
-    printf(" %08lx %08lx",
-           (unsigned long)comp_timing[3],
-           (unsigned long)comp_timing[4]);
-    printf("COMP HW (0x38900000) P0=%08lx:",
-           (unsigned long)pwrcon0_boot);
-    printf(" C=%08lx", (unsigned long)comp_hw_ctrl);
-    printf(" 1EC=%08lx 1F0=%08lx",
-           (unsigned long)comp_hw_timing[0],
-           (unsigned long)comp_hw_timing[1]);
-    printf(" 1F4=%08lx 1F8=%08lx",
-           (unsigned long)comp_hw_timing[2],
-           (unsigned long)comp_hw_timing[3]);
-    printf(" 1FC=%08lx", (unsigned long)comp_hw_timing[4]);
-    lcd_update();
-    /* Hold display for 15 seconds so user can photograph */
-    sleep(15 * HZ);
-#endif
+    /* diagnostic display removed */
 
     backlight_init(); /* Turns on the backlight */
 
@@ -1023,37 +972,7 @@ void main(void)
         fatal_error(ERR_RB);
     }
 
-#ifdef IPOD_6G
-    /* Save compositor timing to file so the main firmware plugin can read it.
-     * The DRAM at 0x0890D2DC is zeroed by bss_init() and later overwritten
-     * by the audio buffer, so the plugin cannot read it directly.
-     * Format: 5 words DRAM capture, 5 words HW capture, 1 word PWRCON(0),
-     *         1 word HW CTRL = 48 bytes total. */
-    {
-        int fd = open("/iPod_Control/Device/comp_timing.bin",
-                      O_WRONLY | O_CREAT | O_TRUNC, 0666);
-        if (fd >= 0) {
-            uint32_t buf[12];
-            buf[0] = comp_timing[0];
-            buf[1] = comp_timing[1];
-            buf[2] = comp_timing[2];
-            buf[3] = comp_timing[3];
-            buf[4] = comp_timing[4];
-            buf[5] = comp_hw_timing[0];
-            buf[6] = comp_hw_timing[1];
-            buf[7] = comp_hw_timing[2];
-            buf[8] = comp_hw_timing[3];
-            buf[9] = comp_hw_timing[4];
-            buf[10] = pwrcon0_boot;
-            buf[11] = comp_hw_ctrl;
-            write(fd, buf, sizeof(buf));
-            close(fd);
-            printf("Timing saved to comp_timing.bin");
-        } else {
-            printf("WARN: can't save timing file");
-        }
-    }
-#endif
+    /* comp_timing.bin save removed */
 
     printf("Loading Rockbox...");
     unsigned char *loadbuffer = (unsigned char *)DRAM_ORIG;

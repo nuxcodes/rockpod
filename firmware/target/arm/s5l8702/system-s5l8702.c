@@ -434,6 +434,9 @@ static void syscon_preinit(void)
                    (1 << CLOCKGATE_SM1) |
                    (1 << 7) |   /* compositor clock A — preserve iBoot state */
                    (1 << 13));  /* compositor clock B — Samsung FIMD can't cold-start */
+    /* Disconnect compositor from LCD bus BEFORE lcd_init_device() runs,
+     * to prevent bus deadlock if compositor is actively driving LCD */
+    *(volatile uint32_t *)(0x38300070) = 0;
     PWRCON_APB = ~((1 << (CLOCKGATE_TIMER - 32)) |
                    (1 << (CLOCKGATE_GPIO - 32)));
 #endif
