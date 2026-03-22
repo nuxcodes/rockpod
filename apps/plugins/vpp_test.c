@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v107 ===");
+    vlog("=== VPP Pipeline Test v108 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v107");
+    rb->splashf(HZ, "VPP v108");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1193,13 +1193,11 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent)
-     * v107: Switch from P9 (0x81100DB9) to P16 (0x80100DB1) for passthrough.
-     * Z2 agent proved: P9 serialization corrupts colors identically regardless
-     * of BG_COLOR value (GRAM=0x0BFF in both v105+v106). Rockbox uses P16
-     * (0x80100DB0) for ALL frame data on all 4 iPod 6G panel types.
-     * P16 = 16-bit parallel, D[17:10,8:1], one transfer per pixel.
-     * Bit 0 added for passthrough RGB enable (Apple uses bit 0 too). */
-    LCD_CON = 0x80100DB1;  /* P16 + passthrough (was 0x81100DB9 = P9) */
+     * v108: REVERT to Apple's P9 mode. v107 proved P16 (0x80100DB1) is WRONG
+     * for compositor passthrough — P16 is designed for 16-bit RGB565 CPU data,
+     * compositor outputs 18-bit RGB666. P16 produced WHITE (Q2 agent confirmed).
+     * Apple's P9 Type-II serializes 18-bit RGB666 as 2x9-bit on D[17:9]. */
+    LCD_CON = 0x81100DB9;  /* Apple's P9 passthrough (RESTORED from v105) */
     *(volatile uint32_t *)(0x38300088) = 0x01000000;
     *(volatile uint32_t *)(0x38300020) = 0x33;  /* NEW — was missing! */
     *(volatile uint32_t *)(0x3830007C) = 0x00000402;
