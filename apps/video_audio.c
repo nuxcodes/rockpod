@@ -217,6 +217,12 @@ static void audio_decode_thread(void)
                               (uint8_t *)audio_demux->audio_codecdata,
                               audio_demux->audio_codecdata_len,
                               &sample_rate_out, &channels_out);
+                /* Always resume decoding after seek, regardless of
+                 * prior EOF or pause state. Without this, seeking
+                 * after audio EOF leaves the thread stuck (playing=
+                 * false from EOF, never restored). */
+                playing = true;
+                audio_is_playing = true;
                 break;
             }
 
