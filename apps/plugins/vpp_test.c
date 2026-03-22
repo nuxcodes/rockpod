@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v102 ===");
+    vlog("=== VPP Pipeline Test v103 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v102");
+    rb->splashf(HZ, "VPP v103");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1374,19 +1374,8 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v102: Open compositor output gate BEFORE VPP trigger.
-     * v101 proved LCD+0x80=1 makes compositor push to LCD.
-     * Theory: if output gate is open when trigger fires,
-     * the downstream demand will propagate upstream and
-     * CLCD DMA will finally start reading. */
-    {
-        volatile uint32_t *lcd = (volatile uint32_t *)0x38300000;
-        /* Wait for LCD bus idle */
-        { int t = 100000; while ((lcd[0x8C/4] & 3) && --t > 0); }
-        /* Open compositor output gate BEFORE trigger */
-        lcd[0x80/4] = 1;
-        vlog("  LCD+0x80=1 BEFORE trigger (output gate open)");
-    }
+    /* v102 regressed when LCD+0x80=1 was set BEFORE trigger.
+     * Working order (v101): trigger FIRST, then LCD+0x80=1. */
 
     /* v102: CONTINUOUS frame pushing during hold period.
      * LCD+0x80 = 1 opens the compositor→LCD gate.
