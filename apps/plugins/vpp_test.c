@@ -810,11 +810,11 @@ enum plugin_status plugin_start(const void *parameter)
             for (volatile int d2 = 0; d2 < 50000; d2++);
             vlog("  Compositor reset done (cold POR path)");
         } else {
-            vlog("  Compositor preserved — skipping reset");
+            vlog("  Compositor preserved — skipping ALL compositor init");
         }
 
-        /* Dump boot state AFTER reset (should be POR defaults) */
-        vlog("  --- Compositor boot state (0x38900000) ---");
+        /* Dump compositor state (iBoot's live state or POR defaults) */
+        vlog("  --- Compositor state (0x38900000) ---");
         vlog("    CTRL=0x%08lx CFG=0x%08lx MODE=0x%08lx",
              (unsigned long)comp[0], (unsigned long)comp[0x008/4],
              (unsigned long)comp[0x00C/4]);
@@ -887,7 +887,9 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
              (unsigned long)comp[0]);
 
-        /* v85b: POR dump + diagnostics — capture to buffer, log AFTER critical section */
+        if (!comp_alive) {
+        /* v88: Full compositor init — only for cold POR path.
+         * When compositor is ALIVE from iBoot, skip ALL of this. */
 
         /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
@@ -1015,6 +1017,7 @@ enum plugin_status plugin_start(const void *parameter)
         /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
          * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
         comp[0x3AC/4] = 0x04004003;
+        } /* end if (!comp_alive) */
     }
     vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
          (unsigned long)*(volatile uint32_t *)0x38900000,
