@@ -1161,19 +1161,9 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired");
 
-    /* v88: Fire i80 software trigger — THE KEY ADDITION.
-     * Samsung FIMD i80 mode needs initial SW trigger to start
-     * pushing frames to LCD MCU bus. Apple relies on iBoot
-     * having started this cycle. Our cold-start must do it.
-     * comp+0x200 bit 0 = SW trigger command (auto-clears on fire). */
-    {
-        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-        vlog("  comp+0x200 BEFORE SW trigger: 0x%08lx",
-             (unsigned long)comp[0x200/4]);
-        comp[0x200/4] |= 1;  /* FIRE i80 SW trigger */
-        vlog("  comp+0x200 AFTER  SW trigger: 0x%08lx",
-             (unsigned long)comp[0x200/4]);
-    }
+    /* v90: SW trigger REMOVED. comp+0x200 bit 0 tested in v88 —
+     * persisted (not strobe), DMA stayed 0x000. Apple never sets
+     * bit 0 in compositor_init. Not the fix. */
 
     vlog("  Pipeline running — LOOK AT LCD NOW!");
 
