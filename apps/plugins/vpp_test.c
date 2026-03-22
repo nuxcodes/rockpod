@@ -391,29 +391,32 @@ static void disp_init_lcd(void)
     DISP_REG(0x3CC) = 0x00018000;
     DISP_REG(0x3D4) = 0x00000008;
 
-    /* Gamma LUT (FUN_000c9fe0 param=2) — the LAST missing gap */
+    /* Gamma LUT (FUN_000c9fe0 param=1 for LCD, NOT param=2/TV!)
+     * v91: CORRECTED — previous versions used TV gamma values (param=2).
+     * Agent RE confirmed: vpp_disp_init calls compositor_layer_config(1) for LCD.
+     * DISP+0x070 = 0x25d (LCD) vs 0x281 (TV). Curves differ slightly. */
     /* Zero 3 banks first */
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;  /* 11 words */
     for (int i = 0x080; i <= 0x090; i += 4) DISP_REG(i) = 0;  /* 5 words */
     for (int i = 0x0C0; i <= 0x0D0; i += 4) DISP_REG(i) = 0;  /* 5 words */
-    /* Gamma control register */
-    DISP_REG(0x070) = 0x281;
-    /* Gamma curve 1 (7 entries) */
+    /* Gamma control register — LCD mode */
+    DISP_REG(0x070) = 0x25d;
+    /* Gamma curve 1 (7 entries) — LCD values */
     DISP_REG(0x094) = 1;
     DISP_REG(0x098) = 7;
-    DISP_REG(0x09C) = 0x15;
-    DISP_REG(0x0A0) = 0x2A;
-    DISP_REG(0x0A4) = 0x44;
-    DISP_REG(0x0A8) = 0x57;
-    DISP_REG(0x0AC) = 0x5F;
-    /* Gamma curve 2 (7 entries) */
-    DISP_REG(0x0D4) = 2;
-    DISP_REG(0x0D8) = 0x0A;
-    DISP_REG(0x0DC) = 0x1D;
-    DISP_REG(0x0E0) = 0x3C;
-    DISP_REG(0x0E4) = 0x5F;
-    DISP_REG(0x0E8) = 0x7B;
-    DISP_REG(0x0EC) = 0x86;
+    DISP_REG(0x09C) = 0x14;
+    DISP_REG(0x0A0) = 0x28;
+    DISP_REG(0x0A4) = 0x3f;
+    DISP_REG(0x0A8) = 0x52;
+    DISP_REG(0x0AC) = 0x5a;
+    /* Gamma curve 2 (7 entries) — LCD values */
+    DISP_REG(0x0D4) = 1;
+    DISP_REG(0x0D8) = 0x09;
+    DISP_REG(0x0DC) = 0x1c;
+    DISP_REG(0x0E0) = 0x39;
+    DISP_REG(0x0E4) = 0x5a;
+    DISP_REG(0x0E8) = 0x74;
+    DISP_REG(0x0EC) = 0x7e;
 
     /* Apply gamma (commit) */
     DISP_GAMMA_COMMIT = 0;
@@ -532,7 +535,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v90 ===");
+    vlog("=== VPP Pipeline Test v91 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -564,7 +567,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v90");
+    rb->splashf(HZ, "VPP v91");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -574,24 +577,58 @@ enum plugin_status plugin_start(const void *parameter)
      * count so the worker has nothing to process. */
     rb->lcd_scroll_stop();
 
-    /* === Phase 2: Enable VPP clocks === */
-    vlog("Phase 2: Enabling clocks");
+    /* === Phase 2: Enable clocks + full VPP reset === */
+    vlog("Phase 2: Enabling clocks + VPP block reset");
 
     uint32_t pwrcon_before = PWRCON(0);
     vlog("PWRCON0 before: 0x%08lx", (unsigned long)pwrcon_before);
 
     vpp_svid_enable(true);
-    { volatile int d; for (d = 0; d < 500000; d++); } /* busy-wait, no yield */
+    { volatile int d; for (d = 0; d < 500000; d++); } /* PLL settle */
+
+    /* v91: Explicit VPP block reset — gate→ungate cycle.
+     * RetailOS may leave VPP blocks in mid-frame state with active DMA,
+     * stale buffer addresses, and running FSMs. Simply enabling clocks
+     * and writing new values may not fully reset internal state.
+     * Apple's vpp_power_onoff(0) does: disable each block, wait idle,
+     * then gate clocks. We replicate the reset-by-clock-gating here. */
+
+    /* Step 1: Ungate VPP+compositor clocks to access blocks */
+    PWRCON(0) &= ~(0x1C000 | 0x2080);
+    { volatile int d; for (d = 0; d < 100000; d++); }
+
+    /* Step 2: Capture stale state for diagnostics */
+    vlog("  Stale VPP: CLCD=%08lx MIXER=%08lx DISP=%08lx",
+         (unsigned long)CLCD_CTRL, (unsigned long)MIXER_CTRL,
+         (unsigned long)DISP_CTRL);
+    vlog("  Stale DISP: MODE=%08lx CSC=%08lx +0x3C=%08lx",
+         (unsigned long)DISP_MODE, (unsigned long)DISP_CSC_MODE,
+         (unsigned long)DISP_TRIGGER);
+    vlog("  Stale DMA: %08lx", (unsigned long)CLCD_REG(0x010));
+
+    /* Step 3: Disable all VPP blocks and wait for idle */
+    CLCD_CTRL &= ~1;
+    MIXER_CTRL &= ~1;
+    DISP_CTRL &= ~1;
+    DISP_TRIGGER &= ~0xF;  /* clear latch bits */
+    { volatile int d; for (d = 0; d < 100000; d++); }
+
+    /* Step 4: Gate ALL clocks (VPP + compositor) — full power-down */
+    PWRCON(0) |= (0x1C000 | 0x2080);
+    { volatile int d; for (d = 0; d < 100000; d++); }
+
+    /* Step 5: Ungate — blocks now at POR-equivalent state */
     vpp_clocks_enable(true);
+    PWRCON(0) &= ~0x2080;
+    { volatile int d; for (d = 0; d < 200000; d++); }
 
     uint32_t pwrcon_after = PWRCON(0);
-    vlog("PWRCON0 after:  0x%08lx", (unsigned long)pwrcon_after);
+    vlog("PWRCON0 after reset:  0x%08lx", (unsigned long)pwrcon_after);
     vlog("Bits 14-16 cleared: %s",
          ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
-
-    /* v88: compositor clocks EARLY (v76 gold pattern) */
-    PWRCON(0) &= ~0x2080;
-    vlog("PWRCON 7+13 enabled (compositor clocks)");
+    vlog("VPP after reset: CLCD=%08lx MIXER=%08lx DISP=%08lx DMA=%08lx",
+         (unsigned long)CLCD_CTRL, (unsigned long)MIXER_CTRL,
+         (unsigned long)DISP_CTRL, (unsigned long)CLCD_REG(0x010));
 
     int panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
@@ -786,15 +823,12 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v88: Detect if bootloader preserved compositor from iBoot.
-         * If comp+0x008 shows iBoot's config, skip reset — use directly.
-         * If cold POR, do gate/ungate reset then full init. */
-        PWRCON(0) &= ~0x2080;  /* ensure compositor clocks ON */
-        for (volatile int d = 0; d < 50000; d++);
+        /* v91: Compositor clocks already enabled in Phase 2 reset.
+         * iBoot NEVER configures compositor (proven v89). Always cold POR. */
 
         bool comp_alive = (comp[0x008/4] == 0x41118101);
         vlog("  Compositor: %s (cfg=0x%08lx)",
-             comp_alive ? "ALIVE from iBoot" : "cold POR",
+             comp_alive ? "ALIVE (unexpected!)" : "cold POR",
              (unsigned long)comp[0x008/4]);
 
         if (!comp_alive) {
@@ -1161,9 +1195,32 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired");
 
-    /* v90: SW trigger REMOVED. comp+0x200 bit 0 tested in v88 —
-     * persisted (not strobe), DMA stayed 0x000. Apple never sets
-     * bit 0 in compositor_init. Not the fix. */
+    /* v91: Rapid DMA poll — catch transient states.
+     * DMA might briefly activate then stall due to backpressure. */
+    {
+        uint32_t dma_snap[20];
+        for (int i = 0; i < 20; i++) {
+            dma_snap[i] = CLCD_REG(0x010);
+            for (volatile int d = 0; d < 5000; d++); /* ~20us between samples */
+        }
+        vlog("  DMA rapid poll (20 samples, ~20us apart):");
+        vlog("    %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)dma_snap[0], (unsigned long)dma_snap[1],
+             (unsigned long)dma_snap[2], (unsigned long)dma_snap[3],
+             (unsigned long)dma_snap[4]);
+        vlog("    %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)dma_snap[5], (unsigned long)dma_snap[6],
+             (unsigned long)dma_snap[7], (unsigned long)dma_snap[8],
+             (unsigned long)dma_snap[9]);
+        vlog("    %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)dma_snap[10], (unsigned long)dma_snap[11],
+             (unsigned long)dma_snap[12], (unsigned long)dma_snap[13],
+             (unsigned long)dma_snap[14]);
+        vlog("    %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)dma_snap[15], (unsigned long)dma_snap[16],
+             (unsigned long)dma_snap[17], (unsigned long)dma_snap[18],
+             (unsigned long)dma_snap[19]);
+    }
 
     vlog("  Pipeline running — LOOK AT LCD NOW!");
 
