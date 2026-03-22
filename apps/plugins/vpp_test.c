@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v96 ===");
+    vlog("=== VPP Pipeline Test v97 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v96");
+    rb->splashf(HZ, "VPP v97");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1102,17 +1102,17 @@ enum plugin_status plugin_start(const void *parameter)
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
 
-        /* Master GO strobe (auto-clears). */
-        comp[0x000/4] = 1;
-
-        /* +0x3AC: Apple writes this AFTER master enable, in the CALLER
-         * (FUN_0014deec at ROM 0x14df2c). Must be after GO. */
-        comp[0x3AC/4] = 0x04004003;
+        /* v97: DO NOT fire compositor GO yet.
+         * Theory: LCD passthrough must be established BEFORE compositor GO,
+         * so the i80 output has somewhere to push data.
+         * Apple's order: compositor_init(GO) → LCD passthrough. But Apple's
+         * compositor runs for SECONDS before VPP data, outputting background.
+         * We fire GO and trigger in microseconds — not enough time.
+         * NEW ORDER: set up everything EXCEPT GO, then LCD passthrough,
+         * then GO, then delay for initial frame, then VPP trigger. */
         } /* end if (!comp_alive) */
     }
-    vlog("  Compositor pass 1: CTRL=0x%08lx CFG=0x%08lx",
-         (unsigned long)*(volatile uint32_t *)0x38900000,
-         (unsigned long)*(volatile uint32_t *)0x38900008);
+    vlog("  Compositor configured (GO deferred to after LCD passthrough)");
 
     /* v65: Post-GO gap register probe.
      * After GO strobe, status registers should now reflect running state.
@@ -1236,14 +1236,39 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
 
-    /* Step 5: Passthrough enable — MUST BE LAST */
+    /* Step 5: Passthrough enable — MUST BE LAST of LCD setup */
     *(volatile uint32_t *)(0x38300070) = 1;
     vlog("  Passthrough enabled: LCD+0x70=%08lx",
          (unsigned long)*(volatile uint32_t *)(0x38300070));
 
-    /* === Phase 7: DISP GO — LAST VPP operation ===
-     * Marathon batch 5: VPP outputs directly via ENVID, no compositor needed.
-     * DISP GO is the last step per Apple's FUN_00168450 flow. */
+    /* v97: NOW fire compositor GO + comp+0x3AC AFTER LCD passthrough is ready.
+     * This ensures the i80 output has a configured LCD to push data to.
+     * Then wait 200ms for compositor to output initial background frame(s). */
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+        /* Fire GO */
+        comp[0x000/4] = 1;
+        comp[0x3AC/4] = 0x04004003;
+        vlog("  Compositor GO fired (after LCD passthrough)");
+        vlog("  comp+0x010 before delay: %08lx", (unsigned long)comp[0x010/4]);
+
+        /* Wait 200ms for compositor to output initial background frame(s).
+         * In Apple's flow, compositor runs for SECONDS before VPP data.
+         * This gives the i80 interface time to initialize. */
+        {
+            uint32_t start = USEC_TIMER;
+            while ((USEC_TIMER - start) < 200000);  /* 200ms */
+        }
+        vlog("  comp+0x010 after 200ms: %08lx", (unsigned long)comp[0x010/4]);
+        vlog("  comp+0x200 after 200ms: %08lx", (unsigned long)comp[0x200/4]);
+
+        /* Re-fire i80 strobe after delay */
+        comp[0x200/4] |= 0x80;
+        { volatile int d; for (d = 0; d < 10000; d++); }
+        vlog("  comp+0x200 after re-strobe: %08lx", (unsigned long)comp[0x200/4]);
+    }
+
+    /* === Phase 7: DISP GO — LAST VPP operation === */
     vlog("Phase 7: DISP GO + trigger");
     disp_go_lcd();
     vlog("  DISP GO: CTRL=0x%08lx MODE=0x%08lx",
