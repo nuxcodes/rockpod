@@ -554,6 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     log_open();
     vlog("=== VPP Pipeline Test v103 ===");
+    /* v103: buffer writes moved to immediately before trigger (Apple ordering) */
 
     uint32_t saved_lcd_con = 0;
 
@@ -777,24 +778,12 @@ enum plugin_status plugin_start(const void *parameter)
      * bits here for video layer 5. Those go to MIXER+0x008. The 0x200 was
      * for layers 0-3 only. Removed. mixer_init already zeroed it. */
 
-    /* Buffer addresses */
-    CLCD_Y_ADDR  = (uint32_t)y_plane;
-    CLCD_CB_ADDR = (uint32_t)cb_plane;
-    CLCD_CR_ADDR = (uint32_t)cr_plane;
-    CLCD_CLEAR34 = 0;
-
-    /* CLCD +0x03C/+0x040: DO NOT WRITE here! These are filter config regs
-     * (tap count=0x40, precision=0x10), set during clcd_init(). Writing
-     * src_w/src_h here CORRUPTS the scaler filter pipeline. Agent found:
-     * Apple (FUN_00167288) writes 0x40/0x10 at init, never per-frame.
-     * Actual source dimensions go to +0x05C/+0x060 (CLCD_SRC_W/SRC_H).
-     * BUG WAS PRESENT IN ALL VERSIONS v1-v24! */
-
-    /* YUV mode and strides */
-    CLCD_YUV_MODE    = 1;          /* planar 4:2:0 */
-    CLCD_LUMA_STRIDE = src_w;
-    CLCD_CHROMA_STRIDE = src_w / 2;
-    CLCD_YUV_ENABLE  = 1;
+    /* v103: Buffer addresses, strides, YUV mode MOVED to immediately
+     * before trigger (Phase 7) to match Apple's vtable[0x24] ordering.
+     * Agent b14_vtable24 confirmed: Apple writes these 7 registers as
+     * the LAST writes before the trigger fires. CLCD+0x3C0 (YUV mode)
+     * is written LAST — it may be the config-commit strobe.
+     * CLCD+0x3CC (YUV enable) written ONLY during init, NOT per-frame. */
 
     /* Scaler dimensions */
     CLCD_X_OFFSET = 0;
@@ -1318,12 +1307,23 @@ enum plugin_status plugin_start(const void *parameter)
      *   MIXER_CTRL = 7     (adds GO bit 0 to init value of 6)
      *   DISP+0x3C |= 1,2,4 (latches config+buffer+output)
      * Fires AFTER DISP GO and all config is complete. */
+    /* v103: Per-frame CLCD writes IMMEDIATELY before trigger.
+     * Apple's vtable[0x24] (ROM 0x167624) writes these 7 regs
+     * then the trigger fires on the NEXT instruction. No gap. */
+    CLCD_Y_ADDR  = (uint32_t)y_plane;       /* +0x028 = Y plane */
+    CLCD_CB_ADDR = (uint32_t)cb_plane;      /* +0x02C = Cb plane */
+    CLCD_CLEAR34 = 0;                        /* +0x034 = 0 */
+    CLCD_CR_ADDR = (uint32_t)cr_plane;      /* +0x030 = Cr plane */
+    CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
+    CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
+    CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
+    /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
     DISP_TRIGGER |= 1;
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
-    vlog("  Pipeline trigger fired");
+    vlog("  Pipeline trigger fired (buffers+trigger atomic)");
 
     /* v92: Re-fire compositor i80 output strobe AFTER VPP trigger.
      * During compositor_init, comp+0x200 |= 0x10080 fires bit 7 (strobe,
