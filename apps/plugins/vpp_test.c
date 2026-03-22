@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v98 ===");
+    vlog("=== VPP Pipeline Test v99 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v98");
+    rb->splashf(HZ, "VPP v99");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1083,9 +1083,13 @@ enum plugin_status plugin_start(const void *parameter)
          * Those values produced DMA 0x034d (fully active).
          * POR defaults (zeros) produce DMA 0x000 (dead).
          * Non-zero +0x1EC and +0x1F0 are REQUIRED for DMA. */
-        comp[0x1EC/4] = 0x0C;    /* V timing (12) — v54 value */
-        comp[0x1F0/4] = 0x26;    /* H timing (38) — v54 value */
-        comp[0x1F4/4] = 0x10;    /* FIFO threshold — POR default. 0x01 killed DMA. */
+        /* Timing registers — v54 stale values from iBoot SRAM.
+         * These are the only values that ever produced DMA=0x034d
+         * (though that was inherited from RetailOS, not started by us).
+         * Agent b4_timing_source confirmed: written by iBoot, not in ROM. */
+        comp[0x1EC/4] = 0x0C;    /* v54 value */
+        comp[0x1F0/4] = 0x26;    /* v54 value */
+        comp[0x1F4/4] = 0x10;    /* FIFO threshold — POR default */
         comp[0x1F8/4] = 0x82;    /* v54 value */
         comp[0x1FC/4] = 0x4E;    /* v54 value */
         vlog("  Compositor timing written: %08lx %08lx %08lx %08lx %08lx",
@@ -1101,6 +1105,21 @@ enum plugin_status plugin_start(const void *parameter)
          * just before GO at ROM 0x14d41c. Writes to comp+0x024.
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
+
+        /* v99: Set per-layer scaler geometry registers.
+         * Agent b7_comp010_decode found: comp+0x030/034/04C/050/054 are
+         * all ZERO (POR defaults). Apple sets them via FUN_0014d93c during
+         * video start path. With zero values, compositor has 0x0 output
+         * window — nothing gets rendered even with data available.
+         * For 1:1 320x240: src=(0,0)-(320,240), scale=1:1, no offset. */
+        comp[0x030/4] = 0x00000000;             /* src start: (y=0)<<16 | (x=0) */
+        comp[0x034/4] = 0x00F00140;             /* src end: (y=240)<<16 | (x=320) */
+        comp[0x04C/4] = 0x10001000;             /* scale: (v=1.0)<<16 | (h=1.0) in 4.12 FP */
+        comp[0x050/4] = 0x00000000;             /* centering offset: 0 */
+        comp[0x054/4] = (320 << 16) | 240;      /* output dims: (w=320)<<16 | (h=240) */
+        vlog("  Set comp per-layer geometry: +030=%08lx +034=%08lx +04C=%08lx +054=%08lx",
+             (unsigned long)comp[0x030/4], (unsigned long)comp[0x034/4],
+             (unsigned long)comp[0x04C/4], (unsigned long)comp[0x054/4]);
 
         /* v98: Clear per-layer dimension POR defaults at +0x228-0x2A4.
          * These are at TV resolution (480 lines, 272 offset, 120 interlaced)
@@ -1239,10 +1258,17 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
 
-    /* Step 5: Passthrough enable — MUST BE LAST of LCD setup */
-    *(volatile uint32_t *)(0x38300070) = 1;
-    vlog("  Passthrough enabled: LCD+0x70=%08lx",
-         (unsigned long)*(volatile uint32_t *)(0x38300070));
+    /* v99: LCD+0x70 passthrough — EXPERIMENT.
+     * Agent b7_comp_data_input found: VPP goes DIRECTLY from DISP to LCD MCU
+     * via DISP+0x280=0 MUX. LCD+0x70=1 enables COMPOSITOR passthrough which
+     * may OVERRIDE the VPP direct path, making LCD listen to the empty compositor.
+     * Try: LCD+0x70=0 (disable compositor passthrough) + LCD+0x70=1 separately.
+     * Also: add comp+0x030/034/04C/050/054 (per-layer geometry from FUN_0014d93c)
+     * in case compositor IS needed in bypass mode. */
+
+    /* Test A: NO compositor passthrough — VPP direct to LCD MCU */
+    *(volatile uint32_t *)(0x38300070) = 0;
+    vlog("  LCD+0x70=0 (VPP direct mode, NO compositor passthrough)");
 
     /* v97: NOW fire compositor GO + comp+0x3AC AFTER LCD passthrough is ready.
      * This ensures the i80 output has a configured LCD to push data to.
