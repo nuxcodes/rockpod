@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v95 ===");
+    vlog("=== VPP Pipeline Test v96 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v95");
+    rb->splashf(HZ, "VPP v96");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -801,10 +801,14 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_Y_OFFSET = 0;
     CLCD_OUT_W    = out_w;
     CLCD_OUT_H    = out_h;
-    CLCD_CROP_X   = 0;
-    CLCD_CROP_Y   = 0;
-    CLCD_SRC_W    = src_w;
-    CLCD_SRC_H    = src_h;
+    /* v96: CLCD+0x054/0x058 are SOURCE dimensions, NOT crop offsets!
+     * Agent found: Apple writes src_w/src_h here per-frame (ROM 0x166b0c).
+     * Previous versions wrote 0 — telling CLCD "source is 0x0 pixels"!
+     * CLCD+0x05C/0x060 are DISPLAY/SCALE output dimensions. */
+    CLCD_CROP_X   = src_w;   /* +0x054 = source width (was 0 in v1-v95!) */
+    CLCD_CROP_Y   = src_h;   /* +0x058 = source height (was 0 in v1-v95!) */
+    CLCD_SRC_W    = src_w;   /* +0x05C = display/scale width */
+    CLCD_SRC_H    = src_h;   /* +0x060 = display/scale height */
 
     /* Scale ratios (1:1 for this test) */
     CLCD_H_STEP = ((out_w << 12) / src_w) >> 3;  /* 512 for 1:1 */
