@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v106 ===");
+    vlog("=== VPP Pipeline Test v107 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v106");
+    rb->splashf(HZ, "VPP v107");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1005,11 +1005,9 @@ enum plugin_status plugin_start(const void *parameter)
          * complete may cause hardware to output before ready.
          * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
         comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
-        /* v106: BG_COLOR is XBGR (Samsung FIMD heritage), NOT XRGB!
-         * F1+F3 agents: S3C6410 WxBGCOL = [23:16]=B, [15:8]=G, [7:0]=R.
-         * 0x00FF0000 was showing BLUE because high byte = B channel.
-         * RED = 0x000000FF, GREEN = 0x0000FF00, BLUE = 0x00FF0000. */
-        comp[0x00C/4] = 0x000000FF;  /* v106: bright RED in XBGR format */
+        /* v107: BG_COLOR format INDETERMINATE (Z2 proved P9 masked any difference).
+         * Revert to 0x00FF0000 (XRGB red). P16 mode will show true colors. */
+        comp[0x00C/4] = 0x00FF0000;  /* v107: test RED (XRGB) — P16 will reveal true format */
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
@@ -1194,8 +1192,14 @@ enum plugin_status plugin_start(const void *parameter)
              timeout > 0 ? "idle" : "TIMEOUT");
     }
 
-    /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
-    LCD_CON = 0x81100DB9;
+    /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent)
+     * v107: Switch from P9 (0x81100DB9) to P16 (0x80100DB1) for passthrough.
+     * Z2 agent proved: P9 serialization corrupts colors identically regardless
+     * of BG_COLOR value (GRAM=0x0BFF in both v105+v106). Rockbox uses P16
+     * (0x80100DB0) for ALL frame data on all 4 iPod 6G panel types.
+     * P16 = 16-bit parallel, D[17:10,8:1], one transfer per pixel.
+     * Bit 0 added for passthrough RGB enable (Apple uses bit 0 too). */
+    LCD_CON = 0x80100DB1;  /* P16 + passthrough (was 0x81100DB9 = P9) */
     *(volatile uint32_t *)(0x38300088) = 0x01000000;
     *(volatile uint32_t *)(0x38300020) = 0x33;  /* NEW — was missing! */
     *(volatile uint32_t *)(0x3830007C) = 0x00000402;
@@ -1297,6 +1301,12 @@ enum plugin_status plugin_start(const void *parameter)
      *   MIXER_CTRL = 7     (adds GO bit 0 to init value of 6)
      *   DISP+0x3C |= 1,2,4 (latches config+buffer+output)
      * Fires AFTER DISP GO and all config is complete. */
+    /* v107: vtable[0x58] — set source buffer dimensions (FUN_001679e4).
+     * T9+W1+W2 agents found: Apple writes these per-frame BEFORE vtable[0x24].
+     * Our init wrote 0x40/0x10 (dummy defaults), NEVER updated to 320/240.
+     * Without correct dimensions, CLCD DMA reads wrong buffer geometry! */
+    CLCD_SRC_BUF_W = src_w;   /* +0x03C = 320 (was 0x40 = 64!) */
+    CLCD_SRC_BUF_H = src_h;   /* +0x040 = 240 (was 0x10 = 16!) */
     /* v103: Per-frame CLCD writes IMMEDIATELY before trigger.
      * Apple's vtable[0x24] (ROM 0x167624) writes these 7 regs
      * then the trigger fires on the NEXT instruction. No gap. */
@@ -1400,10 +1410,10 @@ enum plugin_status plugin_start(const void *parameter)
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         for (int sec = 0; sec < 10; sec++) {
             rb->backlight_on();  /* v106: keep backlight alive (E1) */
-            /* v106: XBGR format — RED=0x000000FF, GREEN=0x0000FF00, BLUE=0x00FF0000 */
-            if (sec == 0) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }      /* RED (XBGR) */
+            /* v107: Revert to XRGB — P16 mode will reveal true format */
+            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED (XRGB) */
             else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
-            else if (sec == 6) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }  /* BLUE (XBGR) */
+            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE (XRGB) */
             /* Wait for LCD bus idle */
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
