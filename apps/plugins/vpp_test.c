@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v104 ===");
+    vlog("=== VPP Pipeline Test v105 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v104");
+    rb->splashf(HZ, "VPP v105");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1223,9 +1223,9 @@ enum plugin_status plugin_start(const void *parameter)
         if (panel_type >= 2) {
             vpp_lcd_config(0x80000DA8);
             vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-            vpp_lcd_cmd(0x211); vpp_lcd_data(239);
+            vpp_lcd_cmd(0x211); vpp_lcd_data(319);  /* v105: was 239 (H/V swapped!) */
             vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-            vpp_lcd_cmd(0x213); vpp_lcd_data(319);
+            vpp_lcd_cmd(0x213); vpp_lcd_data(239);  /* v105: was 319 (H/V swapped!) */
             vpp_lcd_cmd(0x200); vpp_lcd_data(0);
             vpp_lcd_cmd(0x201); vpp_lcd_data(0);
             vpp_lcd_cmd(0x202);
@@ -1233,10 +1233,10 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_config(0x80000c20);
             vpp_lcd_cmd(0x2A);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);  /* v105: col end=319 (was 0xEF=239) */
             vpp_lcd_cmd(0x2B);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);  /* v105: row end=239 (was 0x13F=319) */
             vpp_lcd_cmd(0x2C);
         }
         vpp_lcd_config(saved_con);
@@ -1373,12 +1373,45 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
+    /* v105: Rapid LCD+0x80 pump to break DMA backpressure deadlock.
+     * Pipeline stalls because compositor output buffer never drains.
+     * Rapidly cycling LCD+0x80 force-drains compositor, creating
+     * upstream pull demand: compositor→DISP→MIXER→CLCD DMA starts. */
+    vlog("Phase 7b: Rapid pump (break DMA deadlock)");
+    {
+        for (int pump = 0; pump < 200; pump++) {
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+            *(volatile uint32_t *)(0x38300080) = 1;
+            {
+                uint32_t saved = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA8);
+                    vpp_lcd_cmd(0x202);
+                } else {
+                    vpp_lcd_config(0x80000c20);
+                    vpp_lcd_cmd(0x2C);
+                }
+                LCD_CON = saved;
+            }
+            *(volatile uint32_t *)(0x38300080) = 0;
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+        }
+        vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx",
+             (unsigned long)CLCD_REG(0x010),
+             (unsigned long)*(volatile uint32_t *)(0x38900010));
+    }
+
     /* v104: Per-frame push loop (Apple's Path B from ROM 0xa5064).
      * Each iteration: LCD+0x80=1 → GRAM cmds → LCD+0x80=0 → wait idle.
      * This is how Apple's DriverUpdateThread pushes compositor frames. */
-    vlog("Phase 7b: Per-frame push loop (10 seconds)");
+    vlog("Phase 7c: Per-frame push loop (10s, color cycle R→G→B)");
     {
+        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         for (int sec = 0; sec < 10; sec++) {
+            /* v105: Cycle BG_COLOR (XRGB confirmed by 7-stage pipeline trace) */
+            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED */
+            else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
+            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE */
             /* Wait for LCD bus idle */
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
@@ -1391,9 +1424,9 @@ enum plugin_status plugin_start(const void *parameter)
                 if (panel_type >= 2) {
                     vpp_lcd_config(0x80000DA8);
                     vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x211); vpp_lcd_data(239);
+                    vpp_lcd_cmd(0x211); vpp_lcd_data(319);  /* v105: was 239 (H/V swapped!) */
                     vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x213); vpp_lcd_data(319);
+                    vpp_lcd_cmd(0x213); vpp_lcd_data(239);  /* v105: was 319 (H/V swapped!) */
                     vpp_lcd_cmd(0x200); vpp_lcd_data(0);
                     vpp_lcd_cmd(0x201); vpp_lcd_data(0);
                     vpp_lcd_cmd(0x202);
@@ -1401,10 +1434,10 @@ enum plugin_status plugin_start(const void *parameter)
                     vpp_lcd_config(0x80000c20);
                     vpp_lcd_cmd(0x2A);
                     vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);  /* v105: col end=319 */
                     vpp_lcd_cmd(0x2B);
                     vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);  /* v105: row end=239 */
                     vpp_lcd_cmd(0x2C);
                 }
                 LCD_CON = saved;
@@ -1536,13 +1569,16 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Phase 10: Restoring LCD and ATA");
 
     /* Disable RGB passthrough + compositor */
-    *(volatile uint32_t *)(0x38300070) = 0;
-    *(volatile uint32_t *)0x38900000 = 0;  /* compositor off */
+    *(volatile uint32_t *)(0x38300080) = 0;  /* stop any active push */
+    *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off */
+    *(volatile uint32_t *)0x38900000 = 0;    /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
-    /* Restore LCD_CON to Rockbox value */
+    /* v105: Restore ALL LCD regs to Rockbox values (not just LCD_CON) */
+    *(volatile uint32_t *)(0x3830007C) = 0;         /* clear passthrough format */
+    *(volatile uint32_t *)(0x38300088) = 0;         /* clear RGB DMA enable */
     LCD_CON = saved_lcd_con;
-    vlog("  LCD_CON restored to 0x%08lx", (unsigned long)LCD_CON);
+    vlog("  LCD regs restored (CON=%08lx)", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");
     log_close();
