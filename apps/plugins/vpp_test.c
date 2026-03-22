@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v108 ===");
+    vlog("=== VPP Pipeline Test v109 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v108");
+    rb->splashf(HZ, "VPP v109");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1381,17 +1381,13 @@ enum plugin_status plugin_start(const void *parameter)
         for (int pump = 0; pump < 200; pump++) {
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 1;
-            {
-                uint32_t saved = LCD_CON;
-                if (panel_type >= 2) {
-                    vpp_lcd_config(0x80000DA8);
-                    vpp_lcd_cmd(0x202);
-                } else {
-                    vpp_lcd_config(0x80000c20);
-                    vpp_lcd_cmd(0x2C);
-                }
-                LCD_CON = saved;
-            }
+            /* v109: NO LCD_CON switch inside LCD+0x80 bracket!
+             * R10+S1: Apple NEVER changes LCD_CON during passthrough push.
+             * GRAM commands work in P9 because RS pin is bus-width-independent. */
+            if (panel_type >= 2)
+                vpp_lcd_cmd(0x202);
+            else
+                vpp_lcd_cmd(0x2C);
             *(volatile uint32_t *)(0x38300080) = 0;
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
         }
@@ -1418,29 +1414,25 @@ enum plugin_status plugin_start(const void *parameter)
             /* LCD+0x80 = 1 — START compositor push */
             *(volatile uint32_t *)(0x38300080) = 1;
 
-            /* GRAM commands INSIDE LCD+0x80 bracket (Apple's exact pattern) */
-            {
-                uint32_t saved = LCD_CON;
-                if (panel_type >= 2) {
-                    vpp_lcd_config(0x80000DA8);
-                    vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x211); vpp_lcd_data(319);  /* v105: was 239 (H/V swapped!) */
-                    vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x213); vpp_lcd_data(239);  /* v105: was 319 (H/V swapped!) */
-                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x202);
-                } else {
-                    vpp_lcd_config(0x80000c20);
-                    vpp_lcd_cmd(0x2A);
-                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);  /* v105: col end=319 */
-                    vpp_lcd_cmd(0x2B);
-                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);  /* v105: row end=239 */
-                    vpp_lcd_cmd(0x2C);
-                }
-                LCD_CON = saved;
+            /* v109: GRAM commands in P9 mode — NO LCD_CON switch!
+             * R10+S1: Apple NEVER changes LCD_CON inside LCD+0x80 bracket.
+             * RS pin is bus-width-independent — commands work in any mode. */
+            if (panel_type >= 2) {
+                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x202);
+            } else {
+                vpp_lcd_cmd(0x2A);
+                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                vpp_lcd_cmd(0x2B);
+                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                vpp_lcd_cmd(0x2C);
             }
 
             /* LCD+0x80 = 0 — STOP push */
@@ -1574,10 +1566,20 @@ enum plugin_status plugin_start(const void *parameter)
     *(volatile uint32_t *)0x38900000 = 0;    /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
-    /* v105: Restore ALL LCD regs to Rockbox values (not just LCD_CON) */
+    /* v109: Restore ALL LCD regs + panel state (R3 agent found shutdown issues) */
     *(volatile uint32_t *)(0x3830007C) = 0;         /* clear passthrough format */
     *(volatile uint32_t *)(0x38300088) = 0;         /* clear RGB DMA enable */
+    *(volatile uint32_t *)(0x38300074) = 0;         /* v109: clear resolution */
+    *(volatile uint32_t *)(0x38300078) = 0;         /* v109: clear porch timing */
     LCD_CON = saved_lcd_con;
+    /* v109: Re-send ILI9320 Entry Mode to reset panel format after P9 passthrough.
+     * R3 agent: panel received 18-bit P9 data while configured for RGB565.
+     * Without re-sending reg 0x003, panel GRAM state is corrupted. */
+    if (panel_type >= 2) {
+        vpp_lcd_config(0x80000DA8);  /* P18 cmd mode (OUTSIDE bracket, OK) */
+        vpp_lcd_cmd(0x003); vpp_lcd_data(0x0230);  /* Entry Mode = RGB565 */
+        LCD_CON = saved_lcd_con;
+    }
     vlog("  LCD regs restored (CON=%08lx)", (unsigned long)LCD_CON);
 
     vlog("=== Test complete ===");
