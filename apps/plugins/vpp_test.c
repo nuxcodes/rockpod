@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v86 ===");
+    vlog("=== VPP Pipeline Test v87 ===");
 
     uint32_t saved_lcd_con = 0;
     uint32_t saved_pwrcon0 = 0;
@@ -566,7 +566,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v86");
+    rb->splashf(HZ, "VPP v87");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -608,7 +608,7 @@ enum plugin_status plugin_start(const void *parameter)
 #define vlog(...) do {} while(0)
 
     vpp_svid_enable(true);
-    rb->sleep(HZ / 5);  /* 200ms PLL stabilize — v76 gold timing */
+    rb->sleep(HZ / 5);  /* 200ms PLL stabilize */
     vpp_clocks_enable(true);
 
     /* PWRCON bits 7+13: RE-ENABLED (marathon batch 6, 3 agents confirmed
@@ -809,22 +809,11 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v85a: RESTORE compositor gate/ungate reset (v76 gold).
-         * Apple never resets because iBoot state persists. But Rockbox's
-         * syscon_preinit() FREEZES compositor mid-operation. Gate/ungate
-         * gets it to clean idle. Skip-reset gave DMA 0x249 (v83/v84a). */
-        PWRCON(0) &= ~0x2080;  /* enable compositor clocks */
-        for (volatile int d = 0; d < 50000; d++);
-        comp[0x000/4] &= ~1;   /* software disable */
-        { int i; for (i = 0; i < 100; i++) {
-            if (comp[0x000/4] & 2) break;  /* wait for idle */
-            for (volatile int d = 0; d < 10000; d++);
-        }}
-        PWRCON(0) |= 0x2080;   /* gate = freeze clean idle */
-        for (volatile int d = 0; d < 50000; d++);
-        PWRCON(0) &= ~0x2080;  /* ungate = resume from clean idle */
-        for (volatile int d = 0; d < 50000; d++);
-        vlog("  Compositor reset done (v76 gold gate/ungate)");
+        /* v87: NO compositor reset. Bootloader preserves iBoot's running
+         * compositor (PWRCON bits 7+13 kept enabled through boot).
+         * Samsung FIMD can't cold-start — must inherit iBoot's state.
+         * Just dump state and overwrite registers. */
+        vlog("  Compositor alive from iBoot (no reset)");
 
         /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");

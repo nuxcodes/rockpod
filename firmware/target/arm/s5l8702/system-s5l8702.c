@@ -431,7 +431,9 @@ static void syscon_preinit(void)
 
 #if CONFIG_CPU == S5L8702
     PWRCON_AHB = ~((1 << CLOCKGATE_SMx) |
-                   (1 << CLOCKGATE_SM1));
+                   (1 << CLOCKGATE_SM1) |
+                   (1 << 7) |   /* compositor clock A — preserve iBoot state */
+                   (1 << 13));  /* compositor clock B — Samsung FIMD can't cold-start */
     PWRCON_APB = ~((1 << (CLOCKGATE_TIMER - 32)) |
                    (1 << (CLOCKGATE_GPIO - 32)));
 #endif
