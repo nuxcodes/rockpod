@@ -790,7 +790,29 @@ void main(void)
         rc = launch_onb(1); /* 27/2 = 13.5 MHz. */
     }
 
+    /* VPP diagnostic: capture compositor state BEFORE syscon_preinit */
+#ifdef IPOD_6G
+    volatile uint32_t *_comp = (volatile uint32_t *)0x38900000;
+    uint32_t comp_before_cfg  = 0xDEAD0001;
+    uint32_t comp_before_ctrl = 0xDEAD0002;
+    uint32_t comp_before_200  = 0xDEAD0003;
+    uint32_t pwrcon_before_sp = PWRCON(0);
+    if (!(pwrcon_before_sp & (1 << 7)) && !(pwrcon_before_sp & (1 << 13))) {
+        /* compositor AHB clocks are ON — safe to read */
+        comp_before_cfg  = _comp[0x008/4];
+        comp_before_ctrl = _comp[0x000/4];
+        comp_before_200  = _comp[0x200/4];
+    }
+#endif
+
     system_preinit();
+
+#ifdef IPOD_6G
+    uint32_t comp_after_cfg  = _comp[0x008/4];
+    uint32_t comp_after_ctrl = _comp[0x000/4];
+    uint32_t pwrcon_after_sp = PWRCON(0);
+#endif
+
     memory_init();
     /*
      * XXX: BSS is initialized here, do not use .bss before this line
@@ -834,6 +856,20 @@ void main(void)
     lcd_clear_display();
     font_init();
     lcd_setfont(FONT_SYSFIXED);
+
+#ifdef IPOD_6G
+    /* VPP diagnostic: show compositor state before/after syscon_preinit */
+    lcd_putsf(0, 10, "VPP COMPOSITOR DIAGNOSTIC");
+    lcd_putsf(0, 11, "CFG  B:%08lx A:%08lx", comp_before_cfg, comp_after_cfg);
+    lcd_putsf(0, 12, "CTRL B:%08lx A:%08lx", comp_before_ctrl, comp_after_ctrl);
+    lcd_putsf(0, 13, "PWR  B:%08lx A:%08lx", pwrcon_before_sp, pwrcon_after_sp);
+    lcd_putsf(0, 14, "+200 B:%08lx", comp_before_200);
+    lcd_putsf(0, 15, comp_before_cfg == 0x41118101 ? "iBoot CONFIGURED!" :
+              comp_before_cfg == 0x01110100 ? "iBoot NEVER configured" :
+              comp_before_cfg == 0xDEAD0001 ? "clocks GATED (cant read)" : "UNKNOWN");
+    lcd_update();
+    sleep(HZ * 5);
+#endif
 
     // TODO: see if removing this causes the nano3g LCD to initialize properly
 #ifdef S5L87XX_DEVELOPMENT_BOOTLOADER
