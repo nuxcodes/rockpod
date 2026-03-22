@@ -532,7 +532,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v88 ===");
+    vlog("=== VPP Pipeline Test v90 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -564,7 +564,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v88");
+    rb->splashf(HZ, "VPP v90");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -932,13 +932,8 @@ enum plugin_status plugin_start(const void *parameter)
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
         comp[0x200/4] |= 0x10080;
-        /* Zero unused layer format registers (layers 0-4) to prevent
-         * stale iBoot data from overlaying video output */
-        comp[0x05C/4] = 0;  /* layer 0 */
-        comp[0x074/4] = 0;  /* layer 1 */
-        comp[0x08C/4] = 0;  /* layer 2 */
-        comp[0x0A4/4] = 0;  /* layer 3 */
-        comp[0x0BC/4] = 0;  /* layer 4 */
+        /* v90: Layer format zeroing REMOVED — Apple never does this in
+         * compositor_init. These are EXTRA writes not in the ROM. */
         comp[0x204/4] = 2;
         comp[0x208/4] = 0;
         comp[0x20C/4] = 2;
@@ -949,17 +944,11 @@ enum plugin_status plugin_start(const void *parameter)
          * (FUN_0014deec at ROM 0x14df2c), not in FUN_0014d240. Moved below. */
         /* DO NOT touch +0x1EC-0x1FC — timing from iBoot, preserve Apple values */
 
-        /* Layer 5 (video overlay) config — BEFORE GO (Apple steps 10-15).
-         * v45 wrongly moved after GO based on confusing LCD (0x383) with
-         * compositor (0x389). Agent proved: all 6 layers at steps 10-15,
-         * GO at step 25. Post-GO call writes to LCD passthrough, NOT layer 5. */
-        comp[0x028/4] = 0x100;              /* YUV 4:2:0 planar */
-        comp[0x02C/4] = 320 | (160 << 16);  /* Y=320, UV=160 stride */
-        comp[0x030/4] = 0;                  /* window start (0,0) */
-        comp[0x034/4] = (240 << 16) | 320;  /* window end (320,240) */
-        comp[0x04C/4] = 0x10001000;         /* scale 1:1 */
-        comp[0x050/4] = 0;                  /* no offset */
-        comp[0x054/4] = (240 << 16) | 320;  /* dims (240<<16)|320 */
+        /* v90: Layer 5 config REMOVED from compositor_init.
+         * RE agent proved: Apple does NOT write +0x028-0x054 during
+         * compositor_init (FUN_0014d240). These are set later by a
+         * separate video-start function. Writing during init is EXTRA
+         * and may break DMA (v66 proved similar writes kill DMA). */
 
         /* comp +0x038-0x044: Layer 5 DMA buffer addresses REMOVED.
          * v66 showed these KILL DMA (0x034d→0x000). In bypass mode (bit 8),
