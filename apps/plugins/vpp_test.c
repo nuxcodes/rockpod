@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v100 ===");
+    vlog("=== VPP Pipeline Test v101 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v100");
+    rb->splashf(HZ, "VPP v101");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1372,6 +1372,43 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[15], (unsigned long)dma_snap[16],
              (unsigned long)dma_snap[17], (unsigned long)dma_snap[18],
              (unsigned long)dma_snap[19]);
+    }
+
+    /* v101: Test lcd_mcu_frame_push mechanism (RE-backed, ROM 0xa5064).
+     * Apple's lcd_mcu_frame_push toggles LCD+0x80 per-frame:
+     *   LCD+0x80 = 1 → compositor pushes one frame via i80 to LCD
+     *   LCD+0x80 = 0 → stop transfer
+     * The VPP "automatic passthrough" (LCD+0x70=1) may NOT mean auto
+     * data flow — it may only configure the input source. Actual frame
+     * transfer may ALWAYS require LCD+0x80 toggling, done by a RetailOS
+     * display driver thread that we don't replicate. */
+    vlog("  Testing lcd_mcu_frame_push mechanism:");
+    {
+        volatile uint32_t *lcd = (volatile uint32_t *)0x38300000;
+        /* Wait for LCD bus idle */
+        { int t = 100000; while ((lcd[0x8C/4] & 3) && --t > 0); }
+        vlog("    LCD+0x8C=%08lx (bus %s)", (unsigned long)lcd[0x8C/4],
+             (lcd[0x8C/4] & 3) ? "BUSY" : "idle");
+
+        /* Frame push: LCD+0x80 = 1 (enable compositor→LCD transfer) */
+        lcd[0x80/4] = 1;
+        vlog("    LCD+0x80=1 (frame push START)");
+        vlog("    DMA after push start: %08lx", (unsigned long)CLCD_REG(0x010));
+        vlog("    COMP+0x10 after push start: %08lx",
+             (unsigned long)*(volatile uint32_t *)(0x38900010));
+
+        /* Hold for 100ms to let compositor transfer frame */
+        { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 100000); }
+
+        vlog("    DMA after 100ms push: %08lx", (unsigned long)CLCD_REG(0x010));
+        vlog("    COMP+0x10 after 100ms push: %08lx",
+             (unsigned long)*(volatile uint32_t *)(0x38900010));
+
+        /* Stop push */
+        lcd[0x80/4] = 0;
+        vlog("    LCD+0x80=0 (frame push STOP)");
+        { int t = 100000; while ((lcd[0x8C/4] & 3) && --t > 0); }
+        vlog("    LCD+0x8C after stop: %08lx", (unsigned long)lcd[0x8C/4]);
     }
 
     vlog("  Pipeline running — LOOK AT LCD NOW!");
