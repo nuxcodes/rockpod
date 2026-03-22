@@ -535,7 +535,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v91 ===");
+    vlog("=== VPP Pipeline Test v92 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -567,7 +567,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v91");
+    rb->splashf(HZ, "VPP v92");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1194,6 +1194,28 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired");
+
+    /* v92: Re-fire compositor i80 output strobe AFTER VPP trigger.
+     * During compositor_init, comp+0x200 |= 0x10080 fires bit 7 (strobe,
+     * auto-clears). But this fires BEFORE compositor GO and BEFORE VPP
+     * data is available. By the time data arrives, the strobe has cleared
+     * and auto-trigger (bit 16) may not activate without an initial kick.
+     * Re-fire bit 7 NOW when data is actually flowing. Also try bit 1
+     * (Samsung FIMD SWTRGCMD equivalent — fire one i80 frame). */
+    {
+        volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
+        uint32_t trig_before = comp[0x200/4];
+        /* Brief delay to let VPP data reach compositor */
+        for (volatile int d = 0; d < 50000; d++);
+        /* Fire i80 output strobe (bit 7) + SW trigger (bit 1) */
+        comp[0x200/4] |= 0x82;
+        /* Also try setting bit 2 which might be window 1 SW trigger */
+        for (volatile int d = 0; d < 10000; d++);
+        uint32_t trig_after = comp[0x200/4];
+        vlog("  i80 re-trigger: before=%08lx after=%08lx (bit7=%d bit1=%d)",
+             (unsigned long)trig_before, (unsigned long)trig_after,
+             (trig_after >> 7) & 1, (trig_after >> 1) & 1);
+    }
 
     /* v91: Rapid DMA poll — catch transient states.
      * DMA might briefly activate then stall due to backpressure. */
