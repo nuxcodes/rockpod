@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v97 ===");
+    vlog("=== VPP Pipeline Test v98 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v97");
+    rb->splashf(HZ, "VPP v98");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -1102,14 +1102,17 @@ enum plugin_status plugin_start(const void *parameter)
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
 
-        /* v97: DO NOT fire compositor GO yet.
-         * Theory: LCD passthrough must be established BEFORE compositor GO,
-         * so the i80 output has somewhere to push data.
-         * Apple's order: compositor_init(GO) → LCD passthrough. But Apple's
-         * compositor runs for SECONDS before VPP data, outputting background.
-         * We fire GO and trigger in microseconds — not enough time.
-         * NEW ORDER: set up everything EXCEPT GO, then LCD passthrough,
-         * then GO, then delay for initial frame, then VPP trigger. */
+        /* v98: Clear per-layer dimension POR defaults at +0x228-0x2A4.
+         * These are at TV resolution (480 lines, 272 offset, 120 interlaced)
+         * but our LCD is 320x240. If the compositor's i80 frame generator
+         * uses these for frame size, 480-line frames would never complete
+         * on a 240-line LCD, preventing the auto-trigger from firing.
+         * Zero them to eliminate the mismatch. */
+        for (int i = 0x228; i <= 0x2A4; i += 4)
+            comp[i/4] = 0;
+        vlog("  Cleared comp+0x228-0x2A4 (TV dimension POR defaults)");
+
+        /* v97: DO NOT fire compositor GO yet — deferred to after LCD passthrough. */
         } /* end if (!comp_alive) */
     }
     vlog("  Compositor configured (GO deferred to after LCD passthrough)");
@@ -1246,10 +1249,16 @@ enum plugin_status plugin_start(const void *parameter)
      * Then wait 200ms for compositor to output initial background frame(s). */
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-        /* Fire GO */
-        comp[0x000/4] = 1;
+        /* Fire GO — v98: write 3 (ENVID + ENVID_F) instead of 1.
+         * In Samsung FIMD, both bits must be SET for continuous output.
+         * Writing only bit 0 (strobe) auto-clears, leaving ENVID=0 which
+         * LOCKS the TRIGCON register — comp+0x200 writes are ignored.
+         * v96 log proved: |= 0x82 to TRIGCON was completely ignored after
+         * GO auto-cleared (bits didn't even momentarily set). */
+        comp[0x000/4] = 3;  /* bits 0+1 = ENVID + ENVID_F */
         comp[0x3AC/4] = 0x04004003;
-        vlog("  Compositor GO fired (after LCD passthrough)");
+        vlog("  Compositor GO fired: CTRL=%08lx (expect persistent, not auto-clear)",
+             (unsigned long)comp[0x000/4]);
         vlog("  comp+0x010 before delay: %08lx", (unsigned long)comp[0x010/4]);
 
         /* Wait 200ms for compositor to output initial background frame(s).
