@@ -532,11 +532,9 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v87 ===");
+    vlog("=== VPP Pipeline Test v88 ===");
 
     uint32_t saved_lcd_con = 0;
-    uint32_t saved_pwrcon0 = 0;
-    uint32_t saved_pwrcon1 = 0;
 
     /* Get audio buffer for test frame data */
     size_t buf_size;
@@ -566,7 +564,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v87");
+    rb->splashf(HZ, "VPP v88");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -576,45 +574,24 @@ enum plugin_status plugin_start(const void *parameter)
      * count so the worker has nothing to process. */
     rb->lcd_scroll_stop();
 
-    /* === Phase 2: Enable VPP clocks + GPIO 7.1 === */
-    /* v81: Log LCD+0x080 and PWRCON BEFORE critical section */
+    /* === Phase 2: Enable VPP clocks === */
     vlog("Phase 2: Enabling clocks");
-    vlog("LCD+0x80 BEFORE = 0x%08lx (0=VPP, nonzero=CPU owns bus)",
-         (unsigned long)*(volatile uint32_t *)(0x38300080));
-    vlog("PWRCON0 BEFORE = 0x%08lx", (unsigned long)PWRCON(0));
-    vlog("PWRCON1 BEFORE = 0x%08lx", (unsigned long)PWRCON(1));
 
-    /* v81: Save PWRCON for restore on shutdown */
-    saved_pwrcon0 = PWRCON(0);
-    saved_pwrcon1 = PWRCON(1);
-
-    /* v81: Brute-force enable ALL clock gates.
-     * Agent finding: Apple enables PWRCON bits 8+12 for VPP power path.
-     * We never did. PWRCON=0 enables all clocks — safe because idle
-     * peripherals stay at POR state. SVID/VPP clocks also enabled. */
-    PWRCON(0) = 0;
-    PWRCON(1) = 0;
-    vlog("PWRCON0 = 0x%08lx (all enabled)", (unsigned long)PWRCON(0));
-
-    /* v81: Explicitly clear LCD+0x080 = 0 (bus ownership).
-     * Agent finding: LCD+0x080=1 means CPU owns LCD bus, compositor
-     * output is locked out. POR=0 but verify and force. */
-    *(volatile uint32_t *)(0x38300080) = 0;
-
-    /* v82: GPIO 7.1 REMOVED — v82 test proved it corrupts ATA on PATA/SSD. */
-    /* v84a: CG16_2L REMOVED — isolating v83 regression (DMA 0x034d→0x249). */
-
-    /* v80: suppress ALL logging in critical section (clock enable → trigger) */
-#define vlog(...) do {} while(0)
+    uint32_t pwrcon_before = PWRCON(0);
+    vlog("PWRCON0 before: 0x%08lx", (unsigned long)pwrcon_before);
 
     vpp_svid_enable(true);
-    rb->sleep(HZ / 5);  /* 200ms PLL stabilize */
+    { volatile int d; for (d = 0; d < 500000; d++); } /* busy-wait, no yield */
     vpp_clocks_enable(true);
 
-    /* PWRCON bits 7+13: RE-ENABLED (marathon batch 6, 3 agents confirmed
-     * compositor IS in HW path). Compositor clocks needed for passthrough. */
-    /* v73: deferred to compositor reset */ // PWRCON(0) &= ~0x2080;
-    vlog("PWRCON bits 7+13 enabled (compositor clocks)");
+    uint32_t pwrcon_after = PWRCON(0);
+    vlog("PWRCON0 after:  0x%08lx", (unsigned long)pwrcon_after);
+    vlog("Bits 14-16 cleared: %s",
+         ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
+
+    /* v88: compositor clocks EARLY (v76 gold pattern) */
+    PWRCON(0) &= ~0x2080;
+    vlog("PWRCON 7+13 enabled (compositor clocks)");
 
     int panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
@@ -809,11 +786,21 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v87: NO compositor reset. Bootloader preserves iBoot's running
-         * compositor (PWRCON bits 7+13 kept enabled through boot).
-         * Samsung FIMD can't cold-start — must inherit iBoot's state.
-         * Just dump state and overwrite registers. */
-        vlog("  Compositor alive from iBoot (no reset)");
+        /* v88: RESTORE compositor gate/ungate reset (v76 gold).
+         * Compositor CAN cold-start (proven: GO changes comp+0x010).
+         * Gate/ungate brings it to clean POR for our full init. */
+        PWRCON(0) &= ~0x2080;  /* ensure compositor clocks ON */
+        for (volatile int d = 0; d < 50000; d++);
+        comp[0x000/4] &= ~1;   /* disable compositor */
+        { int i; for (i = 0; i < 100; i++) {
+            if (comp[0x000/4] & 2) break;
+            for (volatile int d = 0; d < 10000; d++);
+        }}
+        PWRCON(0) |= 0x2080;   /* GATE clocks */
+        for (volatile int d = 0; d < 50000; d++);
+        PWRCON(0) &= ~0x2080;  /* UNGATE = clean POR */
+        for (volatile int d = 0; d < 50000; d++);
+        vlog("  Compositor reset done (v88 gate/ungate)");
 
         /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");
@@ -927,7 +914,7 @@ enum plugin_status plugin_start(const void *parameter)
          * complete may cause hardware to output before ready.
          * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
         comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
-        comp[0x00C/4] = 0x00FF0000;  /* v82: bright RED background (visible) */
+        comp[0x00C/4] = 0x000F0F0F;  /* v88: Apple's background color */
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
@@ -1091,11 +1078,15 @@ enum plugin_status plugin_start(const void *parameter)
      *   LCD+0x70 = 1             (passthrough enable — LAST!)
      */
 
-    /* v85a: Log LCD+0x8C bus readiness BEFORE passthrough config.
-     * Apple polls (LCD+0x8C & 3)==0 in FUN_000be7fc at ROM 0xbe7fc.
-     * We just log it for Part A diagnostics. Part B will add the poll. */
-    vlog("  LCD+0x8C BEFORE passthrough = 0x%08lx (0=bus idle)",
-         (unsigned long)*(volatile uint32_t *)(0x3830008C));
+    /* v88: Poll LCD+0x8C for bus idle BEFORE passthrough.
+     * Apple's lcd_wait_ready() at ROM 0xbe7fc polls (LCD+0x8C & 3)==0. */
+    {
+        int timeout = 100000;
+        while ((*(volatile uint32_t *)(0x3830008C) & 3) && --timeout > 0);
+        vlog("  LCD+0x8C = 0x%08lx (bus %s)",
+             (unsigned long)*(volatile uint32_t *)(0x3830008C),
+             timeout > 0 ? "idle" : "TIMEOUT");
+    }
 
     /* Part 1: Static LCD config (lcd_mcu_passthrough_init equivalent) */
     LCD_CON = 0x81100DB9;
@@ -1140,10 +1131,6 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
 
-    /* v81: Clear LCD bus ownership AGAIN right before passthrough.
-     * Ensures compositor can drive LCD bus. */
-    *(volatile uint32_t *)(0x38300080) = 0;
-
     /* Step 5: Passthrough enable — MUST BE LAST */
     *(volatile uint32_t *)(0x38300070) = 1;
     vlog("  Passthrough enabled: LCD+0x70=%08lx",
@@ -1170,19 +1157,22 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired");
-#undef vlog
 
-    /* v73: buffer addresses REMOVED (writing breaks DMA in bypass mode) */
-    vlog("  Pipeline running — LOOK AT LCD NOW!");
-
-    /* v85b: Diagnostics AFTER critical section (no timing interference) */
+    /* v88: Fire i80 software trigger — THE KEY ADDITION.
+     * Samsung FIMD i80 mode needs initial SW trigger to start
+     * pushing frames to LCD MCU bus. Apple relies on iBoot
+     * having started this cycle. Our cold-start must do it.
+     * comp+0x200 bit 0 = SW trigger command (auto-clears on fire). */
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
-        vlog("  TRIGCON: +0x200=0x%08lx", (unsigned long)comp[0x200/4]);
-        vlog("  LCD+0x8C = 0x%08lx (0=bus idle)",
-             (unsigned long)*(volatile uint32_t *)(0x3830008C));
-        vlog("  comp+0x014 = 0x%08lx", (unsigned long)comp[0x014/4]);
+        vlog("  comp+0x200 BEFORE SW trigger: 0x%08lx",
+             (unsigned long)comp[0x200/4]);
+        comp[0x200/4] |= 1;  /* FIRE i80 SW trigger */
+        vlog("  comp+0x200 AFTER  SW trigger: 0x%08lx",
+             (unsigned long)comp[0x200/4]);
     }
+
+    vlog("  Pipeline running — LOOK AT LCD NOW!");
 
     vlog("Phase 7b: Holding 10 seconds");
     vlog("  PWRCON0=%08lx PWRCON1=%08lx LCD+0x80=%08lx",
@@ -1335,9 +1325,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable RGB passthrough + compositor */
     *(volatile uint32_t *)(0x38300070) = 0;
     *(volatile uint32_t *)0x38900000 = 0;  /* compositor off */
-    /* v81: restore PWRCON to original values */
-    PWRCON(0) = saved_pwrcon0;
-    PWRCON(1) = saved_pwrcon1;
+    PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
     /* Restore LCD_CON to Rockbox value */
     LCD_CON = saved_lcd_con;
