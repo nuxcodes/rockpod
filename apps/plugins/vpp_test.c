@@ -355,7 +355,8 @@ static void disp_init_lcd(void)
         DISP_REG(i) = 0;
 
     /* CSC bypass (bit 4) */
-    DISP_CSC_MODE = (DISP_CSC_MODE & 0xE0) | 0x10;  /* v82: v76 gold mask (clears stale boot bits) */
+    /* v106: Absolute write — eliminates stale bits (was RMW & 0xE0) */
+    DISP_CSC_MODE = 0x10;  /* v82: v76 gold mask (clears stale boot bits) */
     DISP_CSC_Y = 0x800000;     /* 1.0 in 8.24 FP */
     DISP_CSC_CBCR = 0x800000;
     DISP_CSC_OFS = 0x80;       /* 128 for unsigned chroma */
@@ -553,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v105 ===");
+    vlog("=== VPP Pipeline Test v106 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,15 +586,18 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v105");
+    rb->splashf(HZ, "VPP v106");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
-    /* Stop scroll thread from overwriting LCD_CON during VPP operation.
-     * The scroll worker calls lcd_update_rect() which sets LCD_CON to
-     * Rockbox's frame mode (0x80100DB0), destroying our passthrough
-     * config (0x81100DB9). lcd_scroll_stop() zeros the scroll line
-     * count so the worker has nothing to process. */
+    /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
     rb->lcd_scroll_stop();
+
+    /* v106: Prevent backlight thread from clobbering LCD_CON.
+     * E1 agent found: lcd_sleep()/lcd_awake() write LCD_CON from the
+     * backlight thread when backlight timeout expires. lcd_scroll_stop
+     * only prevents scroll thread, NOT backlight thread.
+     * Keep backlight alive by calling backlight_on() periodically. */
+    rb->backlight_on();
 
     /* === Phase 2: Enable clocks + full VPP reset === */
     vlog("Phase 2: Enabling clocks + VPP block reset");
@@ -639,7 +643,7 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)DISP_TRIGGER);
     vlog("  Stale DMA: %08lx", (unsigned long)CLCD_REG(0x010));
 
-    /* Step 3: Disable VPP blocks (Apple order: DISP→MIXER→CLCD) + wait idle */
+    /* Step 3: Disable VPP blocks (Apple shutdown order: DISP→MIXER→CLCD) */
     DISP_TRIGGER &= ~0xF;
     DISP_CTRL &= ~1;
     { volatile int d; for (d = 0; d < 50000; d++); }
@@ -648,24 +652,40 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_CTRL &= ~1;
     { volatile int d; for (d = 0; d < 50000; d++); }
 
-    /* Step 4: Gate VPP clocks ONLY (NOT compositor!) — reset VPP blocks.
-     * v93: Keep compositor clocks ON to preserve RetailOS compositor state.
-     * Our gate/ungate was destroying RetailOS's working compositor config.
-     * If RetailOS had compositor running correctly, its stale state may be
-     * closer to "working" than our fresh POR init. */
-    PWRCON(0) |= 0x1C000;  /* gate VPP blocks only */
-    { volatile int d; for (d = 0; d < 100000; d++); }
-    vpp_clocks_enable(true);  /* ungate VPP blocks — now at POR */
-    /* Compositor clocks stay on: PWRCON(0) bits 7+13 were cleared in Step 1 */
-    { volatile int d; for (d = 0; d < 200000; d++); }
+    /* Step 4: v106 — ZERO ALL VPP REGISTERS to simulate POR state.
+     * 40 agents proved: clock gating does NOT reset S5L8702 registers.
+     * v105 log: CLCD=0x06 AFTER gate/ungate — stale RetailOS values survive.
+     * Apple relies on POR defaults for unwritten registers (iBoot gates
+     * VPP since silicon reset, so ungating gives actual POR zeros).
+     * Our context has stale RetailOS values where Apple expects zeros.
+     * VPU-B h264 v40 precedent: full contiguous zero sweep is a HW reset
+     * trigger — 9 partial subsets ALL FAILED, only full zero works. */
+    {
+        volatile uint32_t *clcd  = (volatile uint32_t *)0x39100000;
+        volatile uint32_t *mixer = (volatile uint32_t *)0x39200000;
+        volatile uint32_t *disp  = (volatile uint32_t *)0x39300000;
+        int i;
+
+        /* Zero CLCD 0x000-0x3CC (skip read-only status at 0x010-0x024) */
+        clcd[0x000/4] = 0;
+        for (i = 0x004; i <= 0x00C; i += 4) clcd[i/4] = 0;
+        for (i = 0x028; i <= 0x3CC; i += 4) clcd[i/4] = 0;
+
+        /* Zero MIXER 0x000-0x800 */
+        for (i = 0x000; i <= 0x800; i += 4) mixer[i/4] = 0;
+
+        /* Zero DISP 0x000-0x3D4 */
+        for (i = 0x000; i <= 0x3D4; i += 4) disp[i/4] = 0;
+
+        vlog("  VPP zeroed: CLCD=%08lx MIXER=%08lx DISP=%08lx DMA=%08lx",
+             (unsigned long)clcd[0], (unsigned long)mixer[0],
+             (unsigned long)disp[0], (unsigned long)clcd[0x010/4]);
+    }
 
     uint32_t pwrcon_after = PWRCON(0);
     vlog("PWRCON0 after reset:  0x%08lx", (unsigned long)pwrcon_after);
     vlog("Bits 14-16 cleared: %s",
          ((pwrcon_after & 0x1C000) == 0) ? "YES" : "NO");
-    vlog("VPP after reset: CLCD=%08lx MIXER=%08lx DISP=%08lx DMA=%08lx",
-         (unsigned long)CLCD_CTRL, (unsigned long)MIXER_CTRL,
-         (unsigned long)DISP_CTRL, (unsigned long)CLCD_REG(0x010));
 
     int panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
@@ -853,55 +873,26 @@ enum plugin_status plugin_start(const void *parameter)
      * LCD pins hardwired to MCU controller → data MUST flow through compositor
      * + MCU passthrough. Batch 5 was wrong (software xrefs ≠ hardware path). */
 
-    /* Step B2: Display compositor at 0x38900000 (ROM 0x14df08).
-     * This block sits between VPP output and MCU LCD controller.
-     *
-     * IMPORTANT: Timing regs +0x1EC-0x1FC are set by iBoot (SRAM 0x890d2dc),
-     * NOT by the ROM. Rockbox doesn't touch 0x38900000 at all, so Apple's
-     * boot values should still be in the hardware registers. We must NOT
-     * clobber them with a full re-init.
-     *
-     * Strategy: dump current state, then do MINIMAL config — only set
-     * what we need, preserve Apple's boot state where possible. */
+    /* v106: Display compositor at 0x38900000 — ALWAYS fresh init.
+     * 40 agents proved: "preserve RetailOS" strategy is fundamentally flawed.
+     * RetailOS configured compositor for ITS OWN VPP config. Apple just
+     * ungates from iBoot POR (C2: ZERO delay between ungate and first write).
+     * Gate→ungate to get clean state, then full init from ROM trace. */
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v93: Compositor clocks NOT gated in Phase 2 — RetailOS state preserved.
-         * If RetailOS had compositor configured (cfg=0x41118101), use it directly.
-         * This tests the hypothesis that our reset destroys a working state. */
-
-        bool comp_alive = (comp[0x008/4] == 0x41118101);
-        vlog("  Compositor: %s (cfg=0x%08lx ctrl=0x%08lx +0x200=0x%08lx)",
-             comp_alive ? "ALIVE from RetailOS!" : "cold POR",
+        /* Log stale compositor state before reset */
+        vlog("  Compositor stale: cfg=0x%08lx ctrl=0x%08lx +0x200=0x%08lx",
              (unsigned long)comp[0x008/4],
              (unsigned long)comp[0x000/4],
              (unsigned long)comp[0x200/4]);
-        if (comp_alive) {
-            vlog("  RetailOS state: +0x10=%08lx +0xD4=%08lx +0x24=%08lx",
-                 (unsigned long)comp[0x010/4],
-                 (unsigned long)comp[0x0D4/4],
-                 (unsigned long)comp[0x024/4]);
-            vlog("  RetailOS timing: %08lx %08lx %08lx %08lx %08lx",
-                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
-                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
-                 (unsigned long)comp[0x1FC/4]);
-        }
 
-        if (!comp_alive) {
-            /* Cold POR — do gate/ungate reset for clean state */
-            comp[0x000/4] &= ~1;
-            { int i; for (i = 0; i < 100; i++) {
-                if (comp[0x000/4] & 2) break;
-                for (volatile int d2 = 0; d2 < 10000; d2++);
-            }}
-            PWRCON(0) |= 0x2080;
-            for (volatile int d2 = 0; d2 < 50000; d2++);
-            PWRCON(0) &= ~0x2080;
-            for (volatile int d2 = 0; d2 < 50000; d2++);
-            vlog("  Compositor reset done (cold POR path)");
-        } else {
-            vlog("  Compositor preserved — skipping ALL compositor init");
-        }
+        /* Gate compositor clocks, then ungate for POR state */
+        PWRCON(0) |= 0x2080;    /* gate bits 7+13 */
+        { volatile int d; for (d = 0; d < 10000; d++); }
+        PWRCON(0) &= ~0x2080;   /* ungate */
+        { volatile int d; for (d = 0; d < 10000; d++); }
+        vlog("  Compositor clocks reset (gate→ungate)");
 
         /* Dump compositor state (iBoot's live state or POR defaults) */
         vlog("  --- Compositor state (0x38900000) ---");
@@ -977,11 +968,8 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("    CTRL detail: +000=0x%08lx (bit0=en, bit1=idle?)",
              (unsigned long)comp[0]);
 
-        if (!comp_alive) {
-        /* v88: Full compositor init — only for cold POR path.
-         * When compositor is ALIVE from iBoot, skip ALL of this. */
-
-        /* Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
+        /* v106: Full compositor init — ALWAYS, never preserve RetailOS.
+         * Apple's EXACT init order from FUN_0014d240 (ROM 0x14d240).
          * Order is CRITICAL — bit 30 must be LAST (confirmed by agent:
          * setting bit 30 before viewport → invalid state → backpressure
          * → CLCD DMA stalls. This explains DMA active in v31 but not v34). */
@@ -1017,7 +1005,11 @@ enum plugin_status plugin_start(const void *parameter)
          * complete may cause hardware to output before ready.
          * RE: FUN_000d8920 at ROM 0xd8920 is the LAST RMW on +0x008. */
         comp[0x008/4] = 0x01118101;  /* everything EXCEPT bit 30 */
-        comp[0x00C/4] = 0x00FF0000;  /* v104: bright RED background */
+        /* v106: BG_COLOR is XBGR (Samsung FIMD heritage), NOT XRGB!
+         * F1+F3 agents: S3C6410 WxBGCOL = [23:16]=B, [15:8]=G, [7:0]=R.
+         * 0x00FF0000 was showing BLUE because high byte = B channel.
+         * RED = 0x000000FF, GREEN = 0x0000FF00, BLUE = 0x00FF0000. */
+        comp[0x00C/4] = 0x000000FF;  /* v106: bright RED in XBGR format */
         /* Pipeline enable — Apple ORs 0x10080, NOT 0x10081.
          * Bit 0 of +0x200 is NOT master enable (that's +0x000).
          * FUN_000b1328(0) clears bit 0, then only ORs 0x10080. */
@@ -1120,7 +1112,6 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("  Cleared comp+0x228-0x2A4 (TV dimension POR defaults)");
 
         /* v97: DO NOT fire compositor GO yet — deferred to after LCD passthrough. */
-        } /* end if (!comp_alive) */
     }
     vlog("  Compositor configured (GO deferred to after LCD passthrough)");
 
@@ -1408,10 +1399,11 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         for (int sec = 0; sec < 10; sec++) {
-            /* v105: Cycle BG_COLOR (XRGB confirmed by 7-stage pipeline trace) */
-            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED */
+            rb->backlight_on();  /* v106: keep backlight alive (E1) */
+            /* v106: XBGR format — RED=0x000000FF, GREEN=0x0000FF00, BLUE=0x00FF0000 */
+            if (sec == 0) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }      /* RED (XBGR) */
             else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
-            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE */
+            else if (sec == 6) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }  /* BLUE (XBGR) */
             /* Wait for LCD bus idle */
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
