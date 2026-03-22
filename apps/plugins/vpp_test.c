@@ -535,7 +535,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v92 ===");
+    vlog("=== VPP Pipeline Test v93 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -567,7 +567,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v92");
+    rb->splashf(HZ, "VPP v93");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -606,20 +606,24 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)DISP_TRIGGER);
     vlog("  Stale DMA: %08lx", (unsigned long)CLCD_REG(0x010));
 
-    /* Step 3: Disable all VPP blocks and wait for idle */
-    CLCD_CTRL &= ~1;
-    MIXER_CTRL &= ~1;
+    /* Step 3: Disable VPP blocks (Apple order: DISP→MIXER→CLCD) + wait idle */
+    DISP_TRIGGER &= ~0xF;
     DISP_CTRL &= ~1;
-    DISP_TRIGGER &= ~0xF;  /* clear latch bits */
-    { volatile int d; for (d = 0; d < 100000; d++); }
+    { volatile int d; for (d = 0; d < 50000; d++); }
+    MIXER_CTRL &= ~1;
+    { volatile int d; for (d = 0; d < 50000; d++); }
+    CLCD_CTRL &= ~1;
+    { volatile int d; for (d = 0; d < 50000; d++); }
 
-    /* Step 4: Gate ALL clocks (VPP + compositor) — full power-down */
-    PWRCON(0) |= (0x1C000 | 0x2080);
+    /* Step 4: Gate VPP clocks ONLY (NOT compositor!) — reset VPP blocks.
+     * v93: Keep compositor clocks ON to preserve RetailOS compositor state.
+     * Our gate/ungate was destroying RetailOS's working compositor config.
+     * If RetailOS had compositor running correctly, its stale state may be
+     * closer to "working" than our fresh POR init. */
+    PWRCON(0) |= 0x1C000;  /* gate VPP blocks only */
     { volatile int d; for (d = 0; d < 100000; d++); }
-
-    /* Step 5: Ungate — blocks now at POR-equivalent state */
-    vpp_clocks_enable(true);
-    PWRCON(0) &= ~0x2080;
+    vpp_clocks_enable(true);  /* ungate VPP blocks — now at POR */
+    /* Compositor clocks stay on: PWRCON(0) bits 7+13 were cleared in Step 1 */
     { volatile int d; for (d = 0; d < 200000; d++); }
 
     uint32_t pwrcon_after = PWRCON(0);
@@ -823,13 +827,26 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v91: Compositor clocks already enabled in Phase 2 reset.
-         * iBoot NEVER configures compositor (proven v89). Always cold POR. */
+        /* v93: Compositor clocks NOT gated in Phase 2 — RetailOS state preserved.
+         * If RetailOS had compositor configured (cfg=0x41118101), use it directly.
+         * This tests the hypothesis that our reset destroys a working state. */
 
         bool comp_alive = (comp[0x008/4] == 0x41118101);
-        vlog("  Compositor: %s (cfg=0x%08lx)",
-             comp_alive ? "ALIVE (unexpected!)" : "cold POR",
-             (unsigned long)comp[0x008/4]);
+        vlog("  Compositor: %s (cfg=0x%08lx ctrl=0x%08lx +0x200=0x%08lx)",
+             comp_alive ? "ALIVE from RetailOS!" : "cold POR",
+             (unsigned long)comp[0x008/4],
+             (unsigned long)comp[0x000/4],
+             (unsigned long)comp[0x200/4]);
+        if (comp_alive) {
+            vlog("  RetailOS state: +0x10=%08lx +0xD4=%08lx +0x24=%08lx",
+                 (unsigned long)comp[0x010/4],
+                 (unsigned long)comp[0x0D4/4],
+                 (unsigned long)comp[0x024/4]);
+            vlog("  RetailOS timing: %08lx %08lx %08lx %08lx %08lx",
+                 (unsigned long)comp[0x1EC/4], (unsigned long)comp[0x1F0/4],
+                 (unsigned long)comp[0x1F4/4], (unsigned long)comp[0x1F8/4],
+                 (unsigned long)comp[0x1FC/4]);
+        }
 
         if (!comp_alive) {
             /* Cold POR — do gate/ungate reset for clean state */
