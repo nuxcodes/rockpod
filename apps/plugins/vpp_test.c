@@ -786,21 +786,32 @@ enum plugin_status plugin_start(const void *parameter)
     {
         volatile uint32_t *comp = (volatile uint32_t *)0x38900000;
 
-        /* v88: RESTORE compositor gate/ungate reset (v76 gold).
-         * Compositor CAN cold-start (proven: GO changes comp+0x010).
-         * Gate/ungate brings it to clean POR for our full init. */
+        /* v88: Detect if bootloader preserved compositor from iBoot.
+         * If comp+0x008 shows iBoot's config, skip reset — use directly.
+         * If cold POR, do gate/ungate reset then full init. */
         PWRCON(0) &= ~0x2080;  /* ensure compositor clocks ON */
         for (volatile int d = 0; d < 50000; d++);
-        comp[0x000/4] &= ~1;   /* disable compositor */
-        { int i; for (i = 0; i < 100; i++) {
-            if (comp[0x000/4] & 2) break;
-            for (volatile int d = 0; d < 10000; d++);
-        }}
-        PWRCON(0) |= 0x2080;   /* GATE clocks */
-        for (volatile int d = 0; d < 50000; d++);
-        PWRCON(0) &= ~0x2080;  /* UNGATE = clean POR */
-        for (volatile int d = 0; d < 50000; d++);
-        vlog("  Compositor reset done (v88 gate/ungate)");
+
+        bool comp_alive = (comp[0x008/4] == 0x41118101);
+        vlog("  Compositor: %s (cfg=0x%08lx)",
+             comp_alive ? "ALIVE from iBoot" : "cold POR",
+             (unsigned long)comp[0x008/4]);
+
+        if (!comp_alive) {
+            /* Cold POR — do gate/ungate reset for clean state */
+            comp[0x000/4] &= ~1;
+            { int i; for (i = 0; i < 100; i++) {
+                if (comp[0x000/4] & 2) break;
+                for (volatile int d2 = 0; d2 < 10000; d2++);
+            }}
+            PWRCON(0) |= 0x2080;
+            for (volatile int d2 = 0; d2 < 50000; d2++);
+            PWRCON(0) &= ~0x2080;
+            for (volatile int d2 = 0; d2 < 50000; d2++);
+            vlog("  Compositor reset done (cold POR path)");
+        } else {
+            vlog("  Compositor preserved — skipping reset");
+        }
 
         /* Dump boot state AFTER reset (should be POR defaults) */
         vlog("  --- Compositor boot state (0x38900000) ---");
