@@ -553,7 +553,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v94 ===");
+    vlog("=== VPP Pipeline Test v95 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -585,7 +585,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v94");
+    rb->splashf(HZ, "VPP v95");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation.
@@ -600,6 +600,21 @@ enum plugin_status plugin_start(const void *parameter)
 
     uint32_t pwrcon_before = PWRCON(0);
     vlog("PWRCON0 before: 0x%08lx", (unsigned long)pwrcon_before);
+
+    /* v95: PWRCON(2) gate 64 — VPP domain clock.
+     * Apple enables this BEFORE any VPP register access via
+     * func_0x000265e4(1, 0x40) in vpp_power_onoff.
+     * Gate 64 = PWRCON(2) bit 0. May control AXI bus/DMA fabric clock.
+     * Rockbox NEVER touches PWRCON(2) — it stays at iBoot's state.
+     * PWRCON(2) is at CLK_BASE + 0x58 = 0x3C500058. */
+    {
+        volatile uint32_t *pwrcon2 = (volatile uint32_t *)0x3C500058;
+        uint32_t pc2_before = *pwrcon2;
+        *pwrcon2 &= ~1;  /* clear bit 0 = enable gate 64 */
+        vlog("PWRCON2: 0x%08lx -> 0x%08lx (gate64=%s)",
+             (unsigned long)pc2_before, (unsigned long)*pwrcon2,
+             (pc2_before & 1) ? "was GATED, now ENABLED" : "already enabled");
+    }
 
     vpp_svid_enable(true);
     { volatile int d; for (d = 0; d < 500000; d++); } /* PLL settle */
@@ -720,13 +735,21 @@ enum plugin_status plugin_start(const void *parameter)
      * Bit 1 = deinterlace path (vpp_set_deinterlace for LCD)
      * Bit 2 = interlace flag (vpp_set_interlace — NOT for progressive!)
      * v1-v47 had 0x07 (all 3 bits) — bit 2 WRONG for progressive LCD. */
-    /* v94: Apple's vpp_set_interlace does BIC #4 then self-write on MIXER+0x004.
-     * vpp_set_deinterlace does BIC #2 then ORR #2. vtable[0x20] does ORR #1.
-     * Replicate with self-write barriers between each RMW step. */
+    /* v95: MIXER+0x004 has PER-LAYER enable bits beyond master/deinterlace:
+     *   bit 0 = master enable (vtable[0x20])
+     *   bit 1 = deinterlace path (vpp_set_deinterlace)
+     *   bit 2 = interlace flag (NOT for progressive)
+     *   bit 3 = layers 0-3 enable (vpp_vtable_dispatch cases 0-3)
+     *   bit 4 = LAYER 5 (VIDEO) enable (vpp_vtable_dispatch case 5)
+     *   bit 5 = layer 4 enable (vpp_vtable_dispatch case 4)
+     * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
+     * Without bit 4, MIXER won't pull data from CLCD for video layer.
+     * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
     MIXER_L5_EN = (MIXER_L5_EN & ~0x4);  /* vpp_set_interlace(0): clear bit 2 */
     { uint32_t tmp = MIXER_L5_EN; MIXER_L5_EN = tmp; }  /* barrier */
     MIXER_L5_EN = (MIXER_L5_EN & ~0x2) | 0x2;  /* vpp_set_deinterlace(1): set bit 1 */
-    MIXER_L5_EN = MIXER_L5_EN | 0x1;  /* vtable[0x20](1): set bit 0 */
+    MIXER_L5_EN = MIXER_L5_EN | 0x1;  /* vtable[0x20](1): set bit 0 = master enable */
+    MIXER_L5_EN = MIXER_L5_EN | 0x10; /* vpp_vtable_dispatch(5,1): bit 4 = layer 5 enable */
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
