@@ -142,8 +142,11 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
             else
             {
                 bool nf = linedes->no_fill;
+                int h = linedes->height;
                 *linedes = *data;
                 linedes->no_fill = nf;
+                if (h != -1)
+                    linedes->height = h;
             }
         }
         break;
