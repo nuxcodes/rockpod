@@ -337,6 +337,29 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                        sizeof(struct skin_viewport));
                 deco_vp_element = viewport;
                 have_deco = true;
+
+                /* For thumbnail lists: fill row with card color, skip
+                 * glyph rendering — overlay handles all 4 corners */
+                if (item_h > listcfg[screen]->height)
+                {
+                    struct viewport fill_vp;
+                    viewport_set_defaults(&fill_vp, screen);
+                    fill_vp.x = parent->x;
+                    fill_vp.y = parent->y + item_h * cur_line;
+                    fill_vp.width = parent->width;
+                    fill_vp.height = item_h;
+                    display->set_viewport(&fill_vp);
+                    display->set_drawmode(DRMODE_SOLID);
+                    display->set_foreground(margin_fill_color);
+                    display->fillrect(0, 0, parent->width, item_h);
+
+                    if (!is_selected)
+                    {
+                        skin_viewport->vp.x = original_x;
+                        skin_viewport->vp.y = original_y;
+                    }
+                    continue;
+                }
             }
 
             if (has_margin && !margin_painted && original_x > 0)
@@ -444,11 +467,12 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             {
                 int parent_bottom = parent->y + parent->height;
 
-                /* TL corner: top half of glyph at row top */
+                /* TL+TR corner: top half of glyph at row top */
                 struct skin_viewport tl_vp;
                 memcpy(&tl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 tl_vp.vp.x = parent->x;
                 tl_vp.vp.y = row_top;
+                tl_vp.vp.width = parent->width;
                 tl_vp.vp.height = half_h;
                 if (tl_vp.vp.y + tl_vp.vp.height > parent_bottom)
                     tl_vp.vp.height = parent_bottom - tl_vp.vp.y;
@@ -461,7 +485,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 if (tl_vp.vp.height > 0)
                 {
                 display->set_viewport(&tl_vp.vp);
-                display->set_foreground(tl_vp.vp.fg_pattern);
+                display->set_foreground(tl_vp.vp.bg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
@@ -470,11 +494,12 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 wps_display_images(&wps, &tl_vp.vp);
                 }
 
-                /* BL corner: bottom half of glyph at row bottom */
+                /* BL+BR corner: bottom half of glyph at row bottom */
                 struct skin_viewport bl_vp;
                 memcpy(&bl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 bl_vp.vp.x = parent->x;
                 bl_vp.vp.y = row_top + item_h - half_h;
+                bl_vp.vp.width = parent->width;
                 bl_vp.vp.height = half_h;
                 if (bl_vp.vp.y + bl_vp.vp.height > parent_bottom)
                     bl_vp.vp.height = parent_bottom - bl_vp.vp.y;
@@ -487,7 +512,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
                 display->set_viewport(&bl_vp.vp);
-                display->set_foreground(bl_vp.vp.fg_pattern);
+                display->set_foreground(bl_vp.vp.bg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
