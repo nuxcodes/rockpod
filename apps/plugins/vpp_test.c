@@ -153,56 +153,41 @@ static void vpp_lcd_window(int x, int y, int w, int h)
     vpp_lcd_config(LCD_FRAME_MODE);
 }
 
-/* v115: Per-frame push with selectable trigger type.
- * use_p18: 0=self-write (P9→P9), 1=P18→P9 mode switch (Apple's pattern).
- * GRAM setup outside bracket (F2: panel state persists).
- * Hold bracket 50ms for full frame (J5: frame ~47ms at P9 bus rate). */
-static void vpp_push_frame(int panel_type, int use_p18)
+/* v116: v110's PROVEN push pattern (GRAM inside bracket + RAW LCD_CON restore)
+ * + 50ms hold for full frame. 348 agents verified this is the only working pattern.
+ * T1: LCD_CON write restarts WR# strobe generator → pulls from compositor FIFO.
+ * R3: GRAM commands between P18/P9 switches = bus activity needed for trigger.
+ * pump_count: 1 = single push + 50ms hold (UNTESTED), 200 = v110 proven pump. */
+static void vpp_push_frame(int panel_type, int pump_count)
 {
-    /* 1. GRAM setup OUTSIDE bracket in P18 */
-    vpp_lcd_config(0x80000DA9);
-    if (panel_type >= 2) {
-        vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-        vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-        vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x202);
-    } else {
-        vpp_lcd_config(0x80000C21);
-        vpp_lcd_cmd(0x2A);
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-        vpp_lcd_cmd(0x2B);
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-        vpp_lcd_cmd(0x2C);
+    for (int pump = 0; pump < pump_count; pump++) {
+        /* Bus idle before opening */
+        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+        /* Open bracket */
+        *(volatile uint32_t *)(0x38300080) = 1;
+
+        /* v110's EXACT trigger: P18 switch + GRAM cmd + RAW LCD_CON restore */
+        {
+            uint32_t saved = LCD_CON;
+            vpp_lcd_config(0x80000DA9);  /* P18 (bus-idle before switch) */
+            if (panel_type >= 2)
+                vpp_lcd_cmd(0x202);      /* GRAM write cmd = bus activity */
+            else
+                vpp_lcd_cmd(0x2C);
+            LCD_CON = saved;             /* RAW P9 restore = TRIGGER */
+        }
+
+        /* For single push: hold 50ms for full frame (T4: Apple holds ~47ms) */
+        if (pump_count == 1)
+            { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 50000); }
+
+        /* Close bracket */
+        *(volatile uint32_t *)(0x38300080) = 0;
+
+        /* Bus idle after closing */
+        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
     }
-    vpp_lcd_config(0x81100DB9);
-
-    /* 2. Wait bus idle */
-    { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-
-    /* 3. Open bracket + trigger */
-    *(volatile uint32_t *)(0x38300080) = 1;
-    if (use_p18) {
-        /* P18→P9 trigger (Apple's vtable pattern, bus-idle checked inside) */
-        vpp_lcd_config(0x80000DA9);
-        vpp_lcd_config(0x81100DB9);
-    } else {
-        /* Self-write trigger */
-        uint32_t v = LCD_CON; LCD_CON = v;
-    }
-
-    /* 4. Hold 50ms for full frame */
-    { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 50000); }
-
-    /* 5. Close bracket */
-    *(volatile uint32_t *)(0x38300080) = 0;
-
-    /* 6. Wait residual bus activity */
-    { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 }
 
 /* ---- VPP Power Control ---- */
@@ -606,7 +591,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v115 ===");
+    vlog("=== VPP Pipeline Test v116 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -638,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v115");
+    rb->splashf(HZ, "VPP v116");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1039,6 +1024,7 @@ enum plugin_status plugin_start(const void *parameter)
 
         /* Step 2-3: Basic config */
         comp[0x004/4] = 1;
+        comp[0x004/4] = 1;  /* v116: MODE register (Q3: Apple writes this, we didn't) */
         comp[0x020/4] = 1;
         /* v59b: THE MISSING PIECE — compositor panel type selector!
          * vtable[0x6c](obj, 1, 0) at ROM 0x14d914 writes 0x389000D4 = 1.
@@ -1422,66 +1408,23 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v115: Dual trigger test — compare self-write vs P18→P9 with GRAM readback.
-     * Also: GO re-fire to latch BG_COLOR (N1: shadow register needs GO). */
-    vlog("Phase 7b: Dual trigger test (self-write vs P18→P9)");
+    /* v116: Phase 7b — single push test (GRAM inside bracket + 50ms hold).
+     * UNTESTED combination: v110 pattern + long hold. If it works = performant.
+     * If not, Phase 7c uses proven 200× pump as fallback. */
+    vlog("Phase 7b: Single push test (v110 pattern + 50ms hold)");
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
-
-        /* Test A: self-write trigger with BLUE */
         comp_p[0x00C/4] = 0x00FF0000;  /* blue XBGR */
-        comp_p[0] = 1;  /* GO to latch BG_COLOR */
-        vpp_push_frame(panel_type, 0);  /* self-write */
-        /* GRAM readback */
-        {
-            *(volatile uint32_t *)(0x38300070) = 0;
-            for (volatile int d = 0; d < 10000; d++);
-            uint32_t save_con = LCD_CON;
-            uint32_t gram_a = 0xDEAD;
-            if (panel_type >= 2) {
-                vpp_lcd_config(0x80000DA8);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(160);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(120);
-                vpp_lcd_cmd(0x202);
-                while (!(LCD_STATUS & 0x2));
-                LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
-                LCD_RDATA = 0; while (!(LCD_STATUS & 1)); gram_a = LCD_DBUFF;
-            }
-            LCD_CON = save_con;
-            *(volatile uint32_t *)(0x38300070) = 1;
-            vlog("  TestA(self-write,BLUE): GRAM[160,120]=%08lx", (unsigned long)gram_a);
-        }
-
-        /* Test B: P18→P9 trigger with RED */
-        comp_p[0x00C/4] = 0x000000FF;  /* red XBGR */
         comp_p[0] = 1;  /* GO to latch */
-        vpp_push_frame(panel_type, 1);  /* P18→P9 */
-        /* GRAM readback */
-        {
-            *(volatile uint32_t *)(0x38300070) = 0;
-            for (volatile int d = 0; d < 10000; d++);
-            uint32_t save_con = LCD_CON;
-            uint32_t gram_b = 0xDEAD;
-            if (panel_type >= 2) {
-                vpp_lcd_config(0x80000DA8);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(160);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(120);
-                vpp_lcd_cmd(0x202);
-                while (!(LCD_STATUS & 0x2));
-                LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
-                LCD_RDATA = 0; while (!(LCD_STATUS & 1)); gram_b = LCD_DBUFF;
-            }
-            LCD_CON = save_con;
-            *(volatile uint32_t *)(0x38300070) = 1;
-            vlog("  TestB(P18-P9,RED): GRAM[160,120]=%08lx", (unsigned long)gram_b);
-        }
-        vlog("  DMA=%08lx LCD+0x8C=%08lx",
+        vpp_push_frame(panel_type, 1);  /* single push */
+        vlog("  Single push done. DMA=%08lx LCD+0x8C=%08lx",
              (unsigned long)CLCD_REG(0x010),
              (unsigned long)*(volatile uint32_t *)(0x3830008C));
     }
 
-    /* v115: Color cycle with GO re-fire + P18→P9 trigger */
-    vlog("Phase 7c: Color cycle (GO re-fire + P18 trigger, 10s)");
+    /* v116: Phase 7c — color cycle with 200× pump (PROVEN in v110/v112).
+     * GO re-fire for each color (N1: shadow register latch). */
+    vlog("Phase 7c: Color cycle (200x pump, 10s)");
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         static const struct { uint32_t color; const char *name; } colors[] = {
@@ -1492,11 +1435,10 @@ enum plugin_status plugin_start(const void *parameter)
             rb->backlight_on();
             int ci = sec / 2;
             if (ci >= 5) ci = 4;
-            /* Write BG_COLOR + GO re-fire to latch (N1: shadow register) */
             comp_p[0x00C/4] = colors[ci].color;
-            comp_p[0] = 1;  /* GO re-fire */
-            vpp_push_frame(panel_type, 1);  /* P18→P9 trigger */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 940000); }
+            comp_p[0] = 1;  /* GO re-fire to latch BG_COLOR */
+            vpp_push_frame(panel_type, 200);  /* 200× pump (PROVEN) */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 900000); }
             vlog("  t=%d %s(0x%06lx): DMA=%08lx LCD+0x8C=%08lx",
                  sec, colors[ci].name, (unsigned long)colors[ci].color,
                  (unsigned long)CLCD_REG(0x010),
