@@ -788,7 +788,9 @@ void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
     if (y_offset != 0)
     {
         int ch = display->getcharheight();
-        info.line_desc.height = ch + 2 * y_offset;
+        int h = ch + 2 * y_offset;
+        if (h == -1) h = -2;  /* avoid -1 "use default" sentinel */
+        info.line_desc.height = h;
     }
 
     struct align_pos * align = &info.align;

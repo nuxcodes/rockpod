@@ -306,10 +306,12 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 if (skin_viewport->vp.width < 0)
                     skin_viewport->vp.width = 0;
             }
-            /* Expand text VP to full item height for centering */
-            if (has_margin && item_h > listcfg[screen]->height
-                && original_x > 0)
+            /* Expand all VPs to full item height when margin present */
+            if (has_margin && item_h > listcfg[screen]->height)
+            {
                 skin_viewport->vp.height = item_h;
+                skin_viewport->vp.y = parent->y + (item_h * cur_line);
+            }
             display->set_viewport(&skin_viewport->vp);
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
             /* Dynamic colors: resolve from stored originals */
