@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v126 ===");
+    vlog("=== VPP Pipeline Test v127 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v126");
+    rb->splashf(HZ, "VPP v127");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1092,12 +1092,39 @@ enum plugin_status plugin_start(const void *parameter)
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
 
-        /* v111: Compositor scaler-area writes REMOVED (A13+D2 verified).
-         * Apple NEVER writes +0x030/034/04C/050/054 during compositor_init.
-         * FUN_0014d93c (scaler config) has ZERO callers in ROM.
-         * D2 confirmed: harmless in bypass mode but violates STRICT RE RULE.
-         * v66 proved adjacent +0x038-0x044 writes kill DMA.
-         * +0x228-0x2A4 zeroing also removed — zero ROM backing. */
+        /* v127: Scaler geometry + gap zeroing RESTORED for cold boot.
+         *
+         * v111 removed these citing "Apple NEVER writes during compositor_init"
+         * and "v66 proved writes kill DMA." But:
+         *   - The "kills DMA" finding was about +0x038-0x044 (layer DMA buffer
+         *     addresses), NOT +0x030-0x054 (scaler geometry). Different regs.
+         *   - v110 HAD these writes and DMA worked fine.
+         *   - Apple ungates from POR where these are ZERO. We ungate from POR
+         *     where +0x228-0x2A4 contain TV-resolution defaults:
+         *       +228=0x01e001e0 +258=0x10001000 +268=0x780 +26c=0x600
+         *     These look like 480p/1920 values. On cold boot, the compositor
+         *     thinks it's driving a TV, not a 320x240 LCD.
+         *   - Warm boot works because a PREVIOUS run already zeroed these.
+         *
+         * Fix: Set scaler geometry to 320x240 LCD and zero the gap registers
+         * that contain stale TV-resolution POR defaults.
+         * DO NOT touch +0x038-0x044 (those really do kill DMA). */
+
+        /* Scaler geometry — tell compositor about 320x240 LCD output */
+        comp[0x030/4] = 0x00000000;          /* source start (0,0) */
+        comp[0x034/4] = 0x00F00140;          /* source end: (240<<16)|320 */
+        comp[0x04C/4] = 0x10001000;          /* scale 1:1 in 4.12 FP */
+        comp[0x050/4] = 0x00000000;          /* centering offset: none */
+        comp[0x054/4] = (320 << 16) | 240;   /* output dimensions: 320x240 */
+
+        /* Zero gap registers +0x228 to +0x2A4 that hold TV-res POR defaults.
+         * On cold boot these are non-zero (e.g. 0x01e001e0, 0x780, 0x600).
+         * On warm boot they're already zero from previous run — harmless. */
+        {
+            int gi;
+            for (gi = 0x228; gi <= 0x2A4; gi += 4)
+                comp[gi / 4] = 0;
+        }
 
         /* v97: DO NOT fire compositor GO yet — deferred to after LCD passthrough. */
     }
