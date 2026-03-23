@@ -124,7 +124,9 @@ static void put_icon(struct screen *display, int x, int y,
     /* Need to change the drawmode:
      * mono icons should behave like text, inverted on the selector bar
      * native (colored) icons should be drawn as-is */
-    if (get_icon_format(display->screen_type) == FORMAT_MONO && (line->style & STYLE_INVERT))
+    if (!line->no_fill
+        && get_icon_format(display->screen_type) == FORMAT_MONO
+        && (line->style & STYLE_INVERT))
         drmode = DRMODE_SOLID | DRMODE_INVERSEVID;
 
     display->set_drawmode(drmode);
@@ -139,7 +141,7 @@ static void put_text(struct screen *display,
 {
     /* set drawmode because put_icon() might have changed it */
     unsigned drmode = DRMODE_FG;
-    if (line->style & STYLE_INVERT)
+    if (!line->no_fill && (line->style & STYLE_INVERT))
         drmode = DRMODE_SOLID | DRMODE_INVERSEVID;
 
     display->set_drawmode(drmode);
@@ -304,6 +306,9 @@ static void style_line(struct screen *display,
     int height = line->height == -1 ? display->getcharheight() : line->height;
     int bar_height = height;
 
+    if (line->no_fill)
+        goto setup_colors;
+
     /* mask out gradient and colorbar styles for non-color displays */
     if (display->depth < 16 && (style & (STYLE_COLORBAR|STYLE_GRADIENT)))
     {
@@ -366,6 +371,7 @@ static void style_line(struct screen *display,
         case STYLE_NONE:
             break;
     }
+setup_colors:
 #if (LCD_DEPTH > 1 || (defined(LCD_REMOTE_DEPTH) && LCD_REMOTE_DEPTH > 1))
     /* prepare fg and bg colors for text drawing, be careful to not
      * override any previously set colors unless mandated by the style */

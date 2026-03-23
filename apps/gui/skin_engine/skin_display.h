@@ -38,7 +38,8 @@ void wps_display_images(struct gui_wps *gwps, struct viewport* vp);
 
 
 void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
-                        struct skin_viewport* skin_viewport, unsigned long refresh_type);
+                        struct skin_viewport* skin_viewport, unsigned long refresh_type,
+                        bool no_fill);
 
 
 /* Evaluate the conditional that is at *token_index and return whether a skip

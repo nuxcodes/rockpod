@@ -600,10 +600,12 @@ void write_line(struct screen *display, struct align_pos *format_align,
     else
     {
         linedes->scroll = false;
-        /* clear the line first */
-        display->set_drawmode(DRMODE_SOLID|DRMODE_INVERSEVID);
-        display->fillrect(0, line*string_height, viewport_width, string_height);
-        display->set_drawmode(DRMODE_SOLID);
+        if (!linedes->no_fill)
+        {
+            display->set_drawmode(DRMODE_SOLID|DRMODE_INVERSEVID);
+            display->fillrect(0, line*string_height, viewport_width, string_height);
+            display->set_drawmode(DRMODE_SOLID);
+        }
 
         /* Nasty hack: we output an empty scrolling string,
         which will reset the scroller for that line */

@@ -132,13 +132,19 @@ static bool do_non_text_tags(struct gui_wps *gwps, struct skin_draw_info *info,
                 unsigned tc  = linedes->text_color,
                          lc  = linedes->line_color,
                          lec = linedes->line_end_color;
+                bool nf = linedes->no_fill;
                 *linedes = *data;
                 linedes->text_color     = tc;
                 linedes->line_color     = lc;
                 linedes->line_end_color = lec;
+                linedes->no_fill        = nf;
             }
             else
+            {
+                bool nf = linedes->no_fill;
                 *linedes = *data;
+                linedes->no_fill = nf;
+            }
         }
         break;
 #endif
@@ -759,7 +765,8 @@ bool skin_render_alternator(struct skin_element* element, struct skin_draw_info 
 }
 
 void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
-                        struct skin_viewport* skin_viewport, unsigned long refresh_type)
+                        struct skin_viewport* skin_viewport, unsigned long refresh_type,
+                        bool no_fill)
 {
     struct screen *display = gwps->display;
     char linebuf[MAX_LINE];
@@ -777,6 +784,7 @@ void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
         .offset = 0,
         .line_desc = LINE_DESC_DEFINIT,
     };
+    info.line_desc.no_fill = no_fill;
 
     struct align_pos * align = &info.align;
     bool needs_update, update_all = false;
@@ -996,7 +1004,7 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         /* render */
         if (viewport->children_count)
             skin_render_viewport(get_child(viewport->children, 0), gwps,
-                                 skin_viewport, vp_refresh_mode);
+                                 skin_viewport, vp_refresh_mode, false);
 
         refresh_mode = old_refresh_mode;
     }

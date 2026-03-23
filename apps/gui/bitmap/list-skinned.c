@@ -42,51 +42,12 @@
 #include "skin_engine/skin_display.h"
 #include "skin_engine/skin_albumart_color.h"
 #include "appevents.h"
-#include "bmp.h"
 
 static struct listitem_viewport_cfg *listcfg[NB_SCREENS] = {NULL};
 static struct gui_synclist *current_list;
 
 static int current_row;
 static int current_column;
-
-/* Corner overlay BMP loaded from the current theme's SBS directory */
-#define CORNER_BMP_BUF_SIZE 2048
-static struct bitmap corner_overlay_bm;
-static unsigned char corner_overlay_buf[CORNER_BMP_BUF_SIZE] CACHEALIGN_ATTR;
-static bool corner_overlay_loaded = false;
-static bool corner_overlay_tried = false;
-
-static void load_margin_corner_bmp(void)
-{
-    static const char *filenames[] = {
-        "LabelEdgeLeft.bmp",
-        "StatusOverlayLeft.bmp",
-        NULL
-    };
-    char path[MAX_PATH];
-    int i;
-
-    corner_overlay_tried = true;
-    corner_overlay_loaded = false;
-    corner_overlay_bm.data = corner_overlay_buf;
-
-    for (i = 0; filenames[i]; i++)
-    {
-        snprintf(path, sizeof(path), ROCKBOX_DIR "/wps/%s/%s",
-                 global_settings.sbs_file, filenames[i]);
-        corner_overlay_bm.width = 0;
-        corner_overlay_bm.height = 0;
-        if (read_bmp_file(path, &corner_overlay_bm, CORNER_BMP_BUF_SIZE,
-                          FORMAT_ANY | FORMAT_TRANSPARENT, NULL) > 0
-            && corner_overlay_bm.width > 0
-            && corner_overlay_bm.height > 0)
-        {
-            corner_overlay_loaded = true;
-            return;
-        }
-    }
-}
 
 void skinlist_set_cfg(enum screen_type screen,
                       struct listitem_viewport_cfg *cfg)
@@ -108,11 +69,6 @@ static bool skinlist_is_configured(enum screen_type screen,
     if (listcfg[screen] == NULL)
         return false;
     if (list && list->selected_size != 1)
-        return false;
-    /* Bypass skinned renderer when a margin callback sets a custom
-     * line height that doesn't match the theme's %Lb() height */
-    if (list && list->callback_draw_margin
-        && list->line_height[screen] != listcfg[screen]->height)
         return false;
     return true;
 }
@@ -188,7 +144,13 @@ int skinlist_get_line_count(enum screen_type screen, struct gui_synclist *list)
         return rows*cols;
     }
     else
-        return (parent->height / listcfg[screen]->height);
+    {
+        int h = listcfg[screen]->height;
+        if (list && list->callback_draw_margin
+            && list->line_height[screen] > h)
+            h = list->line_height[screen];
+        return (parent->height / h);
+    }
 }
 
 static int current_item;
@@ -276,6 +238,11 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
         unsigned margin_fill_color = 0;
         bool margin_color_set = false;
         bool margin_painted = false;
+        struct skin_element *deco_viewport = NULL;
+        struct skin_viewport *deco_skin_vp = NULL;
+        int item_h = listcfg[screen]->height;
+        if (has_margin && list->line_height[screen] > item_h)
+            item_h = list->line_height[screen];
 
         if (list_start_item+cur_line+1 > list->nb_items)
             break;
@@ -320,7 +287,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 current_row = cur_line;
                 skin_viewport->vp.x = parent->x + original_x;
                 skin_viewport->vp.y = parent->y + original_y +
-                                   (listcfg[screen]->height*cur_line);
+                                   (item_h*cur_line);
             }
             if (has_margin)
             {
@@ -351,12 +318,15 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 margin_color_set = true;
             }
 
-            /* Paint margin fill between decoration VP and content VPs.
-             * Decoration VP (original_x==0) renders first with corner
-             * glyph; the fill covers it before text VP renders on top. */
+            /* Save decoration VP for overlay re-render after thumbnail */
+            if (has_margin && original_x == 0)
+            {
+                deco_viewport = viewport;
+                deco_skin_vp = skin_viewport;
+            }
+
             if (has_margin && !margin_painted && original_x > 0)
             {
-                int item_h = listcfg[screen]->height;
                 int fill_w = margin_w + 8;
                 struct viewport margin_vp;
 
@@ -366,10 +336,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 margin_vp.width = fill_w;
                 margin_vp.height = item_h;
                 display->set_viewport(&margin_vp);
-
-                if (!corner_overlay_tried)
-                    load_margin_corner_bmp();
-
                 display->set_drawmode(DRMODE_SOLID);
                 display->set_foreground(margin_fill_color);
                 display->fillrect(0, 0, fill_w, item_h);
@@ -379,40 +345,31 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                     0, 0, margin_w, item_h,
                     is_selected, list->data);
 
-                /* Draw theme corner overlay on top of thumbnail */
-                if (corner_overlay_loaded)
+                /* Re-render decoration VP as overlay (no background fill)
+                 * so corner glyphs paint on top of the thumbnail */
+                if (deco_viewport && deco_skin_vp)
                 {
-                    int cw = corner_overlay_bm.width;
-                    int ch;
-                    unsigned old_fg = display->get_foreground();
-                    int old_mode = lcd_get_drawmode();
-
-                    display->set_foreground(parent->bg_pattern);
-                    lcd_set_drawmode(DRMODE_FG);
-
-                    /* TL corner: top portion of overlay BMP */
-                    ch = (corner_overlay_bm.height > cw * 2)
-                         ? cw : corner_overlay_bm.height;
-                    if (ch > item_h / 2)
-                        ch = item_h / 2;
-                    display->bmp_part(&corner_overlay_bm,
-                                      0, 0, 0, 0, cw, ch);
-
-                    /* BL corner: bottom portion (full-height strips) */
-                    if (corner_overlay_bm.height > cw * 2)
-                    {
-                        int bch = cw;
-                        if (bch > item_h / 2)
-                            bch = item_h / 2;
-                        display->bmp_part(&corner_overlay_bm,
-                                          0,
-                                          corner_overlay_bm.height - bch,
-                                          0, item_h - bch,
-                                          cw, bch);
-                    }
-
-                    display->set_foreground(old_fg);
-                    lcd_set_drawmode(old_mode);
+                    struct skin_viewport saved_deco;
+                    memcpy(&saved_deco, deco_skin_vp,
+                           sizeof(struct skin_viewport));
+                    deco_skin_vp->vp.x = parent->x;
+                    deco_skin_vp->vp.y = parent->y + item_h * cur_line;
+                    display->set_viewport(&deco_skin_vp->vp);
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+                    display->set_foreground(deco_skin_vp->vp.fg_pattern);
+                    display->set_background(deco_skin_vp->vp.bg_pattern);
+#endif
+                    struct skin_element** dchildren =
+                        SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                        deco_viewport->children);
+                    if (dchildren && *dchildren)
+                        skin_render_viewport(
+                            SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                            (intptr_t)dchildren[0]),
+                            &wps, deco_skin_vp, SKIN_REFRESH_ALL, true);
+                    wps_display_images(&wps, &deco_skin_vp->vp);
+                    memcpy(deco_skin_vp, &saved_deco,
+                           sizeof(struct skin_viewport));
                 }
 
                 margin_painted = true;
@@ -440,7 +397,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 struct skin_element** children = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->children);
                 if (children && *children)
                     skin_render_viewport(SKINOFFSETTOPTR(get_skin_buffer(wps.data), (intptr_t)children[0]),
-                                         &wps, skin_viewport, SKIN_REFRESH_ALL);
+                                         &wps, skin_viewport, SKIN_REFRESH_ALL, false);
                 wps_display_images(&wps, &skin_viewport->vp);
             }
             /* force disableing scroll because it breaks later */
@@ -457,7 +414,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
         /* Fallback: paint margin if no VP with original_x > 0 was seen */
         if (has_margin && !margin_painted)
         {
-            int item_h = listcfg[screen]->height;
             struct viewport margin_vp;
 
             viewport_set_defaults(&margin_vp, screen);
