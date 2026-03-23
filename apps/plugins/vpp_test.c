@@ -1443,7 +1443,9 @@ enum plugin_status plugin_start(const void *parameter)
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 1;
             { uint32_t v = LCD_CON; LCD_CON = v; }  /* SELF-WRITE TRIGGER */
-            /* Wait for frame transfer (poll LCD+0x8C instead of fixed delay) */
+            /* v113b: fixed delay for compositor to start, THEN poll completion.
+             * v113 bug: LCD+0x8C poll alone exits immediately (idle before push). */
+            { volatile int d; for (d = 0; d < 50000; d++); }
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 0;
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
