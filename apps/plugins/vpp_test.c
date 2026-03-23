@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v111 ===");
+    vlog("=== VPP Pipeline Test v112 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v111");
+    rb->splashf(HZ, "VPP v112");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1427,18 +1427,19 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_config(0x81100DB9); \
         } while(0)
 
+        static const uint32_t bg_colors[] = {
+            0x00110000, 0x00220000, 0x00330000, 0x00004400,
+            0x00005500, 0x00006600, 0x00009900, 0x000F0F0F,
+            0x00FF0000, 0x000000FF
+        };
+        static const char * const test_names[] = {
+            "v110_baseline", "GRAM_out+selfwr", "GRAM_out+P18sw",
+            "empty_bracket", "GRAM_out+empty", "warmup50+fix",
+            "GRAM_out+selfwr2", "Apple_gray", "blue_XBGR", "red_XBGR"
+        };
+
         for (int test = 0; test < 10; test++) {
             rb->backlight_on();
-            uint32_t bg_colors[] = {
-                0x00110000, 0x00220000, 0x00330000, 0x00004400,
-                0x00005500, 0x00006600, 0x00009900, 0x000F0F0F,
-                0x00FF0000, 0x000000FF
-            };
-            const char *test_names[] = {
-                "v110_baseline", "GRAM_out+selfwr", "GRAM_out+P18sw",
-                "empty_bracket", "GRAM_out+empty", "warmup50+fix",
-                "GRAM_out+selfwr2", "Apple_gray", "blue_XBGR", "red_XBGR"
-            };
 
             /* Set unique BG_COLOR + re-fire compositor GO */
             comp_p[0x00C/4] = bg_colors[test];
