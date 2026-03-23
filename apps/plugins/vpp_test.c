@@ -591,7 +591,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v117 ===");
+    vlog("=== VPP Pipeline Test v118 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -623,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v117");
+    rb->splashf(HZ, "VPP v118");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -809,11 +809,9 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
      * Without bit 4, MIXER won't pull data from CLCD for video layer.
      * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
-    /* v111: MIXER+0x004 = 0x12 (D5 verified from ROM literal pool 0x166D98)
-     * Bit 0: UNUSED by Apple (was set in v95-v110, REMOVED)
-     * Bit 1: progressive/deinterlace mode (vpp_set_deinterlace at 0x168290)
-     * Bit 4: layer 5 output enable (vpp_vtable_dispatch at 0x166D6C) */
-    MIXER_L5_EN = 0x12;
+    /* v118: MIXER+0x004 = 0x07 during init (Apple's init value: bits 0+1+2).
+     * Bit 4 (layer 5 enable) added later in Phase 7 before trigger. */
+    MIXER_L5_EN = 0x07;
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -1345,6 +1343,8 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
     CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
     CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
+    /* v118: add layer 5 enable (bit 4) right before trigger */
+    MIXER_L5_EN |= 0x10;
     /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
