@@ -153,41 +153,6 @@ static void vpp_lcd_window(int x, int y, int w, int h)
     vpp_lcd_config(LCD_FRAME_MODE);
 }
 
-/* v122: v116's proven push helper (GRAM inside bracket + RAW LCD_CON restore).
- * T1: LCD_CON write restarts WR# strobe generator → pulls from compositor FIFO.
- * R3: GRAM commands between P18/P9 switches = bus activity needed for trigger. */
-static void vpp_push_frame(int panel_type, int pump_count)
-{
-    for (int pump = 0; pump < pump_count; pump++) {
-        /* Bus idle before opening */
-        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-
-        /* Open bracket */
-        *(volatile uint32_t *)(0x38300080) = 1;
-
-        /* v110's EXACT trigger: P18 switch + GRAM cmd + RAW LCD_CON restore */
-        {
-            uint32_t saved = LCD_CON;
-            vpp_lcd_config(0x80000DA9);  /* P18 (bus-idle before switch) */
-            if (panel_type >= 2)
-                vpp_lcd_cmd(0x202);      /* GRAM write cmd = bus activity */
-            else
-                vpp_lcd_cmd(0x2C);
-            LCD_CON = saved;             /* RAW P9 restore = TRIGGER */
-        }
-
-        /* For single push: hold 50ms for full frame (T4: Apple holds ~47ms) */
-        if (pump_count == 1)
-            { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 50000); }
-
-        /* Close bracket */
-        *(volatile uint32_t *)(0x38300080) = 0;
-
-        /* Bus idle after closing */
-        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-    }
-}
-
 /* ---- VPP Power Control ---- */
 
 static void vpp_clocks_enable(bool enable)
@@ -589,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v122 ===");
+    vlog("=== VPP Pipeline Test v110 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -621,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v122");
+    rb->splashf(HZ, "VPP v110");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1246,7 +1211,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 2: COMP+0x3AC already set in compositor init above */
 
     /* Step 3: Panel GRAM commands (between porch and resolution) */
-    /* v122: Use P18+div4 for GRAM commands (0x80000DA9 for type 2/3).
+    /* v110: Use P18+div4 for GRAM commands (0x80000DA9 for type 2/3).
      * P1: ILI9320 needs 16-bit bus width (P18) for register indices.
      * P3: bit 0 = clock divider, keep div/4 to match passthrough timing. */
     {
@@ -1410,23 +1375,95 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v122: 200× pump using vpp_push_frame helper (v117 paradigm) */
-    vlog("Phase 7b: 200x pump");
-    vpp_push_frame(panel_type, 200);
-    vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
-         (unsigned long)CLCD_REG(0x010),
-         (unsigned long)*(volatile uint32_t *)(0x38900010),
-         (unsigned long)*(volatile uint32_t *)(0x3830008C));
+    /* v105: Rapid LCD+0x80 pump to break DMA backpressure deadlock.
+     * Pipeline stalls because compositor output buffer never drains.
+     * Rapidly cycling LCD+0x80 force-drains compositor, creating
+     * upstream pull demand: compositor→DISP→MIXER→CLCD DMA starts. */
+    vlog("Phase 7b: Rapid pump (break DMA deadlock)");
+    {
+        for (int pump = 0; pump < 200; pump++) {
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+            *(volatile uint32_t *)(0x38300080) = 1;
+            /* v110: Use P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: P9 can't deliver 16-bit ILI9320 register indices (serializes as 2×9).
+             * P3: bit 0 = clock divider (div/4), must stay set to match passthrough.
+             * v109 (no switch) = no output. v108 (0x80000DA8, div/2) = garbled. */
+            {
+                uint32_t saved = LCD_CON;
+                vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                if (panel_type >= 2)
+                    vpp_lcd_cmd(0x202);
+                else
+                    vpp_lcd_cmd(0x2C);
+                LCD_CON = saved;
+            }
+            *(volatile uint32_t *)(0x38300080) = 0;
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+        }
+        vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx",
+             (unsigned long)CLCD_REG(0x010),
+             (unsigned long)*(volatile uint32_t *)(0x38900010));
+    }
 
-    /* v122: 10s display loop (v117 paradigm — no color changes, just status) */
-    vlog("Phase 7c: Display (10s)");
-    for (int sec = 0; sec < 10; sec++) {
-        rb->backlight_on();
-        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
-        vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
-             sec, (unsigned long)CLCD_REG(0x010),
-             (unsigned long)*(volatile uint32_t *)(0x38900010),
-             (unsigned long)*(volatile uint32_t *)(0x3830008C));
+    /* v104: Per-frame push loop (Apple's Path B from ROM 0xa5064).
+     * Each iteration: LCD+0x80=1 → GRAM cmds → LCD+0x80=0 → wait idle.
+     * This is how Apple's DriverUpdateThread pushes compositor frames. */
+    vlog("Phase 7c: Per-frame push loop (10s, color cycle R→G→B)");
+    {
+        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
+        for (int sec = 0; sec < 10; sec++) {
+            rb->backlight_on();  /* v106: keep backlight alive (E1) */
+            /* v107: Revert to XRGB — P16 mode will reveal true format */
+            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED (XRGB) */
+            else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
+            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE (XRGB) */
+            /* Wait for LCD bus idle */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+            /* LCD+0x80 = 1 — START compositor push */
+            *(volatile uint32_t *)(0x38300080) = 1;
+
+            /* v110: P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: ILI9320 needs 16-bit bus (P18) for register indices.
+             * P3: keep div/4 clock (bit 0=1) to match passthrough timing. */
+            {
+                uint32_t saved = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                    vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                    vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x202);
+                } else {
+                    vpp_lcd_config(0x80000C21);  /* P8 + div/4 */
+                    vpp_lcd_cmd(0x2A);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                    vpp_lcd_cmd(0x2B);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                    vpp_lcd_cmd(0x2C);
+                }
+                LCD_CON = saved;
+            }
+
+            /* LCD+0x80 = 0 — STOP push */
+            *(volatile uint32_t *)(0x38300080) = 0;
+
+            /* Wait for completion */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+            /* Wait ~1 second */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
+
+            vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
+                 sec, (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)*(volatile uint32_t *)(0x38900010),
+                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
+        }
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
@@ -1541,20 +1578,20 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable RGB passthrough + compositor */
     *(volatile uint32_t *)(0x38300080) = 0;  /* stop any active push */
     *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off */
-    /* v122: Bus-idle wait after passthrough teardown (P2 agent: panel needs
+    /* v110: Bus-idle wait after passthrough teardown (P2 agent: panel needs
      * time to transition out of passthrough-receiving state) */
     { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
     *(volatile uint32_t *)0x38900000 = 0;    /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
-    /* v122: Clear ALL passthrough registers + restore panel state */
+    /* v110: Clear ALL passthrough registers + restore panel state */
     *(volatile uint32_t *)(0x3830007C) = 0;         /* clear passthrough format */
     *(volatile uint32_t *)(0x38300088) = 0;         /* clear RGB DMA enable */
     *(volatile uint32_t *)(0x38300074) = 0;         /* clear resolution */
     *(volatile uint32_t *)(0x38300078) = 0;         /* clear porch timing */
     /* Use vpp_lcd_config (with bus-idle wait) instead of raw LCD_CON write */
     vpp_lcd_config(saved_lcd_con);
-    /* v122: Re-send ILI9320 panel registers to reset state after P9 passthrough.
+    /* v110: Re-send ILI9320 panel registers to reset state after P9 passthrough.
      * P2 agent: raw LCD_CON write without bus-idle wait causes garbled commands.
      * Also re-send reg 0x001 (Driver Output Control) for scan direction. */
     if (panel_type >= 2) {
