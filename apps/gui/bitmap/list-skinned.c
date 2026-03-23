@@ -238,8 +238,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
         unsigned margin_fill_color = 0;
         bool margin_color_set = false;
         bool margin_painted = false;
-        struct skin_element *deco_viewport = NULL;
-        struct skin_viewport *deco_skin_vp = NULL;
+        struct skin_viewport deco_svp_copy;
+        struct skin_element *deco_vp_element = NULL;
+        bool have_deco = false;
         int item_h = listcfg[screen]->height;
         if (has_margin && list->line_height[screen] > item_h)
             item_h = list->line_height[screen];
@@ -318,11 +319,13 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 margin_color_set = true;
             }
 
-            /* Save decoration VP for overlay re-render after thumbnail */
+            /* Save decoration VP data for overlay after VP loop */
             if (has_margin && original_x == 0)
             {
-                deco_viewport = viewport;
-                deco_skin_vp = skin_viewport;
+                memcpy(&deco_svp_copy, skin_viewport,
+                       sizeof(struct skin_viewport));
+                deco_vp_element = viewport;
+                have_deco = true;
             }
 
             if (has_margin && !margin_painted && original_x > 0)
@@ -344,33 +347,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                     current_drawing_line, display,
                     0, 0, margin_w, item_h,
                     is_selected, list->data);
-
-                /* Re-render decoration VP as overlay (no background fill)
-                 * so corner glyphs paint on top of the thumbnail */
-                if (deco_viewport && deco_skin_vp)
-                {
-                    struct skin_viewport saved_deco;
-                    memcpy(&saved_deco, deco_skin_vp,
-                           sizeof(struct skin_viewport));
-                    deco_skin_vp->vp.x = parent->x;
-                    deco_skin_vp->vp.y = parent->y + item_h * cur_line;
-                    display->set_viewport(&deco_skin_vp->vp);
-#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-                    display->set_foreground(deco_skin_vp->vp.fg_pattern);
-                    display->set_background(deco_skin_vp->vp.bg_pattern);
-#endif
-                    struct skin_element** dchildren =
-                        SKINOFFSETTOPTR(get_skin_buffer(wps.data),
-                                        deco_viewport->children);
-                    if (dchildren && *dchildren)
-                        skin_render_viewport(
-                            SKINOFFSETTOPTR(get_skin_buffer(wps.data),
-                                            (intptr_t)dchildren[0]),
-                            &wps, deco_skin_vp, SKIN_REFRESH_ALL, true);
-                    wps_display_images(&wps, &deco_skin_vp->vp);
-                    memcpy(deco_skin_vp, &saved_deco,
-                           sizeof(struct skin_viewport));
-                }
 
                 margin_painted = true;
                 display->set_viewport(&skin_viewport->vp);
@@ -430,6 +406,35 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 current_drawing_line, display,
                 0, 0, margin_w, item_h,
                 is_selected, list->data);
+        }
+
+        /* Overlay: re-render decoration VP at original (unshifted) position
+         * AFTER the VP loop, so corner glyphs paint on top of the thumbnail
+         * without corrupting VP loop state */
+        if (has_margin && have_deco && deco_vp_element)
+        {
+            struct skin_viewport overlay_vp;
+            memcpy(&overlay_vp, &deco_svp_copy, sizeof(struct skin_viewport));
+            overlay_vp.vp.x = parent->x;
+            overlay_vp.vp.y = parent->y + item_h * cur_line;
+            display->set_viewport(&overlay_vp.vp);
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+            overlay_vp.vp.fg_pattern =
+                dynamic_colors_resolve(overlay_vp.dc_orig_fg);
+            overlay_vp.vp.bg_pattern =
+                dynamic_colors_resolve(overlay_vp.dc_orig_bg);
+            display->set_foreground(overlay_vp.vp.fg_pattern);
+            display->set_background(overlay_vp.vp.bg_pattern);
+#endif
+            struct skin_element** dchildren =
+                SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                deco_vp_element->children);
+            if (dchildren && *dchildren)
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &overlay_vp, SKIN_REFRESH_ALL, true);
+            wps_display_images(&wps, &overlay_vp.vp);
         }
     }
     current_column = -1;
