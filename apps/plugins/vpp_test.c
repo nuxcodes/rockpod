@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v125 ===");
+    vlog("=== VPP Pipeline Test v126 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v125");
+    rb->splashf(HZ, "VPP v126");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1397,11 +1397,11 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)*(volatile uint32_t *)(0x38900010));
     }
 
-    /* v124: Color cycle — 200× pump per color with GO re-fire.
-     * v123 proved: 200× pump with LCD+0x80 bracket per iteration = WORKS.
-     * N1: GO re-fire latches BG_COLOR (shadow register pattern).
-     * v110: GO re-fire at t=0,3,6 worked fine with pump. */
-    vlog("Phase 7c: Color cycle (200x pump per color, 15s)");
+    /* v126: Color cycle with LCD+0x70 toggle + GO settle + 200× pump.
+     * W3: GO needs 100ms settle (v123 had it, v124 didn't → broke).
+     * V4: LCD+0x70 toggle re-primes compositor→LCD path.
+     * V15: BG_COLOR without GO → shadow register never latches. */
+    vlog("Phase 7c: Color cycle (LCD+0x70 toggle + GO settle + pump)");
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         static const struct { uint32_t color; const char *name; } colors[] = {
@@ -1411,10 +1411,22 @@ enum plugin_status plugin_start(const void *parameter)
         for (int ci = 0; ci < 5; ci++) {
             rb->backlight_on();
 
-            /* Set BG_COLOR — NO GO re-fire (v124 proved GO kills the pump) */
+            /* Step 1: Disconnect passthrough (V4: re-primes path) */
+            *(volatile uint32_t *)(0x38300070) = 0;
+
+            /* Step 2: Write new BG_COLOR */
             comp_p[0x00C/4] = colors[ci].color;
 
-            /* 200× pump — v110/v123 proven pattern (LCD+0x80 bracket per iteration) */
+            /* Step 3: GO re-fire to latch shadow register */
+            comp_p[0] = 1;
+
+            /* Step 4: 100ms settle (W3: v123 had this, v124 didn't) */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
+            /* Step 5: Re-connect passthrough (freshly primed) */
+            *(volatile uint32_t *)(0x38300070) = 1;
+
+            /* Step 6: 200× pump (v110/v123 proven pattern) */
             for (int pump = 0; pump < 200; pump++) {
                 { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
                 *(volatile uint32_t *)(0x38300080) = 1;
@@ -1431,7 +1443,7 @@ enum plugin_status plugin_start(const void *parameter)
                 { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             }
 
-            /* Display for 3 seconds */
+            /* Step 7: Display 3 seconds */
             vlog("  %s(0x%06lx): DMA=%08lx COMP+0x10=%08lx",
                  colors[ci].name, (unsigned long)colors[ci].color,
                  (unsigned long)CLCD_REG(0x010),
