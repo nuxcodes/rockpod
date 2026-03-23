@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v111 ===");
+    vlog("=== VPP Pipeline Test v129 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v111");
+    rb->splashf(HZ, "VPP v129");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1397,198 +1397,60 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)*(volatile uint32_t *)(0x38900010));
     }
 
-    /* v123: Diagnostic multi-test (10 tests, 2s each).
-     * Tests different push trigger approaches to find the one with clean colors.
-     * F1+F7+G20: LCD_CON write = compositor push trigger.
-     * F2: GRAM state persists across LCD_CON changes.
-     * F8: WCMD IS serialized in P9 — P18 needed for GRAM commands. */
-    vlog("Phase 7c: Diagnostic multi-test (10 tests, 2s each)");
+    /* v129: Color cycle via BG_COLOR write + 200× pump.
+     * RE evidence (6 agents, 2 batches):
+     *   AA1: comp+0x00C IS BG_COLOR, XBGR format, 0x00FF0000=BLUE confirmed
+     *   AA2: NO shadow registers — writes take effect immediately
+     *   BB1: compositor renders ON-THE-FLY, re-reads BG_COLOR each push
+     *   BB2: Phase 7c single push = 3000px (4% screen) — not enough
+     * Fix: 200× pump per color (same proven code as Phase 7b). */
+    vlog("Phase 7c: Color cycle (BG_COLOR + 200x pump)");
     {
-        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
-        /* Helper macro: send full GRAM setup in P18 outside bracket */
-        #define GRAM_SETUP_OUTSIDE() do { \
-            vpp_lcd_config(0x80000DA9); \
-            if (panel_type >= 2) { \
-                vpp_lcd_cmd(0x210); vpp_lcd_data(0); \
-                vpp_lcd_cmd(0x211); vpp_lcd_data(319); \
-                vpp_lcd_cmd(0x212); vpp_lcd_data(0); \
-                vpp_lcd_cmd(0x213); vpp_lcd_data(239); \
-                vpp_lcd_cmd(0x200); vpp_lcd_data(0); \
-                vpp_lcd_cmd(0x201); vpp_lcd_data(0); \
-                vpp_lcd_cmd(0x202); \
-            } else { \
-                vpp_lcd_config(0x80000C21); \
-                vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0); \
-                vpp_lcd_data(0x01); vpp_lcd_data(0x3F); \
-                vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0); \
-                vpp_lcd_data(0); vpp_lcd_data(0xEF); \
-                vpp_lcd_cmd(0x2C); \
-            } \
-            vpp_lcd_config(0x81100DB9); \
-        } while(0)
+        volatile uint32_t *comp_c = (volatile uint32_t *)0x38900000;
+        uint32_t colors[] = {
+            0x000000FF,  /* RED   (XBGR: R=0xFF) */
+            0x0000FF00,  /* GREEN (XBGR: G=0xFF) */
+            0x00FF0000,  /* BLUE  (XBGR: B=0xFF) — same as Phase 7b */
+            0x00FFFFFF,  /* WHITE */
+            0x000F0F0F,  /* GRAY  (Apple's default BG_COLOR) */
+        };
+        const char *names[] = {"RED", "GREEN", "BLUE", "WHITE", "GRAY"};
 
-        for (int test = 0; test < 10; test++) {
+        for (int c = 0; c < 5; c++) {
             rb->backlight_on();
-            uint32_t bg_colors[] = {
-                0x00110000, 0x00220000, 0x00330000, 0x00004400,
-                0x00005500, 0x00006600, 0x00009900, 0x000F0F0F,
-                0x00FF0000, 0x000000FF
-            };
-            const char *test_names[] = {
-                "v110_baseline", "GRAM_out+selfwr", "GRAM_out+P18sw",
-                "empty_bracket", "GRAM_out+empty", "warmup50+fix",
-                "GRAM_out+selfwr2", "Apple_gray", "blue_XBGR", "red_XBGR"
-            };
+            /* Write new BG_COLOR — takes effect immediately (BB1) */
+            comp_c[0x00C/4] = colors[c];
 
-            /* Set unique BG_COLOR + re-fire compositor GO */
-            comp_p[0x00C/4] = bg_colors[test];
-            comp_p[0] = 1;
-            /* Wait 100ms for compositor to latch */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
-
-            uint32_t comp010_before = *(volatile uint32_t *)(0x38900010);
-            uint32_t dma_before = CLCD_REG(0x010);
-
-            /* Wait for LCD bus idle */
-            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-
-            /* === Execute test-specific push pattern === */
-            switch (test) {
-            case 0: /* t0: v110 baseline — P18 switch inside bracket */
+            /* 200× pump — EXACT same code as Phase 7b (proven working) */
+            for (int pump = 0; pump < 200; pump++) {
+                { int t = 10000;
+                  while ((*(volatile uint32_t *)(0x3830008C) & 3)
+                         && --t > 0); }
                 *(volatile uint32_t *)(0x38300080) = 1;
                 {
                     uint32_t saved = LCD_CON;
-                    vpp_lcd_config(0x80000DA9);
-                    if (panel_type >= 2) {
-                        vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                        vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-                        vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                        vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-                        vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                        vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_config(0x80000DA9);  /* P18 for cmd */
+                    if (panel_type >= 2)
                         vpp_lcd_cmd(0x202);
-                    } else {
-                        vpp_lcd_config(0x80000C21);
-                        vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0);
-                        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-                        vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0);
-                        vpp_lcd_data(0); vpp_lcd_data(0xEF);
+                    else
                         vpp_lcd_cmd(0x2C);
-                    }
-                    LCD_CON = saved;
+                    LCD_CON = saved;  /* restore P9 = trigger */
                 }
-                { volatile int d; for (d = 0; d < 50000; d++); }
                 *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 1: /* t1: GRAM outside + LCD_CON self-write inside (THE FIX) */
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write trigger */
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 2: /* t2: GRAM outside + P18→P9 switch inside */
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                vpp_lcd_config(0x80000DA9);  /* to P18 */
-                vpp_lcd_config(0x81100DB9);  /* back to P9 = trigger */
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 3: /* t3: Empty bracket — negative control */
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 4: /* t4: GRAM outside + empty bracket */
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 5: /* t5: 50 warmup pushes, then GRAM outside + self-write */
-                for (int w = 0; w < 50; w++) {
-                    { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-                    *(volatile uint32_t *)(0x38300080) = 1;
-                    { uint32_t s = LCD_CON;
-                      vpp_lcd_config(0x80000DA9);
-                      if (panel_type >= 2) vpp_lcd_cmd(0x202);
-                      else vpp_lcd_cmd(0x2C);
-                      LCD_CON = s; }
-                    *(volatile uint32_t *)(0x38300080) = 0;
-                    { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-                }
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { uint32_t v = LCD_CON; LCD_CON = v; }
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 6: /* t6: GRAM outside + self-write (repeat with different color) */
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { uint32_t v = LCD_CON; LCD_CON = v; }
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
-
-            case 7: /* t7: Apple's gray (0x000F0F0F) + self-write */
-            case 8: /* t8: blue XBGR (0x00FF0000) + self-write */
-            case 9: /* t9: red XBGR (0x000000FF) + self-write */
-                GRAM_SETUP_OUTSIDE();
-                *(volatile uint32_t *)(0x38300080) = 1;
-                { uint32_t v = LCD_CON; LCD_CON = v; }
-                { volatile int d; for (d = 0; d < 50000; d++); }
-                *(volatile uint32_t *)(0x38300080) = 0;
-                break;
+                { int t = 10000;
+                  while ((*(volatile uint32_t *)(0x3830008C) & 3)
+                         && --t > 0); }
             }
 
-            /* Wait for bus idle after push */
-            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+            vlog("  %s(0x%06lx): DMA=%08lx COMP+0x10=%08lx",
+                 names[c], (unsigned long)colors[c],
+                 (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)comp_c[0x010/4]);
 
-            uint32_t comp010_after = *(volatile uint32_t *)(0x38900010);
-            uint32_t dma_after = CLCD_REG(0x010);
-
-            /* GRAM readback */
-            uint32_t gram_px = 0xDEAD;
-            {
-                *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off for read */
-                for (volatile int d = 0; d < 10000; d++);
-                uint32_t save_con = LCD_CON;
-                if (panel_type >= 2) {
-                    vpp_lcd_config(0x80000DA8);
-                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x202);
-                    while (!(LCD_STATUS & 0x2));
-                    LCD_RDATA = 0;
-                    while (!(LCD_STATUS & 1));
-                    (void)LCD_DBUFF;  /* dummy */
-                    LCD_RDATA = 0;
-                    while (!(LCD_STATUS & 1));
-                    gram_px = LCD_DBUFF;
-                }
-                LCD_CON = save_con;
-                *(volatile uint32_t *)(0x38300070) = 1;  /* passthrough back on */
-            }
-
-            vlog("  T%d[%s]: c010=%08lx->%08lx dma=%08lx->%08lx gram=%08lx %s",
-                 test, test_names[test],
-                 (unsigned long)comp010_before, (unsigned long)comp010_after,
-                 (unsigned long)dma_before, (unsigned long)dma_after,
-                 (unsigned long)gram_px,
-                 (comp010_after != comp010_before) ? "PUSHED!" : "no-push");
-
-            /* Wait ~1.5 second */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1500000); }
+            /* 2s visual observation */
+            { uint32_t t = USEC_TIMER;
+              while ((USEC_TIMER - t) < 2000000); }
         }
-        #undef GRAM_SETUP_OUTSIDE
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
