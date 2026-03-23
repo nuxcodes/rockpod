@@ -153,43 +153,6 @@ static void vpp_lcd_window(int x, int y, int w, int h)
     vpp_lcd_config(LCD_FRAME_MODE);
 }
 
-/* v116: v110's PROVEN push pattern (GRAM inside bracket + RAW LCD_CON restore)
- * + 50ms hold for full frame. 348 agents verified this is the only working pattern.
- * T1: LCD_CON write restarts WR# strobe generator → pulls from compositor FIFO.
- * R3: GRAM commands between P18/P9 switches = bus activity needed for trigger.
- * pump_count: 1 = single push + 50ms hold (UNTESTED), 200 = v110 proven pump. */
-static void vpp_push_frame(int panel_type, int pump_count)
-{
-    for (int pump = 0; pump < pump_count; pump++) {
-        /* Bus idle before opening */
-        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-
-        /* Open bracket */
-        *(volatile uint32_t *)(0x38300080) = 1;
-
-        /* v110's EXACT trigger: P18 switch + GRAM cmd + RAW LCD_CON restore */
-        {
-            uint32_t saved = LCD_CON;
-            vpp_lcd_config(0x80000DA9);  /* P18 (bus-idle before switch) */
-            if (panel_type >= 2)
-                vpp_lcd_cmd(0x202);      /* GRAM write cmd = bus activity */
-            else
-                vpp_lcd_cmd(0x2C);
-            LCD_CON = saved;             /* RAW P9 restore = TRIGGER */
-        }
-
-        /* For single push: hold 50ms for full frame (T4: Apple holds ~47ms) */
-        if (pump_count == 1)
-            { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 50000); }
-
-        /* Close bracket */
-        *(volatile uint32_t *)(0x38300080) = 0;
-
-        /* Bus idle after closing */
-        { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-    }
-}
-
 /* ---- VPP Power Control ---- */
 
 static void vpp_clocks_enable(bool enable)
@@ -591,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v120 ===");
+    vlog("=== VPP Pipeline Test v121 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -623,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v120");
+    rb->splashf(HZ, "VPP v121");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -637,7 +600,6 @@ enum plugin_status plugin_start(const void *parameter)
     rb->backlight_on();
 
     /* === Phase 2: Enable clocks + full VPP reset === */
-    rb->backlight_on();  /* v111: prevent lcd_sleep during setup (A16) */
     vlog("Phase 2: Enabling clocks + VPP block reset");
 
     uint32_t pwrcon_before = PWRCON(0);
@@ -729,11 +691,6 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Panel type: %d (0/1=8bit ILI9340, 2/3=16bit ILI9320)", panel_type);
     vlog("CG16_SVID = 0x%04x (expect 0x3003 = PLL2/4 = 54MHz)",
          (unsigned)CG16_SVID);
-    /* v111: GPIO 7 diagnostic (E1-E5: pin 1 = ATA D1 on PATA/SSD, free on CE-ATA) */
-    vlog("PCON(7)=%08lx PDAT(7)=%08lx (pin1=%s, ATA=%s)",
-         (unsigned long)PCON(7), (unsigned long)PDAT(7),
-         (PDAT(7) & 0x2) ? "HIGH" : "LOW",
-         ((PCON(7) >> 4) & 0xF) == 4 ? "yes" : "no");
 
     /* Panel 0xB0 (RGB Interface Signal Control): REMOVED in v24.
      * Agent 3 decoded all 4 Apple LCD init sequences in ROM — NONE send 0xB0.
@@ -773,7 +730,6 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     /* === Phase 4: Initialize all three blocks === */
-    rb->backlight_on();  /* v111: prevent lcd_sleep (A16) */
     vlog("Phase 4: Initializing VPP blocks");
 
     clcd_init();
@@ -809,12 +765,11 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
      * Without bit 4, MIXER won't pull data from CLCD for video layer.
      * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
-    /* v120: REVERT to v110's proven value 0x13 (bits 0+1+4).
-     * v120's 0x07 (added bit 2 = progressive mode) BROKE compositor output.
-     * v110 had 0x13 and BG_COLOR was visible. Apple's init = 0x07 includes
-     * bit 2 but this conflicts with compositor passthrough on S5L8702.
-     * Bit 4 stays during init (v110 had it, output worked). */
-    MIXER_L5_EN = 0x13;
+    MIXER_L5_EN = (MIXER_L5_EN & ~0x4);  /* vpp_set_interlace(0): clear bit 2 */
+    { uint32_t tmp = MIXER_L5_EN; MIXER_L5_EN = tmp; }  /* barrier */
+    MIXER_L5_EN = (MIXER_L5_EN & ~0x2) | 0x2;  /* vpp_set_deinterlace(1): set bit 1 */
+    MIXER_L5_EN = MIXER_L5_EN | 0x1;  /* vtable[0x20](1): set bit 0 = master enable */
+    MIXER_L5_EN = MIXER_L5_EN | 0x10; /* vpp_vtable_dispatch(5,1): bit 4 = layer 5 enable */
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -887,7 +842,6 @@ enum plugin_status plugin_start(const void *parameter)
      *
      * VPP-only signal path: CLCD → MIXER → DISP → ENVID mux → LCD pins
      */
-    rb->backlight_on();  /* v111: prevent lcd_sleep (A16) */
     vlog("Phase 6: Alpha + DISP GO (pure VPP, no compositor)");
 
     /* vtable[0x58]: enable video layer alpha */
@@ -1130,15 +1084,30 @@ enum plugin_status plugin_start(const void *parameter)
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
 
-        /* v120: RESTORE compositor scaler geometry (was in v110, removed in v111).
-         * v111 removed these citing "Apple NEVER writes during compositor_init."
-         * But v110 HAD them and had working BG_COLOR output. v116-v120 without
-         * them had NO output. Without viewport, compositor has zero-sized output. */
+        /* v99: Set per-layer scaler geometry registers.
+         * Agent b7_comp010_decode found: comp+0x030/034/04C/050/054 are
+         * all ZERO (POR defaults). Apple sets them via FUN_0014d93c during
+         * video start path. With zero values, compositor has 0x0 output
+         * window — nothing gets rendered even with data available.
+         * For 1:1 320x240: src=(0,0)-(320,240), scale=1:1, no offset. */
         comp[0x030/4] = 0x00000000;             /* src start: (y=0)<<16 | (x=0) */
         comp[0x034/4] = 0x00F00140;             /* src end: (y=240)<<16 | (x=320) */
         comp[0x04C/4] = 0x10001000;             /* scale: (v=1.0)<<16 | (h=1.0) in 4.12 FP */
         comp[0x050/4] = 0x00000000;             /* centering offset: 0 */
         comp[0x054/4] = (320 << 16) | 240;      /* output dims: (w=320)<<16 | (h=240) */
+        vlog("  Set comp per-layer geometry: +030=%08lx +034=%08lx +04C=%08lx +054=%08lx",
+             (unsigned long)comp[0x030/4], (unsigned long)comp[0x034/4],
+             (unsigned long)comp[0x04C/4], (unsigned long)comp[0x054/4]);
+
+        /* v98: Clear per-layer dimension POR defaults at +0x228-0x2A4.
+         * These are at TV resolution (480 lines, 272 offset, 120 interlaced)
+         * but our LCD is 320x240. If the compositor's i80 frame generator
+         * uses these for frame size, 480-line frames would never complete
+         * on a 240-line LCD, preventing the auto-trigger from firing.
+         * Zero them to eliminate the mismatch. */
+        for (int i = 0x228; i <= 0x2A4; i += 4)
+            comp[i/4] = 0;
+        vlog("  Cleared comp+0x228-0x2A4 (TV dimension POR defaults)");
 
         /* v97: DO NOT fire compositor GO yet — deferred to after LCD passthrough. */
     }
@@ -1241,14 +1210,14 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Step 2: COMP+0x3AC already set in compositor init above */
 
-    /* Step 3: Panel GRAM commands (between porch and resolution)
-     * v112: RESTORED P18 switch. D3 was WRONG — F8 proved WCMD IS serialized.
-     * This is OUTSIDE the LCD+0x80 bracket, so P18 switch is safe here.
-     * Apple's vtable[0x0C] also switches LCD_CON internally (F5 confirmed). */
+    /* Step 3: Panel GRAM commands (between porch and resolution) */
+    /* v121: Use P18+div4 for GRAM commands (0x80000DA9 for type 2/3).
+     * P1: ILI9320 needs 16-bit bus width (P18) for register indices.
+     * P3: bit 0 = clock divider, keep div/4 to match passthrough timing. */
     {
         uint32_t saved_con = LCD_CON;
-        vpp_lcd_config(0x80000DA9);  /* P18 for 16-bit ILI9326 register indices */
         if (panel_type >= 2) {
+            vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
             vpp_lcd_cmd(0x210); vpp_lcd_data(0);
             vpp_lcd_cmd(0x211); vpp_lcd_data(319);
             vpp_lcd_cmd(0x212); vpp_lcd_data(0);
@@ -1257,7 +1226,7 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_cmd(0x201); vpp_lcd_data(0);
             vpp_lcd_cmd(0x202);
         } else {
-            vpp_lcd_config(0x80000C21);  /* P8 for 8-bit MIPI DBI commands */
+            vpp_lcd_config(0x80000C21);  /* P8 + div/4 */
             vpp_lcd_cmd(0x2A);
             vpp_lcd_data(0x00); vpp_lcd_data(0x00);
             vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
@@ -1266,9 +1235,9 @@ enum plugin_status plugin_start(const void *parameter)
             vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
             vpp_lcd_cmd(0x2C);
         }
-        vpp_lcd_config(saved_con);  /* back to P9 */
+        vpp_lcd_config(saved_con);
     }
-    vlog("  Panel GRAM done (P18 cmd mode, restored P9)");
+    vlog("  Panel GRAM done");
 
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
@@ -1349,17 +1318,13 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
     CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
     CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
-    /* v120: bit 4 already set during init (v110 proven value 0x13) */
     /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
-    DISP_TRIGGER |= 7;  /* v120: single write (was three separate) */
+    DISP_TRIGGER |= 1;
+    DISP_TRIGGER |= 2;
+    DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired (buffers+trigger atomic)");
-    /* v112: CLCD full status dump (G10: decode all 6 read-only status regs) */
-    vlog("  CLCD status: +010=%08lx +014=%08lx +018=%08lx +01C=%08lx +020=%08lx +024=%08lx",
-         (unsigned long)CLCD_REG(0x010), (unsigned long)CLCD_REG(0x014),
-         (unsigned long)CLCD_REG(0x018), (unsigned long)CLCD_REG(0x01C),
-         (unsigned long)CLCD_REG(0x020), (unsigned long)CLCD_REG(0x024));
 
     /* v92: Re-fire compositor i80 output strobe AFTER VPP trigger.
      * During compositor_init, comp+0x200 |= 0x10080 fires bit 7 (strobe,
@@ -1410,26 +1375,95 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v117: v112's EXACT Phase 7b — 200× pump, NO GO re-fire, NO experiments.
-     * U2 proved: v116's Phase 7b single-push + GO corrupted compositor state.
-     * v112's Phase 7b ran 200× pump DIRECTLY after pipeline trigger → WORKED. */
-    vlog("Phase 7b: 200x pump (v112 exact, no GO re-fire)");
-    vpp_push_frame(panel_type, 200);
-    vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
-         (unsigned long)CLCD_REG(0x010),
-         (unsigned long)*(volatile uint32_t *)(0x38900010),
-         (unsigned long)*(volatile uint32_t *)(0x3830008C));
+    /* v105: Rapid LCD+0x80 pump to break DMA backpressure deadlock.
+     * Pipeline stalls because compositor output buffer never drains.
+     * Rapidly cycling LCD+0x80 force-drains compositor, creating
+     * upstream pull demand: compositor→DISP→MIXER→CLCD DMA starts. */
+    vlog("Phase 7b: Rapid pump (break DMA deadlock)");
+    {
+        for (int pump = 0; pump < 200; pump++) {
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+            *(volatile uint32_t *)(0x38300080) = 1;
+            /* v121: Use P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: P9 can't deliver 16-bit ILI9320 register indices (serializes as 2×9).
+             * P3: bit 0 = clock divider (div/4), must stay set to match passthrough.
+             * v109 (no switch) = no output. v108 (0x80000DA8, div/2) = garbled. */
+            {
+                uint32_t saved = LCD_CON;
+                vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                if (panel_type >= 2)
+                    vpp_lcd_cmd(0x202);
+                else
+                    vpp_lcd_cmd(0x2C);
+                LCD_CON = saved;
+            }
+            *(volatile uint32_t *)(0x38300080) = 0;
+            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+        }
+        vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx",
+             (unsigned long)CLCD_REG(0x010),
+             (unsigned long)*(volatile uint32_t *)(0x38900010));
+    }
 
-    /* v117: Phase 7c — 10s display, log only, no color changes yet.
-     * Prove the pump works before adding GO re-fire for colors. */
-    vlog("Phase 7c: Display (10s, no color change)");
-    for (int sec = 0; sec < 10; sec++) {
-        rb->backlight_on();
-        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
-        vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
-             sec, (unsigned long)CLCD_REG(0x010),
-             (unsigned long)*(volatile uint32_t *)(0x38900010),
-             (unsigned long)*(volatile uint32_t *)(0x3830008C));
+    /* v104: Per-frame push loop (Apple's Path B from ROM 0xa5064).
+     * Each iteration: LCD+0x80=1 → GRAM cmds → LCD+0x80=0 → wait idle.
+     * This is how Apple's DriverUpdateThread pushes compositor frames. */
+    vlog("Phase 7c: Per-frame push loop (10s, color cycle R→G→B)");
+    {
+        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
+        for (int sec = 0; sec < 10; sec++) {
+            rb->backlight_on();  /* v106: keep backlight alive (E1) */
+            /* v107: Revert to XRGB — P16 mode will reveal true format */
+            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED (XRGB) */
+            else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
+            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE (XRGB) */
+            /* Wait for LCD bus idle */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+            /* LCD+0x80 = 1 — START compositor push */
+            *(volatile uint32_t *)(0x38300080) = 1;
+
+            /* v121: P18+div4 (0x80000DA9) for GRAM commands inside bracket.
+             * P1: ILI9320 needs 16-bit bus (P18) for register indices.
+             * P3: keep div/4 clock (bit 0=1) to match passthrough timing. */
+            {
+                uint32_t saved = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA9);  /* P18 + div/4 */
+                    vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                    vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x202);
+                } else {
+                    vpp_lcd_config(0x80000C21);  /* P8 + div/4 */
+                    vpp_lcd_cmd(0x2A);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                    vpp_lcd_cmd(0x2B);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+                    vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+                    vpp_lcd_cmd(0x2C);
+                }
+                LCD_CON = saved;
+            }
+
+            /* LCD+0x80 = 0 — STOP push */
+            *(volatile uint32_t *)(0x38300080) = 0;
+
+            /* Wait for completion */
+            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+            /* Wait ~1 second */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
+
+            vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
+                 sec, (unsigned long)CLCD_REG(0x010),
+                 (unsigned long)*(volatile uint32_t *)(0x38900010),
+                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
+        }
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
@@ -1544,20 +1578,20 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable RGB passthrough + compositor */
     *(volatile uint32_t *)(0x38300080) = 0;  /* stop any active push */
     *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off */
-    /* v110: Bus-idle wait after passthrough teardown (P2 agent: panel needs
+    /* v121: Bus-idle wait after passthrough teardown (P2 agent: panel needs
      * time to transition out of passthrough-receiving state) */
     { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
     *(volatile uint32_t *)0x38900000 = 0;    /* compositor off */
     PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
 
-    /* v110: Clear ALL passthrough registers + restore panel state */
+    /* v121: Clear ALL passthrough registers + restore panel state */
     *(volatile uint32_t *)(0x3830007C) = 0;         /* clear passthrough format */
     *(volatile uint32_t *)(0x38300088) = 0;         /* clear RGB DMA enable */
     *(volatile uint32_t *)(0x38300074) = 0;         /* clear resolution */
     *(volatile uint32_t *)(0x38300078) = 0;         /* clear porch timing */
     /* Use vpp_lcd_config (with bus-idle wait) instead of raw LCD_CON write */
     vpp_lcd_config(saved_lcd_con);
-    /* v110: Re-send ILI9320 panel registers to reset state after P9 passthrough.
+    /* v121: Re-send ILI9320 panel registers to reset state after P9 passthrough.
      * P2 agent: raw LCD_CON write without bus-idle wait causes garbled commands.
      * Also re-send reg 0x001 (Driver Output Control) for scan direction. */
     if (panel_type >= 2) {
