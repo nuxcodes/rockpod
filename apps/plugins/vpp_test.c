@@ -772,11 +772,11 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
      * Without bit 4, MIXER won't pull data from CLCD for video layer.
      * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
-    /* v111: MIXER+0x004 = 0x12 (D5 verified from ROM literal pool 0x166D98)
-     * Bit 0: UNUSED by Apple (was set in v95-v110, REMOVED)
-     * Bit 1: progressive/deinterlace mode (vpp_set_deinterlace at 0x168290)
-     * Bit 4: layer 5 output enable (vpp_vtable_dispatch at 0x166D6C) */
-    MIXER_L5_EN = 0x12;
+    /* v123 Test A: Apple init = 0x07 (bits 0+1+2), bit 4 deferred to trigger.
+     * mixer_verify agent: bit 0 (ROM 0x1678ac), bit 1 (0x168294), bit 2 (0x1681d4).
+     * Bit 4 only via vpp_vtable_dispatch case 5 (ROM 0x166d6c) at per-frame time.
+     * v123 baseline had 0x12 (bits 1+4). Testing Apple's exact init value. */
+    MIXER_L5_EN = 0x07;
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -1201,7 +1201,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 2: COMP+0x3AC already set in compositor init above */
 
     /* Step 3: Panel GRAM commands (between porch and resolution)
-     * v112: RESTORED P18 switch. D3 was WRONG — F8 proved WCMD IS serialized.
+     * v123: RESTORED P18 switch. D3 was WRONG — F8 proved WCMD IS serialized.
      * This is OUTSIDE the LCD+0x80 bracket, so P18 switch is safe here.
      * Apple's vtable[0x0C] also switches LCD_CON internally (F5 confirmed). */
     {
@@ -1308,14 +1308,14 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
     CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
     CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
+    /* v123 Test A: add layer 5 enable right before trigger (Apple defers to per-frame) */
+    MIXER_L5_EN |= 0x10;
     /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
-    DISP_TRIGGER |= 1;
-    DISP_TRIGGER |= 2;
-    DISP_TRIGGER |= 4;
+    DISP_TRIGGER |= 7;  /* v123: single write (was three separate) */
     vlog("  Pipeline trigger fired (buffers+trigger atomic)");
-    /* v112: CLCD full status dump (G10: decode all 6 read-only status regs) */
+    /* v123: CLCD full status dump (G10: decode all 6 read-only status regs) */
     vlog("  CLCD status: +010=%08lx +014=%08lx +018=%08lx +01C=%08lx +020=%08lx +024=%08lx",
          (unsigned long)CLCD_REG(0x010), (unsigned long)CLCD_REG(0x014),
          (unsigned long)CLCD_REG(0x018), (unsigned long)CLCD_REG(0x01C),
@@ -1379,7 +1379,7 @@ enum plugin_status plugin_start(const void *parameter)
         for (int pump = 0; pump < 200; pump++) {
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 1;
-            /* v112: RESTORED LCD_CON switch — it's the compositor push trigger (F1+F7+G20) */
+            /* v123: RESTORED LCD_CON switch — it's the compositor push trigger (F1+F7+G20) */
             {
                 uint32_t saved = LCD_CON;
                 vpp_lcd_config(0x80000DA9);  /* P18 */
@@ -1397,7 +1397,7 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)*(volatile uint32_t *)(0x38900010));
     }
 
-    /* v112: Diagnostic multi-test (10 tests, 2s each).
+    /* v123: Diagnostic multi-test (10 tests, 2s each).
      * Tests different push trigger approaches to find the one with clean colors.
      * F1+F7+G20: LCD_CON write = compositor push trigger.
      * F2: GRAM state persists across LCD_CON changes.
