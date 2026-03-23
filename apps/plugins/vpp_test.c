@@ -591,7 +591,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v116 ===");
+    vlog("=== VPP Pipeline Test v117 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -623,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v116");
+    rb->splashf(HZ, "VPP v117");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1407,42 +1407,26 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v116: Phase 7b — single push test (GRAM inside bracket + 50ms hold).
-     * UNTESTED combination: v110 pattern + long hold. If it works = performant.
-     * If not, Phase 7c uses proven 200× pump as fallback. */
-    vlog("Phase 7b: Single push test (v110 pattern + 50ms hold)");
-    {
-        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
-        comp_p[0x00C/4] = 0x00FF0000;  /* blue XBGR */
-        comp_p[0] = 1;  /* GO to latch */
-        vpp_push_frame(panel_type, 1);  /* single push */
-        vlog("  Single push done. DMA=%08lx LCD+0x8C=%08lx",
-             (unsigned long)CLCD_REG(0x010),
-             (unsigned long)*(volatile uint32_t *)(0x3830008C));
-    }
+    /* v117: v112's EXACT Phase 7b — 200× pump, NO GO re-fire, NO experiments.
+     * U2 proved: v116's Phase 7b single-push + GO corrupted compositor state.
+     * v112's Phase 7b ran 200× pump DIRECTLY after pipeline trigger → WORKED. */
+    vlog("Phase 7b: 200x pump (v112 exact, no GO re-fire)");
+    vpp_push_frame(panel_type, 200);
+    vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
+         (unsigned long)CLCD_REG(0x010),
+         (unsigned long)*(volatile uint32_t *)(0x38900010),
+         (unsigned long)*(volatile uint32_t *)(0x3830008C));
 
-    /* v116: Phase 7c — color cycle with 200× pump (PROVEN in v110/v112).
-     * GO re-fire for each color (N1: shadow register latch). */
-    vlog("Phase 7c: Color cycle (200x pump, 10s)");
-    {
-        volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
-        static const struct { uint32_t color; const char *name; } colors[] = {
-            {0x000000FF, "RED"}, {0x0000FF00, "GREEN"}, {0x00FF0000, "BLUE"},
-            {0x00FFFFFF, "WHITE"}, {0x000F0F0F, "GRAY"},
-        };
-        for (int sec = 0; sec < 10; sec++) {
-            rb->backlight_on();
-            int ci = sec / 2;
-            if (ci >= 5) ci = 4;
-            comp_p[0x00C/4] = colors[ci].color;
-            comp_p[0] = 1;  /* GO re-fire to latch BG_COLOR */
-            vpp_push_frame(panel_type, 200);  /* 200× pump (PROVEN) */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 900000); }
-            vlog("  t=%d %s(0x%06lx): DMA=%08lx LCD+0x8C=%08lx",
-                 sec, colors[ci].name, (unsigned long)colors[ci].color,
-                 (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
-        }
+    /* v117: Phase 7c — 10s display, log only, no color changes yet.
+     * Prove the pump works before adding GO re-fire for colors. */
+    vlog("Phase 7c: Display (10s, no color change)");
+    for (int sec = 0; sec < 10; sec++) {
+        rb->backlight_on();
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
+        vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
+             sec, (unsigned long)CLCD_REG(0x010),
+             (unsigned long)*(volatile uint32_t *)(0x38900010),
+             (unsigned long)*(volatile uint32_t *)(0x3830008C));
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
