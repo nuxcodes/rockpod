@@ -591,7 +591,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v118 ===");
+    vlog("=== VPP Pipeline Test v119 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -623,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v118");
+    rb->splashf(HZ, "VPP v119");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -809,9 +809,12 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
      * Without bit 4, MIXER won't pull data from CLCD for video layer.
      * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
-    /* v118: MIXER+0x004 = 0x07 during init (Apple's init value: bits 0+1+2).
-     * Bit 4 (layer 5 enable) added later in Phase 7 before trigger. */
-    MIXER_L5_EN = 0x07;
+    /* v119: REVERT to v110's proven value 0x13 (bits 0+1+4).
+     * v119's 0x07 (added bit 2 = progressive mode) BROKE compositor output.
+     * v110 had 0x13 and BG_COLOR was visible. Apple's init = 0x07 includes
+     * bit 2 but this conflicts with compositor passthrough on S5L8702.
+     * Bit 4 stays during init (v110 had it, output worked). */
+    MIXER_L5_EN = 0x13;
     DISP_GAMMA_COMMIT = 0;
     /* DISP GO DEFERRED to Phase 7 (marathon batch 3 agent 5):
      * Apple fires DISP GO as the LAST operation, AFTER compositor
@@ -1343,14 +1346,11 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
     CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
     CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
-    /* v118: add layer 5 enable (bit 4) right before trigger */
-    MIXER_L5_EN |= 0x10;
+    /* v119: bit 4 already set during init (v110 proven value 0x13) */
     /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
-    DISP_TRIGGER |= 1;
-    DISP_TRIGGER |= 2;
-    DISP_TRIGGER |= 4;
+    DISP_TRIGGER |= 7;  /* v119: single write (was three separate) */
     vlog("  Pipeline trigger fired (buffers+trigger atomic)");
     /* v112: CLCD full status dump (G10: decode all 6 read-only status regs) */
     vlog("  CLCD status: +010=%08lx +014=%08lx +018=%08lx +01C=%08lx +020=%08lx +024=%08lx",
