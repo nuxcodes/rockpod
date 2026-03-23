@@ -766,7 +766,7 @@ bool skin_render_alternator(struct skin_element* element, struct skin_draw_info 
 
 void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
                         struct skin_viewport* skin_viewport, unsigned long refresh_type,
-                        bool no_fill)
+                        bool no_fill, int y_offset)
 {
     struct screen *display = gwps->display;
     char linebuf[MAX_LINE];
@@ -785,6 +785,11 @@ void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
         .line_desc = LINE_DESC_DEFINIT,
     };
     info.line_desc.no_fill = no_fill;
+    if (y_offset != 0)
+    {
+        int ch = display->getcharheight();
+        info.line_desc.height = ch + 2 * y_offset;
+    }
 
     struct align_pos * align = &info.align;
     bool needs_update, update_all = false;
@@ -1004,7 +1009,7 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         /* render */
         if (viewport->children_count)
             skin_render_viewport(get_child(viewport->children, 0), gwps,
-                                 skin_viewport, vp_refresh_mode, false);
+                                 skin_viewport, vp_refresh_mode, false, 0);
 
         refresh_mode = old_refresh_mode;
     }

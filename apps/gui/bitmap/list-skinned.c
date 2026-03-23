@@ -373,7 +373,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 struct skin_element** children = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->children);
                 if (children && *children)
                     skin_render_viewport(SKINOFFSETTOPTR(get_skin_buffer(wps.data), (intptr_t)children[0]),
-                                         &wps, skin_viewport, SKIN_REFRESH_ALL, false);
+                                         &wps, skin_viewport, SKIN_REFRESH_ALL, false, 0);
                 wps_display_images(&wps, &skin_viewport->vp);
             }
             /* force disableing scroll because it breaks later */
@@ -413,29 +413,57 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
          * without corrupting VP loop state */
         if (has_margin && have_deco && deco_vp_element)
         {
-            struct skin_viewport overlay_vp;
-            memcpy(&overlay_vp, &deco_svp_copy, sizeof(struct skin_viewport));
-            overlay_vp.vp.x = parent->x;
-            overlay_vp.vp.y = parent->y + item_h * cur_line;
-            overlay_vp.vp.height = item_h;
-            display->set_viewport(&overlay_vp.vp);
-#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-            overlay_vp.vp.fg_pattern =
-                dynamic_colors_resolve(overlay_vp.dc_orig_fg);
-            overlay_vp.vp.bg_pattern =
-                dynamic_colors_resolve(overlay_vp.dc_orig_bg);
-            display->set_foreground(overlay_vp.vp.fg_pattern);
-            display->set_background(overlay_vp.vp.bg_pattern);
-#endif
+            int glyph_h = listcfg[screen]->height;
+            int half_h = glyph_h / 2;
+            int row_top = parent->y + item_h * cur_line;
             struct skin_element** dchildren =
                 SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                 deco_vp_element->children);
+
             if (dchildren && *dchildren)
+            {
+                /* TL corner: top half of glyph at row top */
+                struct skin_viewport tl_vp;
+                memcpy(&tl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
+                tl_vp.vp.x = parent->x;
+                tl_vp.vp.y = row_top;
+                tl_vp.vp.height = half_h;
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+                tl_vp.vp.fg_pattern =
+                    dynamic_colors_resolve(tl_vp.dc_orig_fg);
+                tl_vp.vp.bg_pattern =
+                    dynamic_colors_resolve(tl_vp.dc_orig_bg);
+#endif
+                display->set_viewport(&tl_vp.vp);
+                display->set_foreground(tl_vp.vp.fg_pattern);
+                display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
-                    &wps, &overlay_vp, SKIN_REFRESH_ALL, true);
-            wps_display_images(&wps, &overlay_vp.vp);
+                    &wps, &tl_vp, SKIN_REFRESH_ALL, true, 0);
+                wps_display_images(&wps, &tl_vp.vp);
+
+                /* BL corner: bottom half of glyph at row bottom */
+                struct skin_viewport bl_vp;
+                memcpy(&bl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
+                bl_vp.vp.x = parent->x;
+                bl_vp.vp.y = row_top + item_h - half_h;
+                bl_vp.vp.height = half_h;
+#if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
+                bl_vp.vp.fg_pattern =
+                    dynamic_colors_resolve(bl_vp.dc_orig_fg);
+                bl_vp.vp.bg_pattern =
+                    dynamic_colors_resolve(bl_vp.dc_orig_bg);
+#endif
+                display->set_viewport(&bl_vp.vp);
+                display->set_foreground(bl_vp.vp.fg_pattern);
+                display->set_background(bl_vp.vp.bg_pattern);
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &bl_vp, SKIN_REFRESH_ALL, true, -half_h);
+                wps_display_images(&wps, &bl_vp.vp);
+            }
         }
     }
     current_column = -1;
