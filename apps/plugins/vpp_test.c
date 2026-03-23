@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v124 ===");
+    vlog("=== VPP Pipeline Test v125 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v124");
+    rb->splashf(HZ, "VPP v125");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1411,9 +1411,8 @@ enum plugin_status plugin_start(const void *parameter)
         for (int ci = 0; ci < 5; ci++) {
             rb->backlight_on();
 
-            /* Set BG_COLOR + GO re-fire to latch */
+            /* Set BG_COLOR — NO GO re-fire (v124 proved GO kills the pump) */
             comp_p[0x00C/4] = colors[ci].color;
-            comp_p[0] = 1;
 
             /* 200× pump — v110/v123 proven pattern (LCD+0x80 bracket per iteration) */
             for (int pump = 0; pump < 200; pump++) {
