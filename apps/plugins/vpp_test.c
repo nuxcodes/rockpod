@@ -153,6 +153,51 @@ static void vpp_lcd_window(int x, int y, int w, int h)
     vpp_lcd_config(LCD_FRAME_MODE);
 }
 
+/* v114: Per-frame push function — validated by FINAL reconciliation agent.
+ * Self-write trigger starts continuous pixel push. Hold bracket 50ms for full frame.
+ * GRAM setup outside bracket (F2: panel state persists across LCD_CON changes).
+ * NO compositor GO re-fire between frames (M2: GO resets push state). */
+static void vpp_push_frame(int panel_type)
+{
+    /* 1. GRAM setup OUTSIDE bracket in P18 */
+    vpp_lcd_config(0x80000DA9);
+    if (panel_type >= 2) {
+        vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+        vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+        vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+        vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+        vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+        vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+        vpp_lcd_cmd(0x202);
+    } else {
+        vpp_lcd_config(0x80000C21);
+        vpp_lcd_cmd(0x2A);
+        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+        vpp_lcd_cmd(0x2B);
+        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+        vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+        vpp_lcd_cmd(0x2C);
+    }
+    vpp_lcd_config(0x81100DB9);
+
+    /* 2. Wait bus idle */
+    { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+
+    /* 3. Open bracket + single self-write trigger */
+    *(volatile uint32_t *)(0x38300080) = 1;
+    { uint32_t v = LCD_CON; LCD_CON = v; }
+
+    /* 4. Hold 50ms for full frame (J5: frame ~47ms at P9 bus rate) */
+    { uint32_t start = USEC_TIMER; while ((USEC_TIMER - start) < 50000); }
+
+    /* 5. Close bracket */
+    *(volatile uint32_t *)(0x38300080) = 0;
+
+    /* 6. Wait residual bus activity */
+    { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+}
+
 /* ---- VPP Power Control ---- */
 
 static void vpp_clocks_enable(bool enable)
@@ -554,7 +599,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v113 ===");
+    vlog("=== VPP Pipeline Test v114 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +631,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v113");
+    rb->splashf(HZ, "VPP v114");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1370,93 +1415,36 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v113: Compositor warmup — push 50 BG_COLOR frames using proven
-     * self-write trigger pattern (v112 T1 confirmed: GRAM outside bracket
-     * + LCD_CON self-write inside = clean reliable push). */
-    vlog("Phase 7b: Compositor warmup (50 self-write pushes)");
-    {
-        for (int pump = 0; pump < 50; pump++) {
-            /* GRAM setup outside bracket */
-            vpp_lcd_config(0x80000DA9);
-            if (panel_type >= 2) vpp_lcd_cmd(0x202);
-            else { vpp_lcd_config(0x80000C21); vpp_lcd_cmd(0x2C); }
-            vpp_lcd_config(0x81100DB9);
-            /* Self-write push */
-            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-            *(volatile uint32_t *)(0x38300080) = 1;
-            { uint32_t v = LCD_CON; LCD_CON = v; }
-            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-            *(volatile uint32_t *)(0x38300080) = 0;
-            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-        }
-        vlog("  Warmup done. DMA=%08lx COMP+0x10=%08lx",
-             (unsigned long)CLCD_REG(0x010),
-             (unsigned long)*(volatile uint32_t *)(0x38900010));
-    }
+    /* v114: Single push with 50ms hold (FINAL agent validated).
+     * Self-write = valid trigger. Hold bracket 50ms = full frame (~47ms).
+     * Phase 7b failed in v113 because: 50 rapid pushes interrupted each other. */
+    vlog("Phase 7b: Single frame push (50ms hold)");
+    vpp_push_frame(panel_type);
+    vlog("  Push done. DMA=%08lx LCD+0x8C=%08lx",
+         (unsigned long)CLCD_REG(0x010),
+         (unsigned long)*(volatile uint32_t *)(0x3830008C));
 
-    /* v113: Clean per-frame push loop using proven self-write trigger.
-     * v112 diagnostic confirmed: T1 (GRAM outside + LCD_CON self-write) = reliable push.
-     * 10-second color cycle: RED→GREEN→BLUE→WHITE→GRAY (2s each). */
-    vlog("Phase 7c: Color cycle (self-write trigger, 10s)");
+    /* v114: Color cycle — NO compositor GO re-fire (M2: GO resets push state).
+     * Just write BG_COLOR register directly. Compositor uses new value on next push. */
+    vlog("Phase 7c: Color cycle (50ms push, 10s)");
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
         static const struct { uint32_t color; const char *name; } colors[] = {
-            {0x000000FF, "RED"},     /* XBGR: R=0xFF */
-            {0x0000FF00, "GREEN"},   /* XBGR: G=0xFF */
-            {0x00FF0000, "BLUE"},    /* XBGR: B=0xFF */
-            {0x00FFFFFF, "WHITE"},   /* XBGR: all 0xFF */
-            {0x000F0F0F, "GRAY"},    /* Apple's init gray */
+            {0x000000FF, "RED"}, {0x0000FF00, "GREEN"}, {0x00FF0000, "BLUE"},
+            {0x00FFFFFF, "WHITE"}, {0x000F0F0F, "GRAY"},
         };
-
         for (int sec = 0; sec < 10; sec++) {
             rb->backlight_on();
-            int ci = sec / 2;  /* change color every 2 seconds */
+            int ci = sec / 2;
             if (ci >= 5) ci = 4;
-
-            /* Set BG_COLOR + re-fire compositor GO */
+            /* Write BG_COLOR WITHOUT re-firing GO (M2 validated) */
             comp_p[0x00C/4] = colors[ci].color;
-            comp_p[0] = 1;
-
-            /* GRAM setup OUTSIDE bracket in P18 (F2: panel state persists) */
-            vpp_lcd_config(0x80000DA9);
-            if (panel_type >= 2) {
-                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x202);
-            } else {
-                vpp_lcd_config(0x80000C21);
-                vpp_lcd_cmd(0x2A);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-                vpp_lcd_cmd(0x2B);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-                vpp_lcd_cmd(0x2C);
-            }
-            vpp_lcd_config(0x81100DB9);  /* back to P9 passthrough */
-
-            /* Open bracket + self-write trigger (v112 T1 proven) */
-            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-            *(volatile uint32_t *)(0x38300080) = 1;
-            { uint32_t v = LCD_CON; LCD_CON = v; }  /* SELF-WRITE TRIGGER */
-            /* v113b: fixed delay for compositor to start, THEN poll completion.
-             * v113 bug: LCD+0x8C poll alone exits immediately (idle before push). */
-            { volatile int d; for (d = 0; d < 50000; d++); }
-            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-            *(volatile uint32_t *)(0x38300080) = 0;
-            { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-
-            /* Wait ~1 second */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
-
-            vlog("  t=%d %s(0x%06lx): DMA=%08lx COMP+0x10=%08lx",
+            vpp_push_frame(panel_type);
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 940000); }
+            vlog("  t=%d %s(0x%06lx): DMA=%08lx LCD+0x8C=%08lx",
                  sec, colors[ci].name, (unsigned long)colors[ci].color,
                  (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)*(volatile uint32_t *)(0x38900010));
+                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
         }
     }
 
