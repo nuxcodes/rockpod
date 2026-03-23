@@ -183,7 +183,11 @@ bool skinlist_get_item(struct screen *display, struct gui_synclist *list, int x,
     if (!skinlist_is_configured(screen, list))
         return false;
 
-    int row = y / listcfg[screen]->height;
+    int h = listcfg[screen]->height;
+    if (list && list->callback_draw_margin
+        && list->line_height[screen] > h)
+        h = list->line_height[screen];
+    int row = y / h;
     int column = x / listcfg[screen]->width;
     struct viewport *parent = (list->parent[screen]);
     int cols = (parent->width / listcfg[screen]->width);
@@ -256,7 +260,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
              viewport = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->next))
         {
             int original_x, original_y;
-            int skin_orig_width;
+            int skin_orig_width, skin_orig_height;
             skin_viewport = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->data);
             char *viewport_label = NULL;
             if (skin_viewport)
@@ -273,6 +277,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             original_x = skin_viewport->vp.x;
             original_y = skin_viewport->vp.y;
             skin_orig_width = skin_viewport->vp.width;
+            skin_orig_height = skin_viewport->vp.height;
             if (listcfg[screen]->tile)
             {
                 int cols = (parent->width / listcfg[screen]->width);
@@ -301,6 +306,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 if (skin_viewport->vp.width < 0)
                     skin_viewport->vp.width = 0;
             }
+            /* Expand text VP to full item height for centering */
+            if (has_margin && item_h > listcfg[screen]->height
+                && original_x > 0)
+                skin_viewport->vp.height = item_h;
             display->set_viewport(&skin_viewport->vp);
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
             /* Dynamic colors: resolve from stored originals */
@@ -372,8 +381,14 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             {
                 struct skin_element** children = SKINOFFSETTOPTR(get_skin_buffer(wps.data), viewport->children);
                 if (children && *children)
+                {
+                    int y_off = 0;
+                    if (has_margin && item_h > listcfg[screen]->height
+                        && original_x > 0)
+                        y_off = (item_h - display->getcharheight()) / 2;
                     skin_render_viewport(SKINOFFSETTOPTR(get_skin_buffer(wps.data), (intptr_t)children[0]),
-                                         &wps, skin_viewport, SKIN_REFRESH_ALL, false, 0);
+                                         &wps, skin_viewport, SKIN_REFRESH_ALL, false, y_off);
+                }
                 wps_display_images(&wps, &skin_viewport->vp);
             }
             /* force disableing scroll because it breaks later */
@@ -383,7 +398,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 skin_viewport->vp.x = original_x;
                 skin_viewport->vp.y = original_y;
                 if (has_margin)
+                {
                     skin_viewport->vp.width = skin_orig_width;
+                    skin_viewport->vp.height = skin_orig_height;
+                }
             }
         }
 
@@ -422,18 +440,24 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 
             if (dchildren && *dchildren)
             {
+                int parent_bottom = parent->y + parent->height;
+
                 /* TL corner: top half of glyph at row top */
                 struct skin_viewport tl_vp;
                 memcpy(&tl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 tl_vp.vp.x = parent->x;
                 tl_vp.vp.y = row_top;
                 tl_vp.vp.height = half_h;
+                if (tl_vp.vp.y + tl_vp.vp.height > parent_bottom)
+                    tl_vp.vp.height = parent_bottom - tl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
                 tl_vp.vp.fg_pattern =
                     dynamic_colors_resolve(tl_vp.dc_orig_fg);
                 tl_vp.vp.bg_pattern =
                     dynamic_colors_resolve(tl_vp.dc_orig_bg);
 #endif
+                if (tl_vp.vp.height > 0)
+                {
                 display->set_viewport(&tl_vp.vp);
                 display->set_foreground(tl_vp.vp.fg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
@@ -442,6 +466,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &tl_vp, SKIN_REFRESH_ALL, true, 0);
                 wps_display_images(&wps, &tl_vp.vp);
+                }
 
                 /* BL corner: bottom half of glyph at row bottom */
                 struct skin_viewport bl_vp;
@@ -449,12 +474,16 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 bl_vp.vp.x = parent->x;
                 bl_vp.vp.y = row_top + item_h - half_h;
                 bl_vp.vp.height = half_h;
+                if (bl_vp.vp.y + bl_vp.vp.height > parent_bottom)
+                    bl_vp.vp.height = parent_bottom - bl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
                 bl_vp.vp.fg_pattern =
                     dynamic_colors_resolve(bl_vp.dc_orig_fg);
                 bl_vp.vp.bg_pattern =
                     dynamic_colors_resolve(bl_vp.dc_orig_bg);
 #endif
+                if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
+                {
                 display->set_viewport(&bl_vp.vp);
                 display->set_foreground(bl_vp.vp.fg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
@@ -463,6 +492,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &bl_vp, SKIN_REFRESH_ALL, true, -half_h);
                 wps_display_images(&wps, &bl_vp.vp);
+                }
             }
         }
     }
