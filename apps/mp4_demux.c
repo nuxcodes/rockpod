@@ -496,7 +496,7 @@ static bool read_chunk_stsz_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
 static bool read_chunk_stsc_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
     size_t size_remaining = chunk_len - 8;
-    uint32_t numentries, i;
+    uint32_t numentries, i, fill;
 
     stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
@@ -504,16 +504,22 @@ static bool read_chunk_stsc_audio(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
-    if (numentries > MP4V_MAX_STSC)
-        numentries = MP4V_MAX_STSC;
-
     ctx->res->audio_num_stsc = numentries;
-    for (i = 0; i < numentries; i++)
+    fill = (numentries < ctx->res->audio_stsc_cap)
+         ? numentries : ctx->res->audio_stsc_cap;
+
+    for (i = 0; i < fill; i++)
     {
         ctx->res->audio_stsc[i].first_chunk = stream_read_uint32(&ctx->stream);
         ctx->res->audio_stsc[i].samples_per_chunk = stream_read_uint32(&ctx->stream);
         ctx->res->audio_stsc[i].sample_desc_index = stream_read_uint32(&ctx->stream);
         size_remaining -= 12;
+    }
+
+    if (numentries > fill)
+    {
+        stream_skip(&ctx->stream, (numentries - fill) * 12);
+        size_remaining -= (numentries - fill) * 12;
     }
 
     if (size_remaining > 0)
@@ -728,7 +734,7 @@ static bool read_chunk_stsz(struct mp4_parse_ctx *ctx, size_t chunk_len)
 static bool read_chunk_stsc(struct mp4_parse_ctx *ctx, size_t chunk_len)
 {
     size_t size_remaining = chunk_len - 8;
-    uint32_t numentries, i;
+    uint32_t numentries, i, fill;
 
     stream_read_uint32(&ctx->stream); /* version + flags */
     size_remaining -= 4;
@@ -736,16 +742,22 @@ static bool read_chunk_stsc(struct mp4_parse_ctx *ctx, size_t chunk_len)
     numentries = stream_read_uint32(&ctx->stream);
     size_remaining -= 4;
 
-    if (numentries > MP4V_MAX_STSC)
-        numentries = MP4V_MAX_STSC;
-
     ctx->res->num_stsc = numentries;
-    for (i = 0; i < numentries; i++)
+    fill = (numentries < ctx->res->stsc_cap)
+         ? numentries : ctx->res->stsc_cap;
+
+    for (i = 0; i < fill; i++)
     {
         ctx->res->stsc[i].first_chunk = stream_read_uint32(&ctx->stream);
         ctx->res->stsc[i].samples_per_chunk = stream_read_uint32(&ctx->stream);
         ctx->res->stsc[i].sample_desc_index = stream_read_uint32(&ctx->stream);
         size_remaining -= 12;
+    }
+
+    if (numentries > fill)
+    {
+        stream_skip(&ctx->stream, (numentries - fill) * 12);
+        size_remaining -= (numentries - fill) * 12;
     }
 
     if (size_remaining > 0)
@@ -1368,8 +1380,11 @@ int mp4v_demux_open(const char *filepath,
                     struct mp4v_demux_res *res,
                     uint32_t *sample_buf, uint32_t sample_cap,
                     uint32_t *chunk_buf, uint32_t chunk_cap,
+                    struct mp4v_stsc_entry *stsc_buf, uint32_t stsc_cap,
                     uint32_t *audio_sample_buf, uint32_t audio_sample_cap,
-                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap)
+                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap,
+                    struct mp4v_stsc_entry *audio_stsc_buf,
+                    uint32_t audio_stsc_cap)
 {
     struct mp4_parse_ctx ctx;
     int fd;
@@ -1383,10 +1398,14 @@ int mp4v_demux_open(const char *filepath,
     res->sample_sizes_cap = sample_cap;
     res->chunk_offsets = chunk_buf;
     res->chunk_offsets_cap = chunk_cap;
+    res->stsc = stsc_buf;
+    res->stsc_cap = stsc_cap;
     res->audio_sample_sizes = audio_sample_buf;
     res->audio_sample_sizes_cap = audio_sample_cap;
     res->audio_chunk_offsets = audio_chunk_buf;
     res->audio_chunk_offsets_cap = audio_chunk_cap;
+    res->audio_stsc = audio_stsc_buf;
+    res->audio_stsc_cap = audio_stsc_cap;
 
     memset(&ctx, 0, sizeof(ctx));
     stream_init(&ctx.stream, fd);
@@ -1467,13 +1486,16 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
     *size_out = res->sample_sizes[sample_index];
 
     /* Walk stsc to find which chunk contains this sample */
-    for (i = 0; i < res->num_stsc; i++)
+    {
+    uint32_t stsc_n = (res->num_stsc < res->stsc_cap)
+                    ? res->num_stsc : res->stsc_cap;
+    for (i = 0; i < stsc_n; i++)
     {
         uint32_t first_chunk = res->stsc[i].first_chunk - 1; /* 1-based → 0-based */
         uint32_t spc = res->stsc[i].samples_per_chunk;
         uint32_t next_first;
 
-        if (i + 1 < res->num_stsc)
+        if (i + 1 < stsc_n)
             next_first = res->stsc[i + 1].first_chunk - 1;
         else
             next_first = res->num_stco;
@@ -1491,6 +1513,7 @@ int mp4v_get_sample_offset(const struct mp4v_demux_res *res,
         }
 
         samples_so_far += samples_in_run;
+    }
     }
 
     if (chunk_index >= res->chunk_offsets_cap)
@@ -1532,13 +1555,16 @@ int mp4v_get_audio_sample_offset(const struct mp4v_demux_res *res,
 
     *size_out = res->audio_sample_sizes[sample_index];
 
-    for (i = 0; i < res->audio_num_stsc; i++)
+    {
+    uint32_t stsc_n = (res->audio_num_stsc < res->audio_stsc_cap)
+                    ? res->audio_num_stsc : res->audio_stsc_cap;
+    for (i = 0; i < stsc_n; i++)
     {
         uint32_t first_chunk = res->audio_stsc[i].first_chunk - 1;
         uint32_t spc = res->audio_stsc[i].samples_per_chunk;
         uint32_t next_first;
 
-        if (i + 1 < res->audio_num_stsc)
+        if (i + 1 < stsc_n)
             next_first = res->audio_stsc[i + 1].first_chunk - 1;
         else
             next_first = res->audio_num_stco;
@@ -1555,6 +1581,7 @@ int mp4v_get_audio_sample_offset(const struct mp4v_demux_res *res,
         }
 
         samples_so_far += samples_in_run;
+    }
     }
 
     if (chunk_index >= res->audio_chunk_offsets_cap)

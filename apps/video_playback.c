@@ -1640,7 +1640,9 @@ void video_playback_start(const char *filepath, const char *title)
     uint8_t *mem, *p;
     uint32_t *sample_buf, *chunk_buf;
     uint32_t *audio_sample_buf, *audio_chunk_buf;
+    struct mp4v_stsc_entry *vid_stsc_buf, *aud_stsc_buf;
     uint32_t vid_samples, vid_chunks, aud_samples, aud_chunks;
+    uint32_t vid_stsc, aud_stsc;
     uint8_t *dec_buf;
 
     if (!filepath)
@@ -1669,8 +1671,8 @@ void video_playback_start(const char *filepath, const char *title)
     {
         static uint32_t tmp_asample[1], tmp_achunk[1];
         if (mp4v_demux_open(filepath, &demux,
-                            pb_tmp_sample, 1, pb_tmp_chunk, 1,
-                            tmp_asample, 1, tmp_achunk, 1) < 0)
+                            pb_tmp_sample, 1, pb_tmp_chunk, 1, NULL, 0,
+                            tmp_asample, 1, tmp_achunk, 1, NULL, 0) < 0)
         {
             splashf(HZ * 2, "Cannot open:\n%s", filepath);
             return;
@@ -1707,22 +1709,28 @@ void video_playback_start(const char *filepath, const char *title)
      * No hardcoded caps — handles any movie length (3+ hours). */
     vid_samples = demux.num_samples;
     vid_chunks = demux.num_stco;
+    vid_stsc = demux.num_stsc;
     aud_samples = demux.audio_num_samples;
     aud_chunks = demux.audio_num_stco;
+    aud_stsc = demux.audio_num_stsc;
 
     /* Sanity clamp to prevent absurd allocations on malformed files */
     if (vid_samples > 2000000) vid_samples = 2000000;
     if (vid_chunks > 500000) vid_chunks = 500000;
+    if (vid_stsc > 100000) vid_stsc = 100000;
     if (aud_samples > 2000000) aud_samples = 2000000;
     if (aud_chunks > 500000) aud_chunks = 500000;
+    if (aud_stsc > 100000) aud_stsc = 100000;
 
     {
         size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
 
         alloc_size = vid_samples * sizeof(uint32_t) + 32  /* video stsz */
                    + vid_chunks * sizeof(uint32_t) + 32   /* video stco */
+                   + vid_stsc * sizeof(struct mp4v_stsc_entry) + 32
                    + aud_samples * sizeof(uint32_t) + 32  /* audio stsz */
                    + aud_chunks * sizeof(uint32_t) + 32   /* audio stco */
+                   + aud_stsc * sizeof(struct mp4v_stsc_entry) + 32
                    + dec_size + 4096
                    + 256 * 1024 + 32
                    + scale_size;
@@ -1751,6 +1759,12 @@ void video_playback_start(const char *filepath, const char *title)
     audio_chunk_buf = (uint32_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
     p = (uint8_t *)(audio_chunk_buf + aud_chunks);
 
+    vid_stsc_buf = (struct mp4v_stsc_entry *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(vid_stsc_buf + vid_stsc);
+
+    aud_stsc_buf = (struct mp4v_stsc_entry *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    p = (uint8_t *)(aud_stsc_buf + aud_stsc);
+
     dec_buf = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 4096);
     p = dec_buf + dec_size;
 
@@ -1774,8 +1788,10 @@ void video_playback_start(const char *filepath, const char *title)
     if (mp4v_demux_open(filepath, &demux,
                         sample_buf, vid_samples,
                         chunk_buf, vid_chunks,
+                        vid_stsc_buf, vid_stsc,
                         audio_sample_buf, aud_samples,
-                        audio_chunk_buf, aud_chunks) < 0)
+                        audio_chunk_buf, aud_chunks,
+                        aud_stsc_buf, aud_stsc) < 0)
     {
         splashf(HZ * 2, "MP4 parse failed");
         goto cleanup;

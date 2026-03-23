@@ -31,8 +31,8 @@ int main(void)
 
     ret = mp4v_demux_open(TEST_FILE, &res,
                           sample_sizes, 65536,
-                          chunk_offsets, 8192,
-                          NULL, 0, NULL, 0);
+                          chunk_offsets, 8192, NULL, 0,
+                          NULL, 0, NULL, 0, NULL, 0);
 
     if (ret < 0)
     {

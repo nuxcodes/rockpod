@@ -33,7 +33,6 @@
 /* Max sample table entries we'll store in memory */
 #define MP4V_MAX_SAMPLES    65536
 #define MP4V_MAX_STTS       4096
-#define MP4V_MAX_STSC       1024
 #define MP4V_MAX_STCO       8192
 #define MP4V_MAX_STSS       4096
 
@@ -91,7 +90,8 @@ struct mp4v_demux_res {
 
     /* Sample-to-chunk (stsc) */
     uint32_t num_stsc;
-    struct mp4v_stsc_entry stsc[MP4V_MAX_STSC];
+    struct mp4v_stsc_entry *stsc;    /* caller-provided buffer */
+    uint32_t stsc_cap;
 
     /* Chunk offsets (stco) */
     uint32_t num_stco;
@@ -131,7 +131,8 @@ struct mp4v_demux_res {
 
     /* Audio sample-to-chunk (stsc) */
     uint32_t audio_num_stsc;
-    struct mp4v_stsc_entry audio_stsc[MP4V_MAX_STSC];
+    struct mp4v_stsc_entry *audio_stsc;  /* caller-provided buffer */
+    uint32_t audio_stsc_cap;
 
     /* Audio chunk offsets (stco) */
     uint32_t audio_num_stco;
@@ -151,6 +152,8 @@ struct mp4v_demux_res {
  * audio_sample_cap: number of uint32_t entries in audio_sample_buf
  * audio_chunk_buf:  buffer for audio chunk_offsets (NULL to skip audio)
  * audio_chunk_cap:  number of uint32_t entries in audio_chunk_buf
+ * stsc_buf/audio_stsc_buf: buffers for stsc tables (NULL OK for count-only pass)
+ * stsc_cap/audio_stsc_cap: number of stsc_entry entries
  *
  * Returns 0 on success (video found), -1 on error.
  * Audio track is optional — check res->audio_format != 0. */
@@ -158,8 +161,11 @@ int mp4v_demux_open(const char *filepath,
                     struct mp4v_demux_res *res,
                     uint32_t *sample_buf, uint32_t sample_cap,
                     uint32_t *chunk_buf, uint32_t chunk_cap,
+                    struct mp4v_stsc_entry *stsc_buf, uint32_t stsc_cap,
                     uint32_t *audio_sample_buf, uint32_t audio_sample_cap,
-                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap);
+                    uint32_t *audio_chunk_buf, uint32_t audio_chunk_cap,
+                    struct mp4v_stsc_entry *audio_stsc_buf,
+                    uint32_t audio_stsc_cap);
 
 /* Get the file offset and size of video sample N (0-based).
  * Returns 0 on success, -1 on error. */

@@ -80,8 +80,8 @@ bool video_thumb_extract(const char *filepath,
 
     /* Try embedded cover art from MP4 */
     if (mp4v_demux_open(filepath, &res, dummy_samples, 1,
-                        dummy_chunks, 1,
-                        NULL, 0, NULL, 0) == 0
+                        dummy_chunks, 1, NULL, 0,
+                        NULL, 0, NULL, 0, NULL, 0) == 0
         && res.cover_size > 0 && res.cover_offset > 0)
     {
         fd = open(filepath, O_RDONLY);
