@@ -591,7 +591,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v119 ===");
+    vlog("=== VPP Pipeline Test v120 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -623,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v119");
+    rb->splashf(HZ, "VPP v120");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -809,8 +809,8 @@ enum plugin_status plugin_start(const void *parameter)
      * Previous versions set 0x03 (bits 0+1) but NEVER bit 4!
      * Without bit 4, MIXER won't pull data from CLCD for video layer.
      * Agent found: ROM 0x166d6c: ORR r1,r1,#0x10 for case 5. */
-    /* v119: REVERT to v110's proven value 0x13 (bits 0+1+4).
-     * v119's 0x07 (added bit 2 = progressive mode) BROKE compositor output.
+    /* v120: REVERT to v110's proven value 0x13 (bits 0+1+4).
+     * v120's 0x07 (added bit 2 = progressive mode) BROKE compositor output.
      * v110 had 0x13 and BG_COLOR was visible. Apple's init = 0x07 includes
      * bit 2 but this conflicts with compositor passthrough on S5L8702.
      * Bit 4 stays during init (v110 had it, output worked). */
@@ -1130,12 +1130,15 @@ enum plugin_status plugin_start(const void *parameter)
          * Missing from all previous versions! */
         comp[0x024/4] = 0x00FFFFFF;
 
-        /* v111: Compositor scaler-area writes REMOVED (A13+D2 verified).
-         * Apple NEVER writes +0x030/034/04C/050/054 during compositor_init.
-         * FUN_0014d93c (scaler config) has ZERO callers in ROM.
-         * D2 confirmed: harmless in bypass mode but violates STRICT RE RULE.
-         * v66 proved adjacent +0x038-0x044 writes kill DMA.
-         * +0x228-0x2A4 zeroing also removed — zero ROM backing. */
+        /* v120: RESTORE compositor scaler geometry (was in v110, removed in v111).
+         * v111 removed these citing "Apple NEVER writes during compositor_init."
+         * But v110 HAD them and had working BG_COLOR output. v116-v120 without
+         * them had NO output. Without viewport, compositor has zero-sized output. */
+        comp[0x030/4] = 0x00000000;             /* src start: (y=0)<<16 | (x=0) */
+        comp[0x034/4] = 0x00F00140;             /* src end: (y=240)<<16 | (x=320) */
+        comp[0x04C/4] = 0x10001000;             /* scale: (v=1.0)<<16 | (h=1.0) in 4.12 FP */
+        comp[0x050/4] = 0x00000000;             /* centering offset: 0 */
+        comp[0x054/4] = (320 << 16) | 240;      /* output dims: (w=320)<<16 | (h=240) */
 
         /* v97: DO NOT fire compositor GO yet — deferred to after LCD passthrough. */
     }
@@ -1346,11 +1349,11 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_LUMA_STRIDE   = src_w;             /* +0x3C4 = luma stride */
     CLCD_CHROMA_STRIDE = src_w / 2;         /* +0x3C8 = chroma stride */
     CLCD_YUV_MODE      = 1;                 /* +0x3C0 = planar (LAST!) */
-    /* v119: bit 4 already set during init (v110 proven value 0x13) */
+    /* v120: bit 4 already set during init (v110 proven value 0x13) */
     /* NOW trigger — no intervening writes */
     CLCD_CTRL |= 1;
     MIXER_CTRL = 7;
-    DISP_TRIGGER |= 7;  /* v119: single write (was three separate) */
+    DISP_TRIGGER |= 7;  /* v120: single write (was three separate) */
     vlog("  Pipeline trigger fired (buffers+trigger atomic)");
     /* v112: CLCD full status dump (G10: decode all 6 read-only status regs) */
     vlog("  CLCD status: +010=%08lx +014=%08lx +018=%08lx +01C=%08lx +020=%08lx +024=%08lx",
