@@ -417,6 +417,7 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             memcpy(&overlay_vp, &deco_svp_copy, sizeof(struct skin_viewport));
             overlay_vp.vp.x = parent->x;
             overlay_vp.vp.y = parent->y + item_h * cur_line;
+            overlay_vp.vp.height = item_h;
             display->set_viewport(&overlay_vp.vp);
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
             overlay_vp.vp.fg_pattern =
