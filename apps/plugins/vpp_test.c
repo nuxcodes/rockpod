@@ -1201,28 +1201,33 @@ enum plugin_status plugin_start(const void *parameter)
     /* Step 2: COMP+0x3AC already set in compositor init above */
 
     /* Step 3: Panel GRAM commands (between porch and resolution)
-     * v111: NO LCD_CON switch! D3 proved LCD_WCMD is NOT serialized in P9.
-     * S5L8702 LCD controller determines RS from APB register address.
-     * ILI9326 register indices (0x210-0x213, 0x202) work fine in P9 mode.
-     * Apple's vtable[0x0C] sends GRAM commands in P9 without switching (A9+A18+D3+D4). */
-    if (panel_type >= 2) {
-        vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-        vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-        vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-        vpp_lcd_cmd(0x202);
-    } else {
-        vpp_lcd_cmd(0x2A);
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-        vpp_lcd_cmd(0x2B);
-        vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-        vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-        vpp_lcd_cmd(0x2C);
+     * v112: RESTORED P18 switch. D3 was WRONG — F8 proved WCMD IS serialized.
+     * This is OUTSIDE the LCD+0x80 bracket, so P18 switch is safe here.
+     * Apple's vtable[0x0C] also switches LCD_CON internally (F5 confirmed). */
+    {
+        uint32_t saved_con = LCD_CON;
+        vpp_lcd_config(0x80000DA9);  /* P18 for 16-bit ILI9326 register indices */
+        if (panel_type >= 2) {
+            vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+            vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+            vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+            vpp_lcd_cmd(0x202);
+        } else {
+            vpp_lcd_config(0x80000C21);  /* P8 for 8-bit MIPI DBI commands */
+            vpp_lcd_cmd(0x2A);
+            vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+            vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+            vpp_lcd_cmd(0x2B);
+            vpp_lcd_data(0x00); vpp_lcd_data(0x00);
+            vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
+            vpp_lcd_cmd(0x2C);
+        }
+        vpp_lcd_config(saved_con);  /* back to P9 */
     }
-    vlog("  Panel GRAM done (P9 mode, no LCD_CON switch)");
+    vlog("  Panel GRAM done (P18 cmd mode, restored P9)");
 
     /* Step 4: Resolution */
     *(volatile uint32_t *)(0x38300074) = 0x00F00140;
@@ -1310,6 +1315,11 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_TRIGGER |= 2;
     DISP_TRIGGER |= 4;
     vlog("  Pipeline trigger fired (buffers+trigger atomic)");
+    /* v112: CLCD full status dump (G10: decode all 6 read-only status regs) */
+    vlog("  CLCD status: +010=%08lx +014=%08lx +018=%08lx +01C=%08lx +020=%08lx +024=%08lx",
+         (unsigned long)CLCD_REG(0x010), (unsigned long)CLCD_REG(0x014),
+         (unsigned long)CLCD_REG(0x018), (unsigned long)CLCD_REG(0x01C),
+         (unsigned long)CLCD_REG(0x020), (unsigned long)CLCD_REG(0x024));
 
     /* v92: Re-fire compositor i80 output strobe AFTER VPP trigger.
      * During compositor_init, comp+0x200 |= 0x10080 fires bit 7 (strobe,
@@ -1369,11 +1379,16 @@ enum plugin_status plugin_start(const void *parameter)
         for (int pump = 0; pump < 200; pump++) {
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             *(volatile uint32_t *)(0x38300080) = 1;
-            /* v111: GRAM write cmd in P9 — no LCD_CON switch (D3) */
-            if (panel_type >= 2)
-                vpp_lcd_cmd(0x202);
-            else
-                vpp_lcd_cmd(0x2C);
+            /* v112: RESTORED LCD_CON switch — it's the compositor push trigger (F1+F7+G20) */
+            {
+                uint32_t saved = LCD_CON;
+                vpp_lcd_config(0x80000DA9);  /* P18 */
+                if (panel_type >= 2)
+                    vpp_lcd_cmd(0x202);
+                else
+                    vpp_lcd_cmd(0x2C);
+                LCD_CON = saved;  /* restore P9 = TRIGGER */
+            }
             *(volatile uint32_t *)(0x38300080) = 0;
             { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
         }
@@ -1382,57 +1397,198 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)*(volatile uint32_t *)(0x38900010));
     }
 
-    /* v104: Per-frame push loop (Apple's Path B from ROM 0xa5064).
-     * Each iteration: LCD+0x80=1 → GRAM cmds → LCD+0x80=0 → wait idle.
-     * This is how Apple's DriverUpdateThread pushes compositor frames. */
-    vlog("Phase 7c: Per-frame push loop (10s, color cycle R→G→B)");
+    /* v112: Diagnostic multi-test (10 tests, 2s each).
+     * Tests different push trigger approaches to find the one with clean colors.
+     * F1+F7+G20: LCD_CON write = compositor push trigger.
+     * F2: GRAM state persists across LCD_CON changes.
+     * F8: WCMD IS serialized in P9 — P18 needed for GRAM commands. */
+    vlog("Phase 7c: Diagnostic multi-test (10 tests, 2s each)");
     {
         volatile uint32_t *comp_p = (volatile uint32_t *)0x38900000;
-        for (int sec = 0; sec < 10; sec++) {
-            rb->backlight_on();  /* v106: keep backlight alive (E1) */
-            /* v107: Revert to XRGB — P16 mode will reveal true format */
-            if (sec == 0) { comp_p[0x00C/4] = 0x00FF0000; comp_p[0]=1; }      /* RED (XRGB) */
-            else if (sec == 3) { comp_p[0x00C/4] = 0x0000FF00; comp_p[0]=1; }  /* GREEN */
-            else if (sec == 6) { comp_p[0x00C/4] = 0x000000FF; comp_p[0]=1; }  /* BLUE (XRGB) */
+        /* Helper macro: send full GRAM setup in P18 outside bracket */
+        #define GRAM_SETUP_OUTSIDE() do { \
+            vpp_lcd_config(0x80000DA9); \
+            if (panel_type >= 2) { \
+                vpp_lcd_cmd(0x210); vpp_lcd_data(0); \
+                vpp_lcd_cmd(0x211); vpp_lcd_data(319); \
+                vpp_lcd_cmd(0x212); vpp_lcd_data(0); \
+                vpp_lcd_cmd(0x213); vpp_lcd_data(239); \
+                vpp_lcd_cmd(0x200); vpp_lcd_data(0); \
+                vpp_lcd_cmd(0x201); vpp_lcd_data(0); \
+                vpp_lcd_cmd(0x202); \
+            } else { \
+                vpp_lcd_config(0x80000C21); \
+                vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0); \
+                vpp_lcd_data(0x01); vpp_lcd_data(0x3F); \
+                vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0); \
+                vpp_lcd_data(0); vpp_lcd_data(0xEF); \
+                vpp_lcd_cmd(0x2C); \
+            } \
+            vpp_lcd_config(0x81100DB9); \
+        } while(0)
+
+        for (int test = 0; test < 10; test++) {
+            rb->backlight_on();
+            uint32_t bg_colors[] = {
+                0x00110000, 0x00220000, 0x00330000, 0x00004400,
+                0x00005500, 0x00006600, 0x00009900, 0x000F0F0F,
+                0x00FF0000, 0x000000FF
+            };
+            const char *test_names[] = {
+                "v110_baseline", "GRAM_out+selfwr", "GRAM_out+P18sw",
+                "empty_bracket", "GRAM_out+empty", "warmup50+fix",
+                "GRAM_out+selfwr2", "Apple_gray", "blue_XBGR", "red_XBGR"
+            };
+
+            /* Set unique BG_COLOR + re-fire compositor GO */
+            comp_p[0x00C/4] = bg_colors[test];
+            comp_p[0] = 1;
+            /* Wait 100ms for compositor to latch */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
+            uint32_t comp010_before = *(volatile uint32_t *)(0x38900010);
+            uint32_t dma_before = CLCD_REG(0x010);
+
             /* Wait for LCD bus idle */
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* LCD+0x80 = 1 — START compositor push */
-            *(volatile uint32_t *)(0x38300080) = 1;
+            /* === Execute test-specific push pattern === */
+            switch (test) {
+            case 0: /* t0: v110 baseline — P18 switch inside bracket */
+                *(volatile uint32_t *)(0x38300080) = 1;
+                {
+                    uint32_t saved = LCD_CON;
+                    vpp_lcd_config(0x80000DA9);
+                    if (panel_type >= 2) {
+                        vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                        vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                        vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                        vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                        vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                        vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                        vpp_lcd_cmd(0x202);
+                    } else {
+                        vpp_lcd_config(0x80000C21);
+                        vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0);
+                        vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                        vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0);
+                        vpp_lcd_data(0); vpp_lcd_data(0xEF);
+                        vpp_lcd_cmd(0x2C);
+                    }
+                    LCD_CON = saved;
+                }
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
 
-            /* v111: GRAM commands in P9 — no LCD_CON switch (D3+A9+A18) */
-            if (panel_type >= 2) {
-                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x202);
-            } else {
-                vpp_lcd_cmd(0x2A);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-                vpp_lcd_cmd(0x2B);
-                vpp_lcd_data(0x00); vpp_lcd_data(0x00);
-                vpp_lcd_data(0x00); vpp_lcd_data(0xEF);
-                vpp_lcd_cmd(0x2C);
+            case 1: /* t1: GRAM outside + LCD_CON self-write inside (THE FIX) */
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write trigger */
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 2: /* t2: GRAM outside + P18→P9 switch inside */
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                vpp_lcd_config(0x80000DA9);  /* to P18 */
+                vpp_lcd_config(0x81100DB9);  /* back to P9 = trigger */
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 3: /* t3: Empty bracket — negative control */
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 4: /* t4: GRAM outside + empty bracket */
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 5: /* t5: 50 warmup pushes, then GRAM outside + self-write */
+                for (int w = 0; w < 50; w++) {
+                    { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+                    *(volatile uint32_t *)(0x38300080) = 1;
+                    { uint32_t s = LCD_CON;
+                      vpp_lcd_config(0x80000DA9);
+                      if (panel_type >= 2) vpp_lcd_cmd(0x202);
+                      else vpp_lcd_cmd(0x2C);
+                      LCD_CON = s; }
+                    *(volatile uint32_t *)(0x38300080) = 0;
+                    { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
+                }
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { uint32_t v = LCD_CON; LCD_CON = v; }
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 6: /* t6: GRAM outside + self-write (repeat with different color) */
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { uint32_t v = LCD_CON; LCD_CON = v; }
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
+
+            case 7: /* t7: Apple's gray (0x000F0F0F) + self-write */
+            case 8: /* t8: blue XBGR (0x00FF0000) + self-write */
+            case 9: /* t9: red XBGR (0x000000FF) + self-write */
+                GRAM_SETUP_OUTSIDE();
+                *(volatile uint32_t *)(0x38300080) = 1;
+                { uint32_t v = LCD_CON; LCD_CON = v; }
+                { volatile int d; for (d = 0; d < 50000; d++); }
+                *(volatile uint32_t *)(0x38300080) = 0;
+                break;
             }
 
-            /* LCD+0x80 = 0 — STOP push */
-            *(volatile uint32_t *)(0x38300080) = 0;
-
-            /* Wait for completion */
+            /* Wait for bus idle after push */
             { int t = 100000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* Wait ~1 second */
-            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1000000); }
+            uint32_t comp010_after = *(volatile uint32_t *)(0x38900010);
+            uint32_t dma_after = CLCD_REG(0x010);
 
-            vlog("  t=%d: DMA=%08lx COMP+0x10=%08lx LCD+0x8C=%08lx",
-                 sec, (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)*(volatile uint32_t *)(0x38900010),
-                 (unsigned long)*(volatile uint32_t *)(0x3830008C));
+            /* GRAM readback */
+            uint32_t gram_px = 0xDEAD;
+            {
+                *(volatile uint32_t *)(0x38300070) = 0;  /* passthrough off for read */
+                for (volatile int d = 0; d < 10000; d++);
+                uint32_t save_con = LCD_CON;
+                if (panel_type >= 2) {
+                    vpp_lcd_config(0x80000DA8);
+                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                    vpp_lcd_cmd(0x202);
+                    while (!(LCD_STATUS & 0x2));
+                    LCD_RDATA = 0;
+                    while (!(LCD_STATUS & 1));
+                    (void)LCD_DBUFF;  /* dummy */
+                    LCD_RDATA = 0;
+                    while (!(LCD_STATUS & 1));
+                    gram_px = LCD_DBUFF;
+                }
+                LCD_CON = save_con;
+                *(volatile uint32_t *)(0x38300070) = 1;  /* passthrough back on */
+            }
+
+            vlog("  T%d[%s]: c010=%08lx->%08lx dma=%08lx->%08lx gram=%08lx %s",
+                 test, test_names[test],
+                 (unsigned long)comp010_before, (unsigned long)comp010_after,
+                 (unsigned long)dma_before, (unsigned long)dma_after,
+                 (unsigned long)gram_px,
+                 (comp010_after != comp010_before) ? "PUSHED!" : "no-push");
+
+            /* Wait ~1.5 second */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 1500000); }
         }
+        #undef GRAM_SETUP_OUTSIDE
     }
 
     /* === Phase 8: Panel GRAM readback — did ANY pixels arrive? === */
