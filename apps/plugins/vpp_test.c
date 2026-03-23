@@ -1024,7 +1024,6 @@ enum plugin_status plugin_start(const void *parameter)
 
         /* Step 2-3: Basic config */
         comp[0x004/4] = 1;
-        comp[0x004/4] = 1;  /* v116: MODE register (Q3: Apple writes this, we didn't) */
         comp[0x020/4] = 1;
         /* v59b: THE MISSING PIECE — compositor panel type selector!
          * vtable[0x6c](obj, 1, 0) at ROM 0x14d914 writes 0x389000D4 = 1.
