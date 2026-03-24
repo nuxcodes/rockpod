@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v135 ===");
+    vlog("=== VPP Pipeline Test v136 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v135");
+    rb->splashf(HZ, "VPP v136");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1381,48 +1381,70 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Phase 7c: Color cycle (full v123 pattern)");
     {
         volatile uint32_t *comp_c = (volatile uint32_t *)0x38900000;
+        /* v136: Maximally distinct colors for P9 visibility */
         uint32_t colors[] = {
-            0x000000FF,  /* RED   (XBGR) */
-            0x0000FF00,  /* GREEN */
-            0x00FF0000,  /* BLUE  */
+            0x00000000,  /* BLACK */
+            0x00FF0000,  /* BLUE  (XBGR: B=FF) */
+            0x000000FF,  /* RED   (XBGR: R=FF) */
             0x00FFFFFF,  /* WHITE */
             0x000F0F0F,  /* GRAY  */
         };
-        const char *names[] = {"RED","GREEN","BLUE","WHITE","GRAY"};
+        const char *names[] = {"BLACK","BLUE","RED","WHITE","GRAY"};
 
         for (int c = 0; c < 5; c++) {
             rb->backlight_on();
 
-            /* BG_COLOR + GO (v123 style: simple write, no clear-then-set) */
+            /* BG_COLOR + comp+0x200 latch + GO
+             * ROM 0x14d324: comp+0x00C = color
+             * ROM 0x14d3d0: comp+0x200 |= 0x10080 (latch bits 16+7)
+             * ROM 0x14d420: comp+0x000 = 1 (GO) */
             comp_c[0x00C/4] = colors[c];
+            { uint32_t c200 = comp_c[0x200/4];
+              comp_c[0x200/4] = c200 | 0x10080; }
             comp_c[0] = 1;
 
             /* 100ms settle */
             { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
-            /* Wait bus idle (v123: 100000 timeout, not 10000) */
+            /* Wait bus idle */
             { int t = 100000;
               while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* v135: GRAM_SETUP_OUTSIDE REMOVED — Phase 6 already sent window.
-             * Testing if self-write + delay alone works without per-frame GRAM. */
+            /* GRAM_SETUP_OUTSIDE (v135 proved: REQUIRED per-frame) */
+            vpp_lcd_config(0x80000DA9);  /* P18 */
+            if (panel_type >= 2) {
+                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
+                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
+                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
+                vpp_lcd_cmd(0x202);
+            } else {
+                vpp_lcd_config(0x80000C21);
+                vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0);
+                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
+                vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0);
+                vpp_lcd_data(0); vpp_lcd_data(0xEF);
+                vpp_lcd_cmd(0x2C);
+            }
+            vpp_lcd_config(0x81100DB9);  /* back to P9 */
 
-            /* LONG bracket with self-write trigger */
+            /* Self-write + delay push */
             *(volatile uint32_t *)(0x38300080) = 1;
-            { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write trigger */
-            { volatile int d; for (d = 0; d < 50000; d++); }  /* ~0.5ms hold */
+            { uint32_t v = LCD_CON; LCD_CON = v; }
+            { volatile int d; for (d = 0; d < 50000; d++); }
             *(volatile uint32_t *)(0x38300080) = 0;
 
             /* Wait bus idle */
             { int t = 100000;
               while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* v134: GRAM readback REMOVED — testing if self-write + delay alone works */
-
-            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx",
+            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx c200=%08lx",
                  names[c], (unsigned long)colors[c],
                  (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)comp_c[0x010/4]);
+                 (unsigned long)comp_c[0x010/4],
+                 (unsigned long)comp_c[0x200/4]);
 
             /* 2s observation */
             { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 2000000); }
