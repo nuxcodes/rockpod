@@ -282,17 +282,15 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* Fix 1: PAL/LCD format bit (F2: FUN_00168180(1) at ROM 0x1681C4) */
-    DISP_REG(0x008) &= 0xFFFFFFF0;
-    DISP_REG(0x008) |= 0x2;
-    /* ROM 0x1682E4: &= 0x3F preserves bits 0-5 (including bit 1 we just set) */
-    DISP_REG(0x008) &= 0x3F;
+    /* DISP_MODE: target 0x1200 (Q3 definitive: bits 9+12 for LCD progressive) */
+    DISP_REG(0x008) &= 0xFFFFFFF0;    /* clear format bits 0-3 */
+    DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace (Q4) */
+    DISP_REG(0x008) &= 0x1F;           /* clear bits 5-31 including stale bit 5 (Q4) */
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     DISP_REG(0x008) |= 0x200;
     DISP_REG(0x008) |= 0x1000;
-    /* Fix 2: PAL+progressive timing (F2: ROM 0x168388) */
-    DISP_REG(0x034) = 0x200;
+    DISP_REG(0x034) = 0;               /* progressive = 0 (Q3) */
 
     /* Color correction per chip variant */
     uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
@@ -427,14 +425,13 @@ static void lcd_push_frame(int panel_type)
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);  /* opens panel GRAM write gate */
     }
-    LCD_CON = 0x81100DB9;  /* restore P9 — triggers compositor DMA */
+    LCD_CON = 0x81100DB9;  /* restore P9 — starts pixel flow */
 
-    /* Fix 5: Close gate BEFORE polling (ROM 0xa50c4: Apple's exact ordering).
-     * LCD+0x80=1 = CPU owns bus = compositor DMA blocked.
-     * Must close gate to release bus → DMA starts → poll catches ~2.8ms transfer. */
+    /* Hold gate open for one full 320×240 P9 frame transfer.
+     * 76800 pixels × 2 transfers × 18.5ns = 2.84ms (C2, Q1, Q7) */
+    { uint32_t t0 = USEC_TIMER; while ((USEC_TIMER - t0) < 2840); }
+
     LCD_REG(0x80) = 0;
-
-    /* Wait for full frame transfer (~2.8ms at 54MHz) */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
 
@@ -453,7 +450,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v2 ===");
+    vlog("=== VPU-B → VPP Integration Test v3 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -657,11 +654,13 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Phase 6: LCD push");
 
-    /* Multiple pushes to fill screen */
+    /* Push frames with timing diagnostic */
     for (int push = 0; push < 10; push++) {
+        uint32_t t0 = USEC_TIMER;
         lcd_push_frame(panel_type);
-        vlog("  Push %d: DMA=%08lx COMP+0x10=%08lx",
-             push, (unsigned long)CLCD_REG(0x010),
+        uint32_t dt = USEC_TIMER - t0;
+        vlog("  Push %d: %lu us COMP+0x10=%08lx",
+             push, (unsigned long)dt,
              (unsigned long)COMP_REG(0x010));
     }
 
