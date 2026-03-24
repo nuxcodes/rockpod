@@ -90,6 +90,7 @@ h264_poc.c
 jpeg_poc.c
 jpeg_hw_test.c
 vpp_test.c
+vpu_vpp_test.c
 #endif
 #endif
 
