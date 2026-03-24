@@ -338,8 +338,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 deco_vp_element = viewport;
                 have_deco = true;
 
-                /* For thumbnail lists: fill row with card color, skip
-                 * glyph rendering — overlay handles all 4 corners */
+                /* For thumbnail lists: fill row with card color, defer
+                 * corner glyphs to the overlay pass which renders them
+                 * at the correct top/bottom edge positions */
                 if (item_h > listcfg[screen]->height)
                 {
                     struct viewport fill_vp;
