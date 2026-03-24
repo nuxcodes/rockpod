@@ -361,6 +361,11 @@ static int show_artist_videos(const char *artist, int *indices, int count)
                     struct video_entry *entry =
                         &video_lib.entries[indices[sel]];
                     open_video(entry);
+                    /* Restore thumbnail list state after video player
+                     * resets theme (viewportmanager_theme_undo) */
+                    if (has_any_thumbs)
+                        list.line_height[SCREEN_MAIN] = THUMB_LINE_HEIGHT;
+                    gui_synclist_set_title(&list, artist, Icon_NOICON);
                     gui_synclist_draw(&list);
                 }
                 break;
