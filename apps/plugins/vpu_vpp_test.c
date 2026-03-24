@@ -282,10 +282,8 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    DISP_REG(0x008) &= 0xFFFFFFF0;
-    { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
-    DISP_REG(0x008) &= ~0x10;
-    DISP_REG(0x008) &= 0x1F;
+    /* ROM 0x1682E4: LCD path preserves bits 0-5 (mode/format from init) */
+    DISP_REG(0x008) &= 0x3F;
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     DISP_REG(0x008) |= 0x200;
@@ -574,10 +572,8 @@ enum plugin_status plugin_start(const void *parameter)
     lcd_passthrough_init(panel_type, &saved_lcd_con);
     vlog("  LCD passthrough initialized");
 
-    /* Compositor GO + 3AC */
-    COMP_REG(0x000) = 1;
-    COMP_REG(0x3AC) = 0x04004003;
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+    /* Compositor GO already fired inside compositor_init() — no second fire needed.
+     * WW2 verified: Apple fires comp[0]=1 exactly ONCE (ROM 0x14d420). */
 
     /* DISP GO */
     disp_go();
@@ -596,9 +592,9 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* DD7: MIXER+0x004 = 0x03 for progressive (NOT 0x07, bit 2 = interlace) */
-    MIXER_REG(0x004) = 0x03;
-    MIXER_REG(0x004) |= 0x10;          /* layer 5 enable */
+    /* Self-verified: MIXER+0x004 = 0x02 for progressive (bit 1 only).
+     * mixer_init→0, FUN_168180(0)→0, FUN_168240(1)→bit 1. No bit 0/2/4. */
+    MIXER_REG(0x004) = 0x02;
     MIXER_REG(0x008) |= 0x10000;
     MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
 
