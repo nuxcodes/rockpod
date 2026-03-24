@@ -468,20 +468,13 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             {
                 int parent_bottom = parent->y + parent->height;
 
-                /* TL+TR: top half of glyph at row top */
+                /* TL+TR corner: top half of glyph at row top */
                 struct skin_viewport tl_vp;
                 memcpy(&tl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 tl_vp.vp.x = parent->x;
                 tl_vp.vp.y = row_top;
                 tl_vp.vp.width = parent->width;
                 tl_vp.vp.height = half_h;
-                tl_vp.vp.flags = VP_DEFAULT_FLAGS;
-                if (tl_vp.vp.y < parent->y)
-                {
-                    int clip = parent->y - tl_vp.vp.y;
-                    tl_vp.vp.y = parent->y;
-                    tl_vp.vp.height -= clip;
-                }
                 if (tl_vp.vp.y + tl_vp.vp.height > parent_bottom)
                     tl_vp.vp.height = parent_bottom - tl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
@@ -492,10 +485,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (tl_vp.vp.height > 0)
                 {
-                tl_vp.vp.flags |= VP_FLAG_AA_BLEND_BG;
                 display->set_viewport(&tl_vp.vp);
                 display->set_foreground(tl_vp.vp.bg_pattern);
-                display->set_background(margin_fill_color);
+                display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
@@ -503,14 +495,13 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 wps_display_images(&wps, &tl_vp.vp);
                 }
 
-                /* BL+BR: bottom half of glyph at row bottom */
+                /* BL+BR corner: bottom half of glyph at row bottom */
                 struct skin_viewport bl_vp;
                 memcpy(&bl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 bl_vp.vp.x = parent->x;
                 bl_vp.vp.y = row_top + item_h - half_h;
                 bl_vp.vp.width = parent->width;
                 bl_vp.vp.height = half_h;
-                bl_vp.vp.flags = VP_DEFAULT_FLAGS;
                 if (bl_vp.vp.y + bl_vp.vp.height > parent_bottom)
                     bl_vp.vp.height = parent_bottom - bl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
@@ -521,10 +512,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
-                bl_vp.vp.flags |= VP_FLAG_AA_BLEND_BG;
                 display->set_viewport(&bl_vp.vp);
                 display->set_foreground(bl_vp.vp.bg_pattern);
-                display->set_background(margin_fill_color);
+                display->set_background(bl_vp.vp.bg_pattern);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
