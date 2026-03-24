@@ -467,14 +467,22 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             if (dchildren && *dchildren)
             {
                 int parent_bottom = parent->y + parent->height;
+                int corner_r = 6;
 
-                /* TL+TR corner: top half of glyph at row top */
+                /* TL+TR: top half of glyph at row top */
                 struct skin_viewport tl_vp;
                 memcpy(&tl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 tl_vp.vp.x = parent->x;
                 tl_vp.vp.y = row_top;
                 tl_vp.vp.width = parent->width;
                 tl_vp.vp.height = half_h;
+                tl_vp.vp.flags = VP_DEFAULT_FLAGS;
+                if (tl_vp.vp.y < parent->y)
+                {
+                    int clip = parent->y - tl_vp.vp.y;
+                    tl_vp.vp.y = parent->y;
+                    tl_vp.vp.height -= clip;
+                }
                 if (tl_vp.vp.y + tl_vp.vp.height > parent_bottom)
                     tl_vp.vp.height = parent_bottom - tl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
@@ -485,16 +493,8 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (tl_vp.vp.height > 0)
                 {
-                struct font *deco_font = font_get(tl_vp.vp.font);
-                int corner_w = deco_font ? deco_font->maxwidth : half_h;
+                /* Pass 1: full strip, no_fill — transparent over thumb */
                 display->set_viewport(&tl_vp.vp);
-                /* Fill corner backing rects so AA blends against
-                 * solid card color instead of thumbnail pixels */
-                display->set_drawmode(DRMODE_SOLID);
-                display->set_foreground(margin_fill_color);
-                display->fillrect(0, 0, corner_w, tl_vp.vp.height);
-                display->fillrect(tl_vp.vp.width - corner_w, 0,
-                                  corner_w, tl_vp.vp.height);
                 display->set_foreground(tl_vp.vp.bg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
@@ -502,15 +502,45 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &tl_vp, SKIN_REFRESH_ALL, true, 0);
                 wps_display_images(&wps, &tl_vp.vp);
+
+                /* Pass 2: smooth AA at each corner (no_fill=false) */
+                int cr_h = MIN(corner_r, tl_vp.vp.height);
+                struct skin_viewport cr_vp;
+
+                /* TL corner patch */
+                memcpy(&cr_vp, &tl_vp, sizeof(struct skin_viewport));
+                cr_vp.vp.width = corner_r;
+                cr_vp.vp.height = cr_h;
+                display->set_viewport(&cr_vp.vp);
+                display->set_foreground(cr_vp.vp.fg_pattern);
+                display->set_background(cr_vp.vp.bg_pattern);
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &cr_vp, SKIN_REFRESH_ALL, false, 0);
+
+                /* TR corner patch */
+                memcpy(&cr_vp, &tl_vp, sizeof(struct skin_viewport));
+                cr_vp.vp.x = tl_vp.vp.x + tl_vp.vp.width - corner_r;
+                cr_vp.vp.width = corner_r;
+                cr_vp.vp.height = cr_h;
+                display->set_viewport(&cr_vp.vp);
+                display->set_foreground(cr_vp.vp.fg_pattern);
+                display->set_background(cr_vp.vp.bg_pattern);
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &cr_vp, SKIN_REFRESH_ALL, false, 0);
                 }
 
-                /* BL+BR corner: bottom half of glyph at row bottom */
+                /* BL+BR: bottom half of glyph at row bottom */
                 struct skin_viewport bl_vp;
                 memcpy(&bl_vp, &deco_svp_copy, sizeof(struct skin_viewport));
                 bl_vp.vp.x = parent->x;
                 bl_vp.vp.y = row_top + item_h - half_h;
                 bl_vp.vp.width = parent->width;
                 bl_vp.vp.height = half_h;
+                bl_vp.vp.flags = VP_DEFAULT_FLAGS;
                 if (bl_vp.vp.y + bl_vp.vp.height > parent_bottom)
                     bl_vp.vp.height = parent_bottom - bl_vp.vp.y;
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
@@ -521,14 +551,8 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
-                struct font *bl_font = font_get(bl_vp.vp.font);
-                int bl_corner_w = bl_font ? bl_font->maxwidth : half_h;
+                /* Pass 1: full strip, no_fill — transparent over thumb */
                 display->set_viewport(&bl_vp.vp);
-                display->set_drawmode(DRMODE_SOLID);
-                display->set_foreground(margin_fill_color);
-                display->fillrect(0, 0, bl_corner_w, bl_vp.vp.height);
-                display->fillrect(bl_vp.vp.width - bl_corner_w, 0,
-                                  bl_corner_w, bl_vp.vp.height);
                 display->set_foreground(bl_vp.vp.bg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
                 skin_render_viewport(
@@ -536,6 +560,37 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &bl_vp, SKIN_REFRESH_ALL, true, -half_h);
                 wps_display_images(&wps, &bl_vp.vp);
+
+                /* Pass 2: smooth AA at each corner (no_fill=false) */
+                int bl_cr_h = MIN(corner_r, bl_vp.vp.height);
+                struct skin_viewport bl_cr;
+
+                /* BL corner patch */
+                memcpy(&bl_cr, &bl_vp, sizeof(struct skin_viewport));
+                bl_cr.vp.width = corner_r;
+                bl_cr.vp.y = bl_vp.vp.y + bl_vp.vp.height - bl_cr_h;
+                bl_cr.vp.height = bl_cr_h;
+                display->set_viewport(&bl_cr.vp);
+                display->set_foreground(bl_cr.vp.fg_pattern);
+                display->set_background(bl_cr.vp.bg_pattern);
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &bl_cr, SKIN_REFRESH_ALL, false, -half_h);
+
+                /* BR corner patch */
+                memcpy(&bl_cr, &bl_vp, sizeof(struct skin_viewport));
+                bl_cr.vp.x = bl_vp.vp.x + bl_vp.vp.width - corner_r;
+                bl_cr.vp.width = corner_r;
+                bl_cr.vp.y = bl_vp.vp.y + bl_vp.vp.height - bl_cr_h;
+                bl_cr.vp.height = bl_cr_h;
+                display->set_viewport(&bl_cr.vp);
+                display->set_foreground(bl_cr.vp.fg_pattern);
+                display->set_background(bl_cr.vp.bg_pattern);
+                skin_render_viewport(
+                    SKINOFFSETTOPTR(get_skin_buffer(wps.data),
+                                    (intptr_t)dchildren[0]),
+                    &wps, &bl_cr, SKIN_REFRESH_ALL, false, -half_h);
                 }
             }
         }
