@@ -282,13 +282,17 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* ROM 0x1682E4: LCD path preserves bits 0-5 (mode/format from init) */
+    /* Fix 1: PAL/LCD format bit (F2: FUN_00168180(1) at ROM 0x1681C4) */
+    DISP_REG(0x008) &= 0xFFFFFFF0;
+    DISP_REG(0x008) |= 0x2;
+    /* ROM 0x1682E4: &= 0x3F preserves bits 0-5 (including bit 1 we just set) */
     DISP_REG(0x008) &= 0x3F;
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     DISP_REG(0x008) |= 0x200;
     DISP_REG(0x008) |= 0x1000;
-    DISP_REG(0x034) = 0;
+    /* Fix 2: PAL+progressive timing (F2: ROM 0x168388) */
+    DISP_REG(0x034) = 0x200;
 
     /* Color correction per chip variant */
     uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
@@ -403,24 +407,34 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
 
 /* ---- LCD Push (v134 minimal working pattern) ---- */
 
-static void lcd_push_frame(void)
+static void lcd_push_frame(int panel_type)
 {
-    /* Wait for bus idle */
+    /* Wait for bus idle (ROM 0xbe7fc: lcd_wait_ready) */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 
-    /* Open compositor gate */
+    /* Open gate: CPU takes bus (ROM 0xa5094) */
     LCD_REG(0x80) = 1;
 
-    /* Self-write WR# trigger */
-    { uint32_t v = LCD_CON; LCD_CON = v; }
+    /* Fix 4: GRAM commands + LCD_CON mode transition inside bracket
+     * (F1: WR# restart, V2: panel gate, R02: Apple's exact sequence) */
+    lcd_set_con(0x80000DA9);  /* P18 for ILI9326 commands */
+    if (panel_type >= 2) {
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);  /* opens panel GRAM write gate */
+    }
+    LCD_CON = 0x81100DB9;  /* restore P9 — triggers compositor DMA */
 
-    /* Hold gate open for one full frame (~2.8ms at 54MHz) */
-    for (volatile int d = 0; d < 50000; d++);
-
-    /* Close gate */
+    /* Fix 5: Close gate BEFORE polling (ROM 0xa50c4: Apple's exact ordering).
+     * LCD+0x80=1 = CPU owns bus = compositor DMA blocked.
+     * Must close gate to release bus → DMA starts → poll catches ~2.8ms transfer. */
     LCD_REG(0x80) = 0;
 
-    /* Wait for transfer complete */
+    /* Wait for full frame transfer (~2.8ms at 54MHz) */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
 
@@ -439,7 +453,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v1 ===");
+    vlog("=== VPU-B → VPP Integration Test v2 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -568,6 +582,11 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for compositor to settle */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
 
+    /* Save LCD registers BEFORE modifying (for shutdown restore) */
+    uint32_t saved_lcd_7c = LCD_REG(0x7C);
+    uint32_t saved_lcd_88 = LCD_REG(0x88);
+    uint32_t saved_lcd_20 = LCD_REG(0x20);
+
     /* LCD passthrough */
     lcd_passthrough_init(panel_type, &saved_lcd_con);
     vlog("  LCD passthrough initialized");
@@ -578,6 +597,16 @@ enum plugin_status plugin_start(const void *parameter)
     /* DISP GO */
     disp_go();
     vlog("  DISP GO fired");
+
+    /* Diagnostics: verify register state after init */
+    vlog("  DISP_MODE=%08lx MIXER_004=%08lx",
+         (unsigned long)DISP_REG(0x008), (unsigned long)MIXER_REG(0x004));
+    vlog("  comp+0x008=%08lx comp+0x00C=%08lx comp+0x220=%08lx",
+         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C),
+         (unsigned long)COMP_REG(0x220));
+    vlog("  LCD_CON=%08lx +0x70=%08lx +0x7C=%08lx +0x88=%08lx",
+         (unsigned long)LCD_CON, (unsigned long)LCD_REG(0x70),
+         (unsigned long)LCD_REG(0x7C), (unsigned long)LCD_REG(0x88));
 
     /* ---- Phase 4: Feed decoded frame to CLCD ---- */
 
@@ -592,9 +621,8 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* Self-verified: MIXER+0x004 = 0x02 for progressive (bit 1 only).
-     * mixer_init→0, FUN_168180(0)→0, FUN_168240(1)→bit 1. No bit 0/2/4. */
-    MIXER_REG(0x004) = 0x02;
+    /* Fix 3: MIXER+0x004 = 0x06 (R06+F2: bit 1=layer, bit 2=PAL/LCD path) */
+    MIXER_REG(0x004) = 0x06;
     MIXER_REG(0x008) |= 0x10000;
     MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
 
@@ -631,7 +659,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Multiple pushes to fill screen */
     for (int push = 0; push < 10; push++) {
-        lcd_push_frame();
+        lcd_push_frame(panel_type);
         vlog("  Push %d: DMA=%08lx COMP+0x10=%08lx",
              push, (unsigned long)CLCD_REG(0x010),
              (unsigned long)COMP_REG(0x010));
@@ -672,9 +700,16 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_clocks_enable(false);
     vpp_svid_enable(false);
 
-    /* Restore LCD */
+    /* Restore LCD (proper sequence with bus-idle waits) */
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    LCD_REG(0x80) = 0;
     LCD_REG(0x70) = 0;
     for (volatile int d = 0; d < 10000; d++);
+    PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
+    LCD_REG(0x7C) = saved_lcd_7c;
+    LCD_REG(0x88) = saved_lcd_88;
+    LCD_REG(0x20) = saved_lcd_20;
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_CON = saved_lcd_con;
 
     /* Close VPU-B */
