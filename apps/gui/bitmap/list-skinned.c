@@ -467,7 +467,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             if (dchildren && *dchildren)
             {
                 int parent_bottom = parent->y + parent->height;
-                int corner_r = 6;
 
                 /* TL+TR: top half of glyph at row top */
                 struct skin_viewport tl_vp;
@@ -493,17 +492,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (tl_vp.vp.height > 0)
                 {
-                int cr = MIN(corner_r, tl_vp.vp.height);
+                tl_vp.vp.flags |= VP_FLAG_AA_BLEND_BG;
                 display->set_viewport(&tl_vp.vp);
-                /* Corner backing fills for smooth AA blending */
-                display->set_drawmode(DRMODE_SOLID);
-                display->set_foreground(margin_fill_color);
-                display->fillrect(0, 0, corner_r, cr);
-                display->fillrect(tl_vp.vp.width - corner_r, 0,
-                                  corner_r, cr);
-                /* Full strip render, no_fill — transparent over thumb */
                 display->set_foreground(tl_vp.vp.bg_pattern);
-                display->set_background(tl_vp.vp.bg_pattern);
+                display->set_background(margin_fill_color);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
@@ -529,19 +521,10 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
-                int bl_cr = MIN(corner_r, bl_vp.vp.height);
+                bl_vp.vp.flags |= VP_FLAG_AA_BLEND_BG;
                 display->set_viewport(&bl_vp.vp);
-                /* Corner backing fills for smooth AA blending */
-                display->set_drawmode(DRMODE_SOLID);
-                display->set_foreground(margin_fill_color);
-                display->fillrect(0, bl_vp.vp.height - bl_cr,
-                                  corner_r, bl_cr);
-                display->fillrect(bl_vp.vp.width - corner_r,
-                                  bl_vp.vp.height - bl_cr,
-                                  corner_r, bl_cr);
-                /* Full strip render, no_fill — transparent over thumb */
                 display->set_foreground(bl_vp.vp.bg_pattern);
-                display->set_background(bl_vp.vp.bg_pattern);
+                display->set_background(margin_fill_color);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),

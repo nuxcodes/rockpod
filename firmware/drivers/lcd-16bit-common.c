@@ -629,11 +629,24 @@ static void ICODE_ATTR lcd_alpha_bitmap_part_mix(
         case DRMODE_FG:
         {
             /*fg == vp->fg_pattern*/
-            do
+            if (vp->flags & VP_FLAG_AA_BLEND_BG)
             {
-                *dst = blend_two_colors(*dst, fg, READ_ALPHA());
-                dst += COL_INC;
-            } while (--col);
+                do
+                {
+                    unsigned a = READ_ALPHA();
+                    if (a > 0)
+                        *dst = blend_two_colors(bg, fg, a);
+                    dst += COL_INC;
+                } while (--col);
+            }
+            else
+            {
+                do
+                {
+                    *dst = blend_two_colors(*dst, fg, READ_ALPHA());
+                    dst += COL_INC;
+                } while (--col);
+            }
             break;
         }
         case DRMODE_SOLID|DRMODE_INT_BD:
