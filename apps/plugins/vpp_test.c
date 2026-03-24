@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v134 ===");
+    vlog("=== VPP Pipeline Test v135 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v134");
+    rb->splashf(HZ, "VPP v135");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1404,28 +1404,10 @@ enum plugin_status plugin_start(const void *parameter)
             { int t = 100000;
               while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* GRAM_SETUP_OUTSIDE: full window commands in P18, then back to P9.
-             * v123 test 1 ("THE FIX") does this OUTSIDE the LCD+0x80 bracket. */
-            vpp_lcd_config(0x80000DA9);  /* P18 */
-            if (panel_type >= 2) {
-                vpp_lcd_cmd(0x210); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x211); vpp_lcd_data(319);
-                vpp_lcd_cmd(0x212); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x213); vpp_lcd_data(239);
-                vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                vpp_lcd_cmd(0x202);
-            } else {
-                vpp_lcd_config(0x80000C21);
-                vpp_lcd_cmd(0x2A); vpp_lcd_data(0); vpp_lcd_data(0);
-                vpp_lcd_data(0x01); vpp_lcd_data(0x3F);
-                vpp_lcd_cmd(0x2B); vpp_lcd_data(0); vpp_lcd_data(0);
-                vpp_lcd_data(0); vpp_lcd_data(0xEF);
-                vpp_lcd_cmd(0x2C);
-            }
-            vpp_lcd_config(0x81100DB9);  /* back to P9 */
+            /* v135: GRAM_SETUP_OUTSIDE REMOVED — Phase 6 already sent window.
+             * Testing if self-write + delay alone works without per-frame GRAM. */
 
-            /* LONG bracket with self-write trigger (v123 test 1 pattern) */
+            /* LONG bracket with self-write trigger */
             *(volatile uint32_t *)(0x38300080) = 1;
             { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write trigger */
             { volatile int d; for (d = 0; d < 50000; d++); }  /* ~0.5ms hold */
