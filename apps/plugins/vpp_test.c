@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v136 ===");
+    vlog("=== VPP Pipeline Test v137 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v136");
+    rb->splashf(HZ, "VPP v137");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1381,7 +1381,10 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Phase 7c: Color cycle (full v123 pattern)");
     {
         volatile uint32_t *comp_c = (volatile uint32_t *)0x38900000;
-        /* v136: Maximally distinct colors for P9 visibility */
+        /* v137: Full compositor re-init per color.
+         * v130-v136 proved: GO re-fire alone doesn't re-latch BG_COLOR.
+         * Apple writes comp+0x00C ONCE in entire ROM (compositor_init only).
+         * Must replicate full init sequence per color change. */
         uint32_t colors[] = {
             0x00000000,  /* BLACK */
             0x00FF0000,  /* BLUE  (XBGR: B=FF) */
@@ -1394,17 +1397,45 @@ enum plugin_status plugin_start(const void *parameter)
         for (int c = 0; c < 5; c++) {
             rb->backlight_on();
 
-            /* BG_COLOR + comp+0x200 latch + GO
-             * ROM 0x14d324: comp+0x00C = color
-             * ROM 0x14d3d0: comp+0x200 |= 0x10080 (latch bits 16+7)
-             * ROM 0x14d420: comp+0x000 = 1 (GO) */
+            /* === FULL COMPOSITOR RE-INIT (ROM 0x14d240 sequence) === */
+
+            /* Step 1: Clear comp+0x200 bit 0 (ROM 0x14d270: FUN_000b1328) */
+            comp_c[0x200/4] &= ~1;
+
+            /* Step 2: Soft reset + module enable (ROM 0x14d278-0x14d27c) */
+            comp_c[0x004/4] = 1;
+            comp_c[0x020/4] = 1;
+
+            /* Step 3: Panel type (ROM 0x14d914) */
+            comp_c[0x0D4/4] = 1;
+
+            /* Step 4: Channel gains — identity (ROM compositor_init) */
+            comp_c[0x0D8/4] = 0x00001000;
+            comp_c[0x0E0/4] = 0x00001000;
+            comp_c[0x0E8/4] = 0x00001000;
+
+            /* Step 5: BG_COLOR — THE NEW COLOR (ROM 0x14d324) */
             comp_c[0x00C/4] = colors[c];
+
+            /* Step 6: comp+0x200 latch (ROM 0x14d3d0-0x14d3dc) */
             { uint32_t c200 = comp_c[0x200/4];
               comp_c[0x200/4] = c200 | 0x10080; }
+
+            /* Step 7: Control registers (ROM 0x14d3e4-0x14d400) */
+            comp_c[0x204/4] = 2;
+            comp_c[0x20C/4] = 2;
+            comp_c[0x208/4] = 0;
+
+            /* Step 8: Color mask (ROM 0x14d41c: vtable[0x10] with 0xFFFFFF) */
+            comp_c[0x024/4] = 0x00FFFFFF;
+
+            /* Step 9: GO (ROM 0x14d420) */
             comp_c[0] = 1;
 
             /* 100ms settle */
             { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
+            /* === LCD PUSH (proven in v134) === */
 
             /* Wait bus idle */
             { int t = 100000;
@@ -1440,11 +1471,11 @@ enum plugin_status plugin_start(const void *parameter)
             { int t = 100000;
               while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx c200=%08lx",
+            vlog("  %s(0x%06lx): C010=%08lx c200=%08lx c00C=%08lx",
                  names[c], (unsigned long)colors[c],
-                 (unsigned long)CLCD_REG(0x010),
                  (unsigned long)comp_c[0x010/4],
-                 (unsigned long)comp_c[0x200/4]);
+                 (unsigned long)comp_c[0x200/4],
+                 (unsigned long)comp_c[0x00C/4]);
 
             /* 2s observation */
             { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 2000000); }
