@@ -485,7 +485,16 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (tl_vp.vp.height > 0)
                 {
+                struct font *deco_font = font_get(tl_vp.vp.font);
+                int corner_w = deco_font ? deco_font->maxwidth : half_h;
                 display->set_viewport(&tl_vp.vp);
+                /* Fill corner backing rects so AA blends against
+                 * solid card color instead of thumbnail pixels */
+                display->set_drawmode(DRMODE_SOLID);
+                display->set_foreground(margin_fill_color);
+                display->fillrect(0, 0, corner_w, tl_vp.vp.height);
+                display->fillrect(tl_vp.vp.width - corner_w, 0,
+                                  corner_w, tl_vp.vp.height);
                 display->set_foreground(tl_vp.vp.bg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
@@ -512,7 +521,14 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
 #endif
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
+                struct font *bl_font = font_get(bl_vp.vp.font);
+                int bl_corner_w = bl_font ? bl_font->maxwidth : half_h;
                 display->set_viewport(&bl_vp.vp);
+                display->set_drawmode(DRMODE_SOLID);
+                display->set_foreground(margin_fill_color);
+                display->fillrect(0, 0, bl_corner_w, bl_vp.vp.height);
+                display->fillrect(bl_vp.vp.width - bl_corner_w, 0,
+                                  bl_corner_w, bl_vp.vp.height);
                 display->set_foreground(bl_vp.vp.bg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
                 skin_render_viewport(
