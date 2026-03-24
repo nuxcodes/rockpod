@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v133 ===");
+    vlog("=== VPP Pipeline Test v134 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v133");
+    rb->splashf(HZ, "VPP v134");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1435,34 +1435,12 @@ enum plugin_status plugin_start(const void *parameter)
             { int t = 100000;
               while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
 
-            /* Full GRAM readback with LCD+0x70 toggle (v123 lines 1558-1578) */
-            uint32_t gram_px = 0xDEAD;
-            {
-                *(volatile uint32_t *)(0x38300070) = 0;
-                { volatile int d; for (d = 0; d < 10000; d++); }
-                uint32_t save_con = LCD_CON;
-                if (panel_type >= 2) {
-                    vpp_lcd_config(0x80000DA8);
-                    vpp_lcd_cmd(0x200); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x201); vpp_lcd_data(0);
-                    vpp_lcd_cmd(0x202);
-                    while (!(LCD_STATUS & 0x2));
-                    LCD_RDATA = 0;
-                    while (!(LCD_STATUS & 1));
-                    (void)LCD_DBUFF;
-                    LCD_RDATA = 0;
-                    while (!(LCD_STATUS & 1));
-                    gram_px = LCD_DBUFF;
-                }
-                LCD_CON = save_con;
-                *(volatile uint32_t *)(0x38300070) = 1;
-            }
+            /* v134: GRAM readback REMOVED — testing if self-write + delay alone works */
 
-            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx gram=%08lx",
+            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx",
                  names[c], (unsigned long)colors[c],
                  (unsigned long)CLCD_REG(0x010),
-                 (unsigned long)comp_c[0x010/4],
-                 (unsigned long)gram_px);
+                 (unsigned long)comp_c[0x010/4]);
 
             /* 2s observation */
             { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 2000000); }
