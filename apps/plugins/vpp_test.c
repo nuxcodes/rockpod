@@ -554,7 +554,7 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     log_open();
-    vlog("=== VPP Pipeline Test v129 ===");
+    vlog("=== VPP Pipeline Test v130 ===");
 
     uint32_t saved_lcd_con = 0;
 
@@ -586,7 +586,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Test pattern generated (gradient)");
 
     /* === Phase 1: Show splash, then take over LCD === */
-    rb->splashf(HZ, "VPP v129");
+    rb->splashf(HZ, "VPP v130");
     rb->sleep(HZ / 2);  /* ensure splash DMA completes */
 
     /* Stop scroll thread from overwriting LCD_CON during VPP operation. */
@@ -1370,86 +1370,66 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)dma_snap[19]);
     }
 
-    /* v105: Rapid LCD+0x80 pump to break DMA backpressure deadlock.
-     * Pipeline stalls because compositor output buffer never drains.
-     * Rapidly cycling LCD+0x80 force-drains compositor, creating
-     * upstream pull demand: compositor→DISP→MIXER→CLCD DMA starts. */
-    vlog("Phase 7b: Rapid pump (break DMA deadlock)");
-    {
-        for (int pump = 0; pump < 200; pump++) {
-            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-            *(volatile uint32_t *)(0x38300080) = 1;
-            /* v123: RESTORED LCD_CON switch — it's the compositor push trigger (F1+F7+G20) */
-            {
-                uint32_t saved = LCD_CON;
-                vpp_lcd_config(0x80000DA9);  /* P18 */
-                if (panel_type >= 2)
-                    vpp_lcd_cmd(0x202);
-                else
-                    vpp_lcd_cmd(0x2C);
-                LCD_CON = saved;  /* restore P9 = TRIGGER */
-            }
-            *(volatile uint32_t *)(0x38300080) = 0;
-            { int t = 10000; while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
-        }
-        vlog("  Pump done. DMA=%08lx COMP+0x10=%08lx",
-             (unsigned long)CLCD_REG(0x010),
-             (unsigned long)*(volatile uint32_t *)(0x38900010));
-    }
-
-    /* v129: Color cycle via BG_COLOR write + 200× pump.
-     * RE evidence (6 agents, 2 batches):
-     *   AA1: comp+0x00C IS BG_COLOR, XBGR format, 0x00FF0000=BLUE confirmed
-     *   AA2: NO shadow registers — writes take effect immediately
-     *   BB1: compositor renders ON-THE-FLY, re-reads BG_COLOR each push
-     *   BB2: Phase 7c single push = 3000px (4% screen) — not enough
-     * Fix: 200× pump per color (same proven code as Phase 7b). */
-    vlog("Phase 7c: Color cycle (BG_COLOR + 200x pump)");
+    /* v130: Color cycle with 200× pump per color.
+     * RE evidence (28 Ghidra agents):
+     *   - BG_COLOR (comp+0x00C) requires GO to latch (ROM 0x14d324→0x14d420)
+     *   - GO re-fire: must clear first (ROM 0x1683dc: write 0, then |=1)
+     *   - 100ms settle needed (no HW delay, RTOS sync only)
+     *   - Each LCD+0x80 bracket pushes ~384 px (1 scanline). 200× = full screen.
+     *   - P18 (0x80000DA9) proven for GRAM cmds. P8+TypeII only for panel detect.
+     *   - v124-v129 failed: no GO, no settle, or scaler writes corrupted init. */
+    vlog("Phase 7b: Color cycle");
     {
         volatile uint32_t *comp_c = (volatile uint32_t *)0x38900000;
         uint32_t colors[] = {
-            0x000000FF,  /* RED   (XBGR: R=0xFF) */
-            0x0000FF00,  /* GREEN (XBGR: G=0xFF) */
-            0x00FF0000,  /* BLUE  (XBGR: B=0xFF) — same as Phase 7b */
+            0x00FF0000,  /* initial blue (matches Phase 6 init) */
+            0x000000FF,  /* RED   (XBGR) */
+            0x0000FF00,  /* GREEN */
+            0x00FF0000,  /* BLUE  */
             0x00FFFFFF,  /* WHITE */
-            0x000F0F0F,  /* GRAY  (Apple's default BG_COLOR) */
+            0x000F0F0F,  /* GRAY (Apple's 0x000F0F0F) */
         };
-        const char *names[] = {"RED", "GREEN", "BLUE", "WHITE", "GRAY"};
+        const char *names[] = {"INIT","RED","GREEN","BLUE","WHITE","GRAY"};
 
-        for (int c = 0; c < 5; c++) {
+        for (int c = 0; c < 6; c++) {
             rb->backlight_on();
-            /* Write new BG_COLOR — takes effect immediately (BB1) */
-            comp_c[0x00C/4] = colors[c];
 
-            /* 200× pump — EXACT same code as Phase 7b (proven working) */
+            if (c > 0) {
+                /* BG_COLOR + GO clear-then-set (ROM 0x1683dc-0x1683e8) */
+                comp_c[0x00C/4] = colors[c];
+                comp_c[0] = 0;
+                { uint32_t v = comp_c[0]; comp_c[0] = v | 1; }
+
+                /* 100ms settle (RE3: no HW delay, RTOS sync, 100ms safe) */
+                { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+            }
+
+            /* 200× pump — identical to v123 Phase 7b (proven working) */
             for (int pump = 0; pump < 200; pump++) {
                 { int t = 10000;
-                  while ((*(volatile uint32_t *)(0x3830008C) & 3)
-                         && --t > 0); }
+                  while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
                 *(volatile uint32_t *)(0x38300080) = 1;
                 {
                     uint32_t saved = LCD_CON;
-                    vpp_lcd_config(0x80000DA9);  /* P18 for cmd */
+                    vpp_lcd_config(0x80000DA9);  /* P18 */
                     if (panel_type >= 2)
                         vpp_lcd_cmd(0x202);
                     else
                         vpp_lcd_cmd(0x2C);
-                    LCD_CON = saved;  /* restore P9 = trigger */
+                    LCD_CON = saved;  /* P9 restore = trigger */
                 }
                 *(volatile uint32_t *)(0x38300080) = 0;
                 { int t = 10000;
-                  while ((*(volatile uint32_t *)(0x3830008C) & 3)
-                         && --t > 0); }
+                  while ((*(volatile uint32_t *)(0x3830008C) & 3) && --t > 0); }
             }
 
-            vlog("  %s(0x%06lx): DMA=%08lx COMP+0x10=%08lx",
+            vlog("  %s(0x%06lx): DMA=%08lx C010=%08lx",
                  names[c], (unsigned long)colors[c],
                  (unsigned long)CLCD_REG(0x010),
                  (unsigned long)comp_c[0x010/4]);
 
-            /* 2s visual observation */
-            { uint32_t t = USEC_TIMER;
-              while ((USEC_TIMER - t) < 2000000); }
+            /* 2s observation */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 2000000); }
         }
     }
 
