@@ -46,14 +46,6 @@
 static struct listitem_viewport_cfg *listcfg[NB_SCREENS] = {NULL};
 static struct gui_synclist *current_list;
 
-/* Corner AA fix: save buffer for thumbnail-side pixels.
- * Static to avoid ~3KB stack pressure on ARM. Safe because
- * list rendering is single-threaded and non-reentrant.
- * Reused sequentially for TL and BL corners. */
-#define CORNER_SAVE_MAX_W 64
-#define CORNER_SAVE_MAX_H 24
-static fb_data corner_save[CORNER_SAVE_MAX_W * CORNER_SAVE_MAX_H];
-
 static int current_row;
 static int current_column;
 
@@ -475,10 +467,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
             if (dchildren && *dchildren)
             {
                 int parent_bottom = parent->y + parent->height;
-                bool do_aa_fix = (item_h > listcfg[screen]->height);
-                int save_w = MIN(margin_w, CORNER_SAVE_MAX_W);
-                if (parent->x + save_w > LCD_WIDTH)
-                    save_w = LCD_WIDTH - parent->x;
 
                 /* TL+TR corner: top half of glyph at row top */
                 struct skin_viewport tl_vp;
@@ -495,27 +483,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 tl_vp.vp.bg_pattern =
                     dynamic_colors_resolve(tl_vp.dc_orig_bg);
 #endif
-                int tl_save_h = MIN((int)tl_vp.vp.height, CORNER_SAVE_MAX_H);
-                if (tl_vp.vp.y + tl_save_h > LCD_HEIGHT)
-                    tl_save_h = LCD_HEIGHT - tl_vp.vp.y;
                 if (tl_vp.vp.height > 0)
                 {
                 display->set_viewport(&tl_vp.vp);
-                /* AA fix: save thumbnail pixels, fill with card color */
-                if (do_aa_fix && save_w > 0 && tl_save_h > 0)
-                {
-                    int ax = parent->x, ay = tl_vp.vp.y;
-                    for (int r = 0; r < tl_save_h; r++)
-                    {
-                        fb_data *fbr = FBADDR(ax, ay + r);
-                        fb_data *sr = &corner_save[r * save_w];
-                        for (int c = 0; c < save_w; c++)
-                        {
-                            sr[c] = fbr[c];
-                            fbr[c] = (fb_data)margin_fill_color;
-                        }
-                    }
-                }
                 display->set_foreground(tl_vp.vp.bg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
                 skin_render_viewport(
@@ -523,20 +493,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &tl_vp, SKIN_REFRESH_ALL, true, 0);
                 wps_display_images(&wps, &tl_vp.vp);
-                /* AA fix: restore thumbnail where glyph was transparent */
-                if (do_aa_fix && save_w > 0 && tl_save_h > 0)
-                {
-                    fb_data fv = (fb_data)margin_fill_color;
-                    int ax = parent->x, ay = tl_vp.vp.y;
-                    for (int r = 0; r < tl_save_h; r++)
-                    {
-                        fb_data *fbr = FBADDR(ax, ay + r);
-                        fb_data *sr = &corner_save[r * save_w];
-                        for (int c = 0; c < save_w; c++)
-                            if (fbr[c] == fv)
-                                fbr[c] = sr[c];
-                    }
-                }
                 }
 
                 /* BL+BR corner: bottom half of glyph at row bottom */
@@ -554,27 +510,9 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 bl_vp.vp.bg_pattern =
                     dynamic_colors_resolve(bl_vp.dc_orig_bg);
 #endif
-                int bl_save_h = MIN((int)bl_vp.vp.height, CORNER_SAVE_MAX_H);
-                if (bl_vp.vp.y + bl_save_h > LCD_HEIGHT)
-                    bl_save_h = LCD_HEIGHT - bl_vp.vp.y;
                 if (bl_vp.vp.height > 0 && bl_vp.vp.y < parent_bottom)
                 {
                 display->set_viewport(&bl_vp.vp);
-                /* AA fix: save thumbnail pixels, fill with card color */
-                if (do_aa_fix && save_w > 0 && bl_save_h > 0)
-                {
-                    int ax = parent->x, ay = bl_vp.vp.y;
-                    for (int r = 0; r < bl_save_h; r++)
-                    {
-                        fb_data *fbr = FBADDR(ax, ay + r);
-                        fb_data *sr = &corner_save[r * save_w];
-                        for (int c = 0; c < save_w; c++)
-                        {
-                            sr[c] = fbr[c];
-                            fbr[c] = (fb_data)margin_fill_color;
-                        }
-                    }
-                }
                 display->set_foreground(bl_vp.vp.bg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
                 skin_render_viewport(
@@ -582,20 +520,6 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                                     (intptr_t)dchildren[0]),
                     &wps, &bl_vp, SKIN_REFRESH_ALL, true, -half_h);
                 wps_display_images(&wps, &bl_vp.vp);
-                /* AA fix: restore thumbnail where glyph was transparent */
-                if (do_aa_fix && save_w > 0 && bl_save_h > 0)
-                {
-                    fb_data fv = (fb_data)margin_fill_color;
-                    int ax = parent->x, ay = bl_vp.vp.y;
-                    for (int r = 0; r < bl_save_h; r++)
-                    {
-                        fb_data *fbr = FBADDR(ax, ay + r);
-                        fb_data *sr = &corner_save[r * save_w];
-                        for (int c = 0; c < save_w; c++)
-                            if (fbr[c] == fv)
-                                fbr[c] = sr[c];
-                    }
-                }
                 }
             }
         }
