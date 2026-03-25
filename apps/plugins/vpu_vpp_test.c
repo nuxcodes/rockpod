@@ -339,7 +339,7 @@ static void compositor_init(void)
 
     /* Mode config (without bit 30 — set last) */
     c[0x008/4] = 0x01118101;
-    c[0x00C/4] = 0x000000FF;    /* BG_COLOR = RED (XBGR) for visual clarity */
+    c[0x00C/4] = 0x0000FF00;    /* BG_COLOR = GREEN (XBGR) for v6b test */
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
