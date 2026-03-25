@@ -766,20 +766,15 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_clocks_enable(false);
     vpp_svid_enable(false);
 
-    /* Restore LCD (v5: comprehensive restore + force update) */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-    LCD_REG(0x80) = 0;
-    LCD_REG(0x70) = 0;
-    for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) |= 0x2080;  /* re-gate compositor clocks */
-    LCD_REG(0x7C) = saved_lcd_7c;
+    /* Restore LCD (v5b: suggested order — passthrough off first) */
+    LCD_REG(0x70) = 0;              /* 1. disable passthrough mux */
+    PWRCON(0) |= 0x2080;           /* 2. kill compositor clocks (stops source) */
+    for (volatile int d = 0; d < 50000; d++);  /* 3. settle delay */
+    LCD_REG(0x7C) = saved_lcd_7c;  /* 4. restore LCD config registers */
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-    LCD_CON = saved_lcd_con;
-
-    /* Force Rockbox LCD update to reclaim screen */
-    rb->lcd_update();
+    LCD_CON = saved_lcd_con;       /* 5. restore normal MCU mode */
+    rb->lcd_update();              /* 6. force normal LCD refresh to reclaim panel */
 
     /* Close VPU-B */
     vpu_h264_close(dec);
