@@ -339,7 +339,7 @@ static void compositor_init(void)
 
     /* Mode config (without bit 30 — set last) */
     c[0x008/4] = 0x01118101;
-    c[0x00C/4] = 0x000F0F0F;    /* BG_COLOR = gray (Apple's value) */
+    c[0x00C/4] = 0x000000FF;    /* BG_COLOR = RED (XBGR) for visual clarity */
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
@@ -450,7 +450,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v4 ===");
+    vlog("=== VPU-B → VPP Integration Test v5 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -641,6 +641,24 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x02C),
          (unsigned long)CLCD_REG(0x030));
 
+    /* v5: Comprehensive register dump BEFORE trigger */
+    vlog("  REGISTERS BEFORE TRIGGER:");
+    vlog("    comp+0x028=%08lx comp+0x02C=%08lx comp+0x00C=%08lx comp+0x220=%08lx",
+         (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x02C),
+         (unsigned long)COMP_REG(0x00C), (unsigned long)COMP_REG(0x220));
+    vlog("    comp+0x030=%08lx comp+0x034=%08lx comp+0x04C=%08lx",
+         (unsigned long)COMP_REG(0x030), (unsigned long)COMP_REG(0x034),
+         (unsigned long)COMP_REG(0x04C));
+    vlog("    comp+0x050=%08lx comp+0x054=%08lx comp+0x008=%08lx",
+         (unsigned long)COMP_REG(0x050), (unsigned long)COMP_REG(0x054),
+         (unsigned long)COMP_REG(0x008));
+    vlog("    MIXER+0x004=%08lx MIXER+0x008=%08lx MIXER+0x000=%08lx",
+         (unsigned long)MIXER_REG(0x004), (unsigned long)MIXER_REG(0x008),
+         (unsigned long)MIXER_REG(0x000));
+    vlog("    CLCD+0x03C=%08lx +0x040=%08lx +0x048=%08lx +0x000=%08lx",
+         (unsigned long)CLCD_REG(0x03C), (unsigned long)CLCD_REG(0x040),
+         (unsigned long)CLCD_REG(0x048), (unsigned long)CLCD_REG(0x000));
+
     /* ---- Phase 5: Trigger pipeline ---- */
 
     vlog("Phase 5: Pipeline trigger");
@@ -677,6 +695,41 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)COMP_REG(0x010));
     }
 
+    /* v5: GRAM readback after pushes */
+    vlog("Phase 6b: GRAM readback");
+    {
+        LCD_REG(0x70) = 0;  /* disable passthrough */
+        for (volatile int d = 0; d < 10000; d++);
+        uint32_t save_con = LCD_CON;
+        lcd_set_con(0x80000DA8);  /* P18 read mode */
+        /* Read center pixel (160, 120) */
+        lcd_cmd(0x200); lcd_data(160);
+        lcd_cmd(0x201); lcd_data(120);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_RDATA = 0;
+        while (!(LCD_STATUS & 1));
+        uint32_t dummy = LCD_DBUFF;
+        LCD_RDATA = 0;
+        while (!(LCD_STATUS & 1));
+        uint32_t px0 = LCD_DBUFF;
+        /* Read corner pixel (0, 0) */
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_RDATA = 0;
+        while (!(LCD_STATUS & 1));
+        dummy = LCD_DBUFF;
+        LCD_RDATA = 0;
+        while (!(LCD_STATUS & 1));
+        uint32_t px1 = LCD_DBUFF;
+        vlog("  GRAM center(160,120)=%08lx corner(0,0)=%08lx",
+             (unsigned long)px0, (unsigned long)px1);
+        LCD_CON = save_con;
+        LCD_REG(0x70) = 1;  /* re-enable passthrough */
+    }
+
     /* ---- Phase 7: Observe ---- */
 
     vlog("Phase 7: Observing (10s)");
@@ -687,9 +740,10 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Phase 8: Shutdown");
 
-    /* Stop VPP pipeline */
-    DISP_REG(0x280) = 1;
-    DISP_REG(0x284) |= 1;
+    /* v5: Disable compositor Layer 5 before shutdown */
+    COMP_REG(0x028) = 0;
+
+    /* Stop VPP pipeline (Apple shutdown order: DISP→MIXER→CLCD) */
     DISP_REG(0x03C) &= ~0xF;
     DISP_REG(0x000) &= ~1;
     for (int i = 0; i < 10; i++) {
@@ -712,7 +766,7 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_clocks_enable(false);
     vpp_svid_enable(false);
 
-    /* Restore LCD (proper sequence with bus-idle waits) */
+    /* Restore LCD (v5: comprehensive restore + force update) */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 0;
     LCD_REG(0x70) = 0;
@@ -723,6 +777,9 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x20) = saved_lcd_20;
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_CON = saved_lcd_con;
+
+    /* Force Rockbox LCD update to reclaim screen */
+    rb->lcd_update();
 
     /* Close VPU-B */
     vpu_h264_close(dec);
