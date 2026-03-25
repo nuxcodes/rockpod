@@ -425,15 +425,15 @@ static void lcd_push_frame(int panel_type)
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);  /* opens panel GRAM write gate */
     }
-    /* Fix 2: P9 restore via lcd_set_con (EN2: Apple polls LCD+0x1C bit 1 before EVERY
-     * LCD_CON write via FUN_000d16e8. Raw write without poll may not arm WR# properly.) */
-    lcd_set_con(0x81100DB9);
+    /* v7 Fix 3: Raw P9 restore (W1+W2: Apple NEVER uses polled write with LCD+0x80=1.
+     * Poll kills compositor trigger by adding gap after GRAM cmd 0x202.) */
+    LCD_CON = 0x81100DB9;
 
-    /* Hold gate open for one full 320×240 P9 frame transfer.
-     * 76800 pixels × 2 transfers × 18.5ns = 2.84ms (C2, Q1, Q7) */
-    { uint32_t t0 = USEC_TIMER; while ((USEC_TIMER - t0) < 2840); }
-
+    /* v7 Fix 4: Close gate IMMEDIATELY — no delay (W3: Apple ROM 0xa50c4 has zero delay.
+     * Gate-open is ONLY for GRAM commands. Compositor pushes when gate CLOSED.) */
     LCD_REG(0x80) = 0;
+
+    /* Wait for compositor to push frame */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
 
@@ -452,7 +452,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v6 ===");
+    vlog("=== VPU-B → VPP Integration Test v7 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -634,9 +634,13 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* Fix 2: MIXER+0x004 = 0x03 (D7 definitive: bit 0=layer enable, bit 1=progressive)
-     * Full trace: init→0, FUN_168180(0)→0, FUN_168240(1)→0x02, vtable[0x20](1)→0x03 */
-    MIXER_REG(0x004) = 0x03;
+    /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
+     * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
+     * DISCARDS all video data. 0x0B = bits 0+1+3. */
+    MIXER_REG(0x004) = 0x0B;
+    /* v7 Fix 2: MIXER+0x010 = video layer priority (DS1, S5PC100 p.1464).
+     * Priority 0 = HIDDEN. We zero all MIXER regs in init. Must be non-zero. */
+    MIXER_REG(0x010) = 0x01;
     MIXER_REG(0x008) |= 0x10000;
     MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
 
