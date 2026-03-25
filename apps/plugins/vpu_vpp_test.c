@@ -450,7 +450,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v3 ===");
+    vlog("=== VPU-B → VPP Integration Test v4 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -574,7 +574,19 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Init compositor */
     compositor_init();
-    vlog("  Compositor initialized");
+
+    /* Fix 1: Enable compositor Layer 5 (VPP input, YUV420 format)
+     * L2: FUN_0014cc90 at ROM 0x14cc90 writes comp+0x028 = 0x100 for layer 5.
+     * Without this, compositor ignores VPP data and only shows BG_COLOR. */
+    COMP_REG(0x028) = 0x100;                            /* layer 5 enable, YUV format 8 */
+    COMP_REG(0x030) = 0;                                /* source origin (0,0) */
+    COMP_REG(0x034) = ((uint32_t)frame_h << 16) | frame_w; /* source rect end */
+    COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
+    COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
+    COMP_REG(0x054) = ((uint32_t)out_h << 16) | out_w;  /* dest size */
+    /* DO NOT write comp+0x038-0x044 (kills DMA in bypass mode — v66 proved) */
+
+    vlog("  Compositor initialized + Layer 5 enabled");
 
     /* Wait for compositor to settle */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
@@ -618,8 +630,9 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* Fix 3: MIXER+0x004 = 0x06 (R06+F2: bit 1=layer, bit 2=PAL/LCD path) */
-    MIXER_REG(0x004) = 0x06;
+    /* Fix 2: MIXER+0x004 = 0x03 (D7 definitive: bit 0=layer enable, bit 1=progressive)
+     * Full trace: init→0, FUN_168180(0)→0, FUN_168240(1)→0x02, vtable[0x20](1)→0x03 */
+    MIXER_REG(0x004) = 0x03;
     MIXER_REG(0x008) |= 0x10000;
     MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
 
