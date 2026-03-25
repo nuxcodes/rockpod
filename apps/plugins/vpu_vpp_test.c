@@ -425,7 +425,9 @@ static void lcd_push_frame(int panel_type)
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);  /* opens panel GRAM write gate */
     }
-    LCD_CON = 0x81100DB9;  /* restore P9 — starts pixel flow */
+    /* Fix 2: P9 restore via lcd_set_con (EN2: Apple polls LCD+0x1C bit 1 before EVERY
+     * LCD_CON write via FUN_000d16e8. Raw write without poll may not arm WR# properly.) */
+    lcd_set_con(0x81100DB9);
 
     /* Hold gate open for one full 320×240 P9 frame transfer.
      * 76800 pixels × 2 transfers × 18.5ns = 2.84ms (C2, Q1, Q7) */
@@ -450,7 +452,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v5 ===");
+    vlog("=== VPU-B → VPP Integration Test v6 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -579,6 +581,8 @@ enum plugin_status plugin_start(const void *parameter)
      * L2: FUN_0014cc90 at ROM 0x14cc90 writes comp+0x028 = 0x100 for layer 5.
      * Without this, compositor ignores VPP data and only shows BG_COLOR. */
     COMP_REG(0x028) = 0x100;                            /* layer 5 enable, YUV format 8 */
+    /* Fix 1: Layer 5 stride (N1+N2: ROM 0x14cebc, stale 0x01E001E0 from iBoot) */
+    COMP_REG(0x02C) = frame_w | ((frame_w / 2) << 16); /* Y=320 | UV=160<<16 = 0x00A00140 */
     COMP_REG(0x030) = 0;                                /* source origin (0,0) */
     COMP_REG(0x034) = ((uint32_t)frame_h << 16) | frame_w; /* source rect end */
     COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
