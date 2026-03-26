@@ -799,69 +799,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x70) = 1;
     }
 
-    /* ---- Phase 7: Layer 5 ON/OFF diagnostic ---- */
-
-    vlog("Phase 7: Layer 5 diagnostics");
-    vlog("  CLCD+0x000=%08lx MIXER+0x00C=%08lx comp+0x028=%08lx",
-         (unsigned long)CLCD_REG(0x000), (unsigned long)MIXER_REG(0x00C),
-         (unsigned long)COMP_REG(0x028));
-
-    /* Helper macro: set GRAM window + observe + readback */
-#define GRAM_TEST(label, obs_us) do { \
-    { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
-    LCD_REG(0x80) = 1; \
-    lcd_set_con(0x80000DA9); \
-    if (panel_type >= 2) { \
-        lcd_cmd(0x210); lcd_data(0); lcd_cmd(0x211); lcd_data(319); \
-        lcd_cmd(0x212); lcd_data(0); lcd_cmd(0x213); lcd_data(239); \
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0); \
-        lcd_cmd(0x202); \
-    } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0; \
-    { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < (obs_us)) rb->backlight_on(); } \
-    LCD_REG(0x70) = 0; \
-    for (volatile int _d = 0; _d < 10000; _d++); \
-    lcd_set_con(0x80000DA8); \
-    lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
-    while (!(LCD_STATUS & 0x2)); \
-    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
-    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
-    { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx", label, (unsigned long)_g); } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 1; \
-} while(0)
-
-    /* Test A: Layer 5 OFF, BG_COLOR = gray */
-    COMP_REG(0x028) = 0;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestA(L5=OFF,gray)", 3000000);
-
-    /* Test B: YCbCr gray hypothesis (G2) — if compositor uses YCbCr internally,
-     * 0x00808080 = Y=128,Cb=128,Cr=128 = neutral gray in YCbCr */
-    COMP_REG(0x00C) = 0x00808080;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestB(L5=OFF,YCbCr_gray)", 3000000);
-
-    /* Test C: Pure channels — R=255 */
-    COMP_REG(0x00C) = 0x000000FF;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestC(L5=OFF,R=255)", 2000000);
-
-    /* Test D: Pure channels — G=255 */
-    COMP_REG(0x00C) = 0x0000FF00;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestD(L5=OFF,G=255)", 2000000);
-
-    /* Test E: Pure channels — B=255 */
-    COMP_REG(0x00C) = 0x00FF0000;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestE(L5=OFF,B=255)", 2000000);
-
-    /* Test F: White */
-    COMP_REG(0x00C) = 0x00FFFFFF;
-    COMP_REG(0x000) = 1;
-    GRAM_TEST("TestF(L5=OFF,white)", 2000000);
-
-#undef GRAM_TEST
+    /* Phase 7: removed (was Layer 5 diagnostic — interfered with shutdown) */
 
     /* ---- Phase 8: Shutdown ---- */
 
