@@ -283,15 +283,17 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* DISP_MODE: target 0x1202 (bits 1+9+12, J1+J5 verified) */
-    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (J1: ROM 0x1681c4) */
-    DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear format bits 0-3 */
-    DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace */
-    DISP_REG(0x008) &= 0x3F;           /* J5: preserve bits 0-5 (ROM 0x1682e4, was 0x1F) */
+    /* DISP_MODE: target 0x1202 (M3 raw-byte verified: bits 1+9+12)
+     * Apple sequence: FUN_00168180 does bic#0xF then orr#0x2
+     *                 FUN_001682cc does and#0x3F (preserves bit 1) then orr#0x200, orr#0x1000 */
+    DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear bits 0-3 (Apple: bic #0xF at ROM 0x168194) */
+    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (Apple: orr #0x2 at ROM 0x1681c4) */
+    DISP_REG(0x008) &= ~0x30;          /* clear bits 4+5 (stale Rockbox state, Apple starts clean) */
+    DISP_REG(0x008) &= 0x3F;           /* keep bits 0-5, clear 6+ (Apple: and #0x3F at ROM 0x1682e4) */
+    { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }  /* fence (Apple does 2) */
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
-    { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
-    DISP_REG(0x008) |= 0x200;
-    DISP_REG(0x008) |= 0x1000;
+    DISP_REG(0x008) |= 0x200;          /* bit 9 (Apple: orr #0x200 at ROM 0x1683a8) */
+    DISP_REG(0x008) |= 0x1000;         /* bit 12 (Apple: orr #0x1000 at ROM 0x1683b4) */
     DISP_REG(0x034) = 0;               /* progressive = 0 (Q3) */
 
     /* Color correction per chip variant */
@@ -459,7 +461,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v13 ===");
+    vlog("=== VPU-B → VPP Integration Test v13c ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -689,13 +691,73 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }  /* latch output */
 
     vlog("  Trigger fired");
-    vlog("  CLCD_CTRL: %08lx", (unsigned long)CLCD_REG(0x000));
-    vlog("  MIXER_CTRL: %08lx", (unsigned long)MIXER_REG(0x000));
-    vlog("  MIXER_00C: %08lx", (unsigned long)MIXER_REG(0x00C));
-    vlog("  DISP_CTRL: %08lx", (unsigned long)DISP_REG(0x000));
 
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
+    /* ---- Phase 5b: COMPREHENSIVE register dump ---- */
+    vlog("Phase 5b: Full register dump after trigger");
+
+    /* CLCD (VP) state */
+    vlog("  CLCD: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
+         (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x004),
+         (unsigned long)CLCD_REG(0x008), (unsigned long)CLCD_REG(0x00C));
+    vlog("  CLCD: 028=%08lx 02C=%08lx 030=%08lx 034=%08lx",
+         (unsigned long)CLCD_REG(0x028), (unsigned long)CLCD_REG(0x02C),
+         (unsigned long)CLCD_REG(0x030), (unsigned long)CLCD_REG(0x034));
+    vlog("  CLCD: 03C=%08lx 040=%08lx 044=%08lx 048=%08lx",
+         (unsigned long)CLCD_REG(0x03C), (unsigned long)CLCD_REG(0x040),
+         (unsigned long)CLCD_REG(0x044), (unsigned long)CLCD_REG(0x048));
+    vlog("  CLCD: 04C=%08lx 050=%08lx 054=%08lx 058=%08lx",
+         (unsigned long)CLCD_REG(0x04C), (unsigned long)CLCD_REG(0x050),
+         (unsigned long)CLCD_REG(0x054), (unsigned long)CLCD_REG(0x058));
+    vlog("  CLCD: 3C0=%08lx 3C4=%08lx 3C8=%08lx 3CC=%08lx",
+         (unsigned long)CLCD_REG(0x3C0), (unsigned long)CLCD_REG(0x3C4),
+         (unsigned long)CLCD_REG(0x3C8), (unsigned long)CLCD_REG(0x3CC));
+
+    /* MIXER state */
+    vlog("  MIXER: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
+         (unsigned long)MIXER_REG(0x000), (unsigned long)MIXER_REG(0x004),
+         (unsigned long)MIXER_REG(0x008), (unsigned long)MIXER_REG(0x00C));
+    vlog("  MIXER: 010=%08lx 048=%08lx 080=%08lx 084=%08lx",
+         (unsigned long)MIXER_REG(0x010), (unsigned long)MIXER_REG(0x048),
+         (unsigned long)MIXER_REG(0x080), (unsigned long)MIXER_REG(0x084));
+    vlog("  MIXER: 088=%08lx 800=%08lx",
+         (unsigned long)MIXER_REG(0x088), (unsigned long)MIXER_REG(0x800));
+
+    /* DISP state */
+    vlog("  DISP: 000=%08lx 008=%08lx 00C=%08lx 010=%08lx",
+         (unsigned long)DISP_REG(0x000), (unsigned long)DISP_REG(0x008),
+         (unsigned long)DISP_REG(0x00C), (unsigned long)DISP_REG(0x010));
+    vlog("  DISP: 03C=%08lx 180=%08lx 1C0=%08lx 3D0=%08lx",
+         (unsigned long)DISP_REG(0x03C), (unsigned long)DISP_REG(0x180),
+         (unsigned long)DISP_REG(0x1C0), (unsigned long)DISP_REG(0x3D0));
+
+    /* Compositor state */
+    vlog("  COMP: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
+         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x004),
+         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C));
+    vlog("  COMP: 020=%08lx 024=%08lx 028=%08lx 02C=%08lx",
+         (unsigned long)COMP_REG(0x020), (unsigned long)COMP_REG(0x024),
+         (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x02C));
+    vlog("  COMP: 030=%08lx 034=%08lx 04C=%08lx 050=%08lx",
+         (unsigned long)COMP_REG(0x030), (unsigned long)COMP_REG(0x034),
+         (unsigned long)COMP_REG(0x04C), (unsigned long)COMP_REG(0x050));
+    vlog("  COMP: 054=%08lx 0D4=%08lx 200=%08lx 3AC=%08lx",
+         (unsigned long)COMP_REG(0x054), (unsigned long)COMP_REG(0x0D4),
+         (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x3AC));
+    vlog("  COMP: 1EC=%08lx 1F0=%08lx 1F4=%08lx 1F8=%08lx 1FC=%08lx",
+         (unsigned long)COMP_REG(0x1EC), (unsigned long)COMP_REG(0x1F0),
+         (unsigned long)COMP_REG(0x1F4), (unsigned long)COMP_REG(0x1F8),
+         (unsigned long)COMP_REG(0x1FC));
+
+    /* LCD MCU state */
+    vlog("  LCD: CON=%08lx 070=%08lx 074=%08lx 078=%08lx",
+         (unsigned long)LCD_CON, (unsigned long)LCD_REG(0x70),
+         (unsigned long)LCD_REG(0x74), (unsigned long)LCD_REG(0x78));
+    vlog("  LCD: 07C=%08lx 080=%08lx 088=%08lx 08C=%08lx",
+         (unsigned long)LCD_REG(0x7C), (unsigned long)LCD_REG(0x80),
+         (unsigned long)LCD_REG(0x88), (unsigned long)LCD_REG(0x8C));
 
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
