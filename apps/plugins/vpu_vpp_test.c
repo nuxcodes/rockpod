@@ -283,11 +283,11 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* DISP_MODE: target 0x1202 (bits 1+9+12, J1+J5 verified) */
-    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (J1: ROM 0x1681c4) */
+    /* DISP_MODE: target 0x1202 (bits 1+9+12, J1+J5+L3 verified) */
     DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear format bits 0-3 */
+    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (L3: ROM 0x1681c4) */
     DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace */
-    DISP_REG(0x008) &= 0x3F;           /* J5: preserve bits 0-5 (ROM 0x1682e4, was 0x1F) */
+    DISP_REG(0x008) &= 0x3F;           /* J5: preserve bits 0-5 (bit 1 survives) */
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     DISP_REG(0x008) |= 0x200;
@@ -346,7 +346,7 @@ static void compositor_init(void)
 
     /* Mode config (without bit 30 — set last) */
     c[0x008/4] = 0x01118101;
-    c[0x00C/4] = 0x000F0F0F;    /* BG_COLOR = Apple's gray (XBGR, ROM 0x14d324) */
+    c[0x00C/4] = 0x000F0F0F;    /* BG_COLOR = Apple's gray (XBGR) */
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
@@ -370,7 +370,7 @@ static void compositor_init(void)
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
-    c[0x024/4] = 0x7D;          /* J2: ROM 0x14D904, data table 0x9F172C */
+    c[0x024/4] = 0x00FFFFFF;    /* L2: ROM 0x14d410→0x14d900, color key mask */
     c[0x000/4] = 1;             /* GO */
     c[0x3AC/4] = 0x04004003;    /* pipeline config */
 }
@@ -459,7 +459,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v13 ===");
+    vlog("=== VPU-B → VPP Integration Test v14 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -649,7 +649,7 @@ enum plugin_status plugin_start(const void *parameter)
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
      * DISCARDS all video data. 0x0B = bits 0+1+3. */
     MIXER_REG(0x004) = 0x0B;
-    /* MIXER+0x008: Apple writes 0 (C1 verified). MIXER+0x010: Apple writes 0 (R2+C2). */
+    MIXER_REG(0x008) = 0x100FF;     /* L1: alpha enable (bit16) + opaque (0xFF), ROM 0x167998 */
 
     vlog("  Buffers set: Y=%08lx Cr=%08lx Cb=%08lx",
          (unsigned long)CLCD_REG(0x028),
