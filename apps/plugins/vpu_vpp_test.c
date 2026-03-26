@@ -384,7 +384,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     *saved_con = LCD_CON;
 
     /* Wait for bus idle */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    while (LCD_REG(0x8C) & 3);
 
     /* LCD controller config (ROM FUN_000ca178) */
     LCD_CON = 0x81100DB9;
@@ -416,8 +416,8 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
 
 static void lcd_push_frame(int panel_type)
 {
-    /* Wait for bus idle (ROM 0xbe7fc: lcd_wait_ready) */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    /* Wait for bus idle (Apple ROM 0xbe7fc: no timeout) */
+    while (LCD_REG(0x8C) & 3);
 
     /* Open gate: CPU takes bus (ROM 0xa5094) */
     LCD_REG(0x80) = 1;
@@ -442,8 +442,8 @@ static void lcd_push_frame(int panel_type)
      * Gate-open is ONLY for GRAM commands. Compositor pushes when gate CLOSED.) */
     LCD_REG(0x80) = 0;
 
-    /* Wait for compositor to push frame */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    /* Wait for compositor to push frame (Apple ROM 0xbe7fc: no timeout) */
+    while (LCD_REG(0x8C) & 3);
 }
 
 /* ---- Main ---- */
@@ -806,7 +806,7 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Phase 8: Shutdown");
 
     /* v10: LCD clockgate toggle to reset controller state machine (R3 fallback) */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    while (LCD_REG(0x8C) & 3);
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
     LCD_REG(0x7C) = saved_lcd_7c;
@@ -817,7 +817,7 @@ enum plugin_status plugin_start(const void *parameter)
     for (volatile int d = 0; d < 10000; d++);
     LCD_PHTIME = 0x33;               /* re-init phase timing */
     LCD_CON = saved_lcd_con;
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    while (LCD_REG(0x8C) & 3);
     rb->lcd_update();
 
     /* Close VPU-B */
