@@ -632,13 +632,27 @@ static void ICODE_ATTR lcd_alpha_bitmap_part_mix(
             if (lcd_alpha_refbg_mode)
             {
                 unsigned rbg = lcd_alpha_refbg_color;
-                do
+                if (lcd_backdrop)
                 {
-                    unsigned a = READ_ALPHA();
-                    unsigned ref = blend_two_colors(*dst, rbg, a);
-                    *dst = blend_two_colors(ref, fg, a);
-                    dst += COL_INC;
-                } while (--col);
+                    bo = lcd_backdrop_offset;
+                    do
+                    {
+                        unsigned a = READ_ALPHA();
+                        unsigned ref = blend_two_colors(*dst, rbg, a);
+                        *dst = blend_two_colors(ref, *PTR_ADD(dst, bo), a);
+                        dst += COL_INC;
+                    } while (--col);
+                }
+                else
+                {
+                    do
+                    {
+                        unsigned a = READ_ALPHA();
+                        unsigned ref = blend_two_colors(*dst, rbg, a);
+                        *dst = blend_two_colors(ref, fg, a);
+                        dst += COL_INC;
+                    } while (--col);
+                }
             }
             else
             {
