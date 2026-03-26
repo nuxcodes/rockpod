@@ -218,6 +218,8 @@ extern struct viewport* lcd_init_viewport(struct viewport* vp);
 extern struct viewport* lcd_set_viewport(struct viewport* vp);
 extern struct viewport* lcd_set_viewport_ex(struct viewport* vp, int flags);
 
+extern void lcd_set_alpha_refbg(bool enable, unsigned color);
+
 extern void lcd_update(void);
 extern void lcd_update_viewport(void);
 extern void lcd_update_viewport_rect(int x, int y, int width, int height);

@@ -44,6 +44,19 @@ static void *lcd_frameaddress_default(int x, int y);
 static fb_data* lcd_backdrop = NULL;
 static long lcd_backdrop_offset IDATA_ATTR = 0;
 
+/* Weighted reference background for AA corner blending.
+ * When enabled, DRMODE_FG uses a double-blend that suppresses
+ * framebuffer pixel variation (e.g. thumbnail data) at AA edges
+ * while preserving fully-transparent pixels exactly. */
+static bool lcd_alpha_refbg_mode = false;
+static unsigned lcd_alpha_refbg_color = 0;
+
+void lcd_set_alpha_refbg(bool enable, unsigned color)
+{
+    lcd_alpha_refbg_mode = enable;
+    lcd_alpha_refbg_color = color;
+}
+
 /* shouldn't be changed unless you want system-wide framebuffer changes! */
 struct frame_buffer_t lcd_framebuffer_default =
 {

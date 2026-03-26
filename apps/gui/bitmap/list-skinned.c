@@ -488,11 +488,13 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 display->set_viewport(&tl_vp.vp);
                 display->set_foreground(tl_vp.vp.bg_pattern);
                 display->set_background(tl_vp.vp.bg_pattern);
+                lcd_set_alpha_refbg(true, margin_fill_color);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
                     &wps, &tl_vp, SKIN_REFRESH_ALL, true, 0);
                 wps_display_images(&wps, &tl_vp.vp);
+                lcd_set_alpha_refbg(false, 0);
                 }
 
                 /* BL+BR corner: bottom half of glyph at row bottom */
@@ -515,11 +517,13 @@ bool skinlist_draw(struct screen *display, struct gui_synclist *list)
                 display->set_viewport(&bl_vp.vp);
                 display->set_foreground(bl_vp.vp.bg_pattern);
                 display->set_background(bl_vp.vp.bg_pattern);
+                lcd_set_alpha_refbg(true, margin_fill_color);
                 skin_render_viewport(
                     SKINOFFSETTOPTR(get_skin_buffer(wps.data),
                                     (intptr_t)dchildren[0]),
                     &wps, &bl_vp, SKIN_REFRESH_ALL, true, -half_h);
                 wps_display_images(&wps, &bl_vp.vp);
+                lcd_set_alpha_refbg(false, 0);
                 }
             }
         }
