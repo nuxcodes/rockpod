@@ -283,10 +283,11 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* DISP_MODE: target 0x1200 (Q3 definitive: bits 9+12 for LCD progressive) */
-    DISP_REG(0x008) &= 0xFFFFFFF0;    /* clear format bits 0-3 */
-    DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace (Q4) */
-    DISP_REG(0x008) &= 0x1F;           /* clear bits 5-31 including stale bit 5 (Q4) */
+    /* DISP_MODE: target 0x1202 (bits 1+9+12, J1+J5 verified) */
+    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (J1: ROM 0x1681c4) */
+    DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear format bits 0-3 */
+    DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace */
+    DISP_REG(0x008) &= 0x3F;           /* J5: preserve bits 0-5 (ROM 0x1682e4, was 0x1F) */
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
     DISP_REG(0x008) |= 0x200;
@@ -321,7 +322,7 @@ static void compositor_init(void)
 {
     /* Ungate compositor clocks — Rockbox gates them during boot.
      * Skip the gate step (unlike v9-v11) since there's nothing to reset. */
-    PWRCON(0) &= ~0x2080;           /* ungate bits 7+13 */
+    PWRCON(0) &= ~0x2080;           /* ungate compositor clocks */
     for (volatile int d = 0; d < 10000; d++);
 
     volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
@@ -369,6 +370,7 @@ static void compositor_init(void)
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
+    c[0x024/4] = 0x7D;          /* J2: ROM 0x14D904, data table 0x9F172C */
     c[0x000/4] = 1;             /* GO */
     c[0x3AC/4] = 0x04004003;    /* pipeline config */
 }
@@ -457,7 +459,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v12b ===");
+    vlog("=== VPU-B → VPP Integration Test v13 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -695,29 +697,20 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
-    /* ---- Phase 6: Single GRAM window + observe (no push loop) ---- */
+    /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
-    vlog("Phase 6: GRAM window + observe");
+    vlog("Phase 6: Push loop (10 frames)");
 
-    /* Set GRAM window ONCE — compositor pushes autonomously via passthrough */
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-    LCD_REG(0x80) = 1;
-    lcd_set_con(0x80000DA9);  /* P18 for commands */
-    if (panel_type >= 2) {
-        lcd_cmd(0x210); lcd_data(0);
-        lcd_cmd(0x211); lcd_data(319);
-        lcd_cmd(0x212); lcd_data(0);
-        lcd_cmd(0x213); lcd_data(239);
-        lcd_cmd(0x200); lcd_data(0);
-        lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+    for (int push = 0; push < 10; push++) {
+        uint32_t t0 = USEC_TIMER;
+        lcd_push_frame(panel_type);
+        uint32_t dt = USEC_TIMER - t0;
+        vlog("  Push %d: %lu us", push, (unsigned long)dt);
     }
-    LCD_CON = 0x81100DB9;  /* raw P9 restore */
-    LCD_REG(0x80) = 0;     /* close gate — compositor can push */
 
-    /* Observe 5s — NO push loop, compositor pushes autonomously */
-    vlog("  Observing 5s (no push loop)...");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+    /* 3s observe */
+    vlog("  Observing 3s...");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
     /* GRAM readback */
     vlog("Phase 6b: GRAM readback");
