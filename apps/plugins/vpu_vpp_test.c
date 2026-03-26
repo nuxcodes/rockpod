@@ -386,9 +386,14 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
 
-    /* GRAM window for panel type 2 (ILI9326) */
+    /* Switch ILI9326 to 18-bit mode for P9 passthrough.
+     * Rockbox sets Entry Mode = 0x0230 (TRI=0 = 16-bit).
+     * Compositor uses P9 (18-bit). Apple sets TRI=1+DFM=1 via vtable[0x2C].
+     * ROM evidence: 0xC230 found at ROM 0x989B62 in panel config data. */
     if (panel_type >= 2) {
         lcd_set_con(0x80000DA9);
+        lcd_cmd(0x003); lcd_data(0xC230);  /* Entry Mode: TRI=1, DFM=1, 18-bit P9 */
+        /* GRAM window */
         lcd_cmd(0x210); lcd_data(0);
         lcd_cmd(0x211); lcd_data(319);
         lcd_cmd(0x212); lcd_data(0);
@@ -452,7 +457,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v10 ===");
+    vlog("=== VPU-B → VPP Integration Test v11 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -798,6 +803,11 @@ enum plugin_status plugin_start(const void *parameter)
     PWRCON(0) &= ~(1 << 1);         /* ungate LCD clock */
     for (volatile int d = 0; d < 10000; d++);
     LCD_PHTIME = 0x33;               /* re-init phase timing */
+    LCD_CON = saved_lcd_con;
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    /* Restore ILI9326 Entry Mode to 16-bit (Rockbox's default) */
+    lcd_set_con(0x80000DA8);         /* P18 command mode */
+    lcd_cmd(0x003); lcd_data(0x0230);/* restore 16-bit Entry Mode */
     LCD_CON = saved_lcd_con;
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
