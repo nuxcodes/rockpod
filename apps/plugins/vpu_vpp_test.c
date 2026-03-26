@@ -319,10 +319,14 @@ static uint32_t iboot_timing[5];  /* saved iBoot timing for logging */
 
 static void compositor_init(void)
 {
-    /* NO gate-ungate — Apple doesn't do it (G1). Gate destroys iBoot timing. */
+    /* Ungate compositor clocks — Rockbox gates them during boot.
+     * Skip the gate step (unlike v9-v11) since there's nothing to reset. */
+    PWRCON(0) &= ~0x2080;           /* ungate bits 7+13 */
+    for (volatile int d = 0; d < 10000; d++);
+
     volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
 
-    /* Save iBoot timing BEFORE any writes (G1: values from iBoot DRAM) */
+    /* Log compositor register state after ungate */
     for (int i = 0; i < 5; i++)
         iboot_timing[i] = c[(0x1EC + i*4)/4];
 
@@ -356,7 +360,12 @@ static void compositor_init(void)
         c[0xC00/4 + i] = i * 4;
     }
 
-    /* comp+0x1EC-0x1FC: iBoot timing values preserved — NOT overwritten (G1) */
+    /* i80 bus timing (v54 iBoot capture — only known values) */
+    c[0x1EC/4] = 0x0C;
+    c[0x1F0/4] = 0x26;
+    c[0x1F4/4] = 0x10;
+    c[0x1F8/4] = 0x82;
+    c[0x1FC/4] = 0x4E;
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
@@ -448,7 +457,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v12 ===");
+    vlog("=== VPU-B → VPP Integration Test v12b ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
