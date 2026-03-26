@@ -452,7 +452,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v9 ===");
+    vlog("=== VPU-B → VPP Integration Test v10 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -686,84 +686,118 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
-    /* ---- Phase 6: Push to LCD ---- */
+    /* ---- Phase 6: Single GRAM window + observe (no push loop) ---- */
 
-    vlog("Phase 6: LCD push");
+    vlog("Phase 6: GRAM window + observe");
 
-    /* Push frames with timing diagnostic */
-    for (int push = 0; push < 10; push++) {
-        uint32_t t0 = USEC_TIMER;
-        lcd_push_frame(panel_type);
-        uint32_t dt = USEC_TIMER - t0;
-        vlog("  Push %d: %lu us COMP+0x10=%08lx",
-             push, (unsigned long)dt,
-             (unsigned long)COMP_REG(0x010));
+    /* Set GRAM window ONCE — compositor pushes autonomously via passthrough */
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    LCD_REG(0x80) = 1;
+    lcd_set_con(0x80000DA9);  /* P18 for commands */
+    if (panel_type >= 2) {
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
     }
+    LCD_CON = 0x81100DB9;  /* raw P9 restore */
+    LCD_REG(0x80) = 0;     /* close gate — compositor can push */
 
-    /* v5: GRAM readback after pushes */
+    /* Observe 5s — NO push loop, compositor pushes autonomously */
+    vlog("  Observing 5s (no push loop)...");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* GRAM readback */
     vlog("Phase 6b: GRAM readback");
     {
-        LCD_REG(0x70) = 0;  /* disable passthrough */
+        LCD_REG(0x70) = 0;
         for (volatile int d = 0; d < 10000; d++);
-        uint32_t save_con = LCD_CON;
-        lcd_set_con(0x80000DA8);  /* P18 read mode */
-        /* Read center pixel (160, 120) */
+        lcd_set_con(0x80000DA8);
         lcd_cmd(0x200); lcd_data(160);
         lcd_cmd(0x201); lcd_data(120);
         lcd_cmd(0x202);
         while (!(LCD_STATUS & 0x2));
-        LCD_RDATA = 0;
-        while (!(LCD_STATUS & 1));
-        uint32_t dummy = LCD_DBUFF;
-        LCD_RDATA = 0;
-        while (!(LCD_STATUS & 1));
-        uint32_t px0 = LCD_DBUFF;
-        /* Read corner pixel (0, 0) */
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t px0 = LCD_DBUFF;
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
         while (!(LCD_STATUS & 0x2));
-        LCD_RDATA = 0;
-        while (!(LCD_STATUS & 1));
-        dummy = LCD_DBUFF;
-        LCD_RDATA = 0;
-        while (!(LCD_STATUS & 1));
-        uint32_t px1 = LCD_DBUFF;
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t px1 = LCD_DBUFF;
         vlog("  GRAM center(160,120)=%08lx corner(0,0)=%08lx",
              (unsigned long)px0, (unsigned long)px1);
-        LCD_CON = save_con;
-        LCD_REG(0x70) = 1;  /* re-enable passthrough */
+        LCD_CON = 0x81100DB9;
+        LCD_REG(0x70) = 1;
     }
 
-    /* ---- Phase 7: Post-push register dump ---- */
+    /* ---- Phase 7: Layer 5 ON/OFF diagnostic ---- */
 
-    vlog("Phase 7: Register state");
-    vlog("  CLCD+0x000=%08lx +0x03C=%08lx +0x040=%08lx +0x048=%08lx",
-         (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x03C),
-         (unsigned long)CLCD_REG(0x040), (unsigned long)CLCD_REG(0x048));
-    vlog("  MIXER+0x004=%08lx +0x00C=%08lx +0x000=%08lx",
-         (unsigned long)MIXER_REG(0x004), (unsigned long)MIXER_REG(0x00C),
-         (unsigned long)MIXER_REG(0x000));
-    vlog("  comp+0x008=%08lx +0x00C=%08lx +0x028=%08lx +0x200=%08lx",
-         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C),
-         (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x200));
+    vlog("Phase 7: Layer 5 diagnostics");
+    vlog("  CLCD+0x000=%08lx MIXER+0x00C=%08lx comp+0x028=%08lx",
+         (unsigned long)CLCD_REG(0x000), (unsigned long)MIXER_REG(0x00C),
+         (unsigned long)COMP_REG(0x028));
 
-    /* 5s observe window */
-    vlog("  Observing 5s...");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+    /* Helper macro: set GRAM window + observe + readback */
+#define GRAM_TEST(label, obs_us) do { \
+    { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
+    LCD_REG(0x80) = 1; \
+    lcd_set_con(0x80000DA9); \
+    if (panel_type >= 2) { \
+        lcd_cmd(0x210); lcd_data(0); lcd_cmd(0x211); lcd_data(319); \
+        lcd_cmd(0x212); lcd_data(0); lcd_cmd(0x213); lcd_data(239); \
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0); \
+        lcd_cmd(0x202); \
+    } \
+    LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0; \
+    { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < (obs_us)) rb->backlight_on(); } \
+    LCD_REG(0x70) = 0; \
+    for (volatile int _d = 0; _d < 10000; _d++); \
+    lcd_set_con(0x80000DA8); \
+    lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
+    while (!(LCD_STATUS & 0x2)); \
+    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
+    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
+    { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx", label, (unsigned long)_g); } \
+    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 1; \
+} while(0)
+
+    /* Test A: Layer 5 OFF, BG_COLOR = gray */
+    COMP_REG(0x028) = 0;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestA(L5=OFF,gray)", 3000000);
+
+    /* Test B: Layer 5 OFF, BG_COLOR = RED */
+    COMP_REG(0x00C) = 0x000000FF;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestB(L5=OFF,red)", 3000000);
+
+    /* Test C: Layer 5 ON, BG_COLOR = gray (restore) */
+    COMP_REG(0x028) = 0x100;
+    COMP_REG(0x00C) = 0x000F0F0F;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestC(L5=ON,gray)", 3000000);
+
+#undef GRAM_TEST
 
     /* ---- Phase 8: Shutdown ---- */
 
     vlog("Phase 8: Shutdown");
 
-    /* v9: Restore ALL LCD registers before disabling passthrough (R3).
-     * lcd_update() hangs if LCD controller state machine is stuck. */
+    /* v10: LCD clockgate toggle to reset controller state machine (R3 fallback) */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
     LCD_REG(0x7C) = saved_lcd_7c;
     LCD_REG(0x70) = 0;
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    PWRCON(0) |= (1 << 1);          /* gate LCD clock */
+    for (volatile int d = 0; d < 10000; d++);
+    PWRCON(0) &= ~(1 << 1);         /* ungate LCD clock */
+    for (volatile int d = 0; d < 10000; d++);
+    LCD_PHTIME = 0x33;               /* re-init phase timing */
     LCD_CON = saved_lcd_con;
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
