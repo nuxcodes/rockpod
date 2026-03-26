@@ -761,13 +761,14 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
-    vlog("Phase 6: Push loop (10 frames)");
+    vlog("Phase 6: Push loop (50 frames)");
 
-    for (int push = 0; push < 10; push++) {
+    for (int push = 0; push < 50; push++) {
         uint32_t t0 = USEC_TIMER;
         lcd_push_frame(panel_type);
         uint32_t dt = USEC_TIMER - t0;
-        vlog("  Push %d: %lu us", push, (unsigned long)dt);
+        if (push < 5 || push == 49)
+            vlog("  Push %d: %lu us", push, (unsigned long)dt);
     }
 
     /* 3s observe */
