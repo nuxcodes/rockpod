@@ -339,7 +339,7 @@ static void compositor_init(void)
 
     /* Mode config (without bit 30 — set last) */
     c[0x008/4] = 0x01118101;
-    c[0x00C/4] = 0x0000FF00;    /* BG_COLOR = GREEN (XBGR) for v6b test */
+    c[0x00C/4] = 0x00000040;    /* BG_COLOR = medium red (XBGR) — P6 brightness test */
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
@@ -452,7 +452,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v7 ===");
+    vlog("=== VPU-B → VPP Integration Test v8 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -641,8 +641,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* v7 Fix 2: MIXER+0x010 = video layer priority (DS1, S5PC100 p.1464).
      * Priority 0 = HIDDEN. We zero all MIXER regs in init. Must be non-zero. */
     MIXER_REG(0x010) = 0x01;
-    MIXER_REG(0x008) |= 0x10000;
-    MIXER_REG(0x008) = (MIXER_REG(0x008) & ~0xFF) | 0xFF;
+    /* MIXER+0x008: X1 says Apple writes 0, never touches again. Removed 0x000100FF. */
 
     vlog("  Buffers set: Y=%08lx Cr=%08lx Cb=%08lx",
          (unsigned long)CLCD_REG(0x028),
@@ -738,51 +737,80 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x70) = 1;  /* re-enable passthrough */
     }
 
-    /* ---- Phase 7: Observe ---- */
+    /* ---- Phase 7: Multi-brightness color cycle + diagnostics ---- */
 
-    vlog("Phase 7: Observing (10s)");
-    rb->splashf(0, "VPP: %dx%d → LCD", frame_w, frame_h);
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 10000000); }
+    vlog("Phase 7: Color cycle diagnostics");
+
+    /* Gamma LUT readback */
+    vlog("  Gamma LUT[0]=%08lx LUT[128]=%08lx LUT[255]=%08lx",
+         (unsigned long)COMP_REG(0x400),
+         (unsigned long)COMP_REG(0x400 + 128*4),
+         (unsigned long)COMP_REG(0x400 + 255*4));
+
+    /* MIXER readback after trigger */
+    vlog("  MIXER+0x004=%08lx +0x008=%08lx +0x010=%08lx",
+         (unsigned long)MIXER_REG(0x004),
+         (unsigned long)MIXER_REG(0x008),
+         (unsigned long)MIXER_REG(0x010));
+
+    /* Color cycle: test different brightness levels */
+    {
+        uint32_t test_colors[] = {
+            0x00000010,  /* very dim red */
+            0x00000040,  /* medium red */
+            0x000000FF,  /* bright red */
+            0x00001000,  /* dim green */
+            0x0000FF00,  /* bright green */
+            0x000F0F0F,  /* Apple's gray */
+        };
+        const char *names[] = {
+            "dim_R", "med_R", "brt_R", "dim_G", "brt_G", "gray"
+        };
+
+        for (int c = 0; c < 6; c++) {
+            rb->backlight_on();
+            COMP_REG(0x00C) = test_colors[c];
+            COMP_REG(0x000) = 1;  /* GO to latch BG_COLOR */
+
+            /* Push 10 frames */
+            for (int p = 0; p < 10; p++)
+                lcd_push_frame(panel_type);
+
+            /* GRAM readback */
+            LCD_REG(0x70) = 0;
+            for (volatile int d = 0; d < 10000; d++);
+            lcd_set_con(0x80000DA8);
+            lcd_cmd(0x200); lcd_data(160);
+            lcd_cmd(0x201); lcd_data(120);
+            lcd_cmd(0x202);
+            while (!(LCD_STATUS & 0x2));
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            (void)LCD_DBUFF;  /* dummy */
+            LCD_RDATA = 0;
+            while (!(LCD_STATUS & 1));
+            uint32_t gram = LCD_DBUFF;
+
+            vlog("  %s(0x%08lx): GRAM=%08lx",
+                 names[c], (unsigned long)test_colors[c], (unsigned long)gram);
+
+            LCD_CON = 0x81100DB9;
+            LCD_REG(0x70) = 1;
+
+            /* 2s observe */
+            { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 2000000); }
+        }
+    }
 
     /* ---- Phase 8: Shutdown ---- */
 
     vlog("Phase 8: Shutdown");
 
-    /* v5: Disable compositor Layer 5 before shutdown */
-    COMP_REG(0x028) = 0;
-
-    /* Stop VPP pipeline (Apple shutdown order: DISP→MIXER→CLCD) */
-    DISP_REG(0x03C) &= ~0xF;
-    DISP_REG(0x000) &= ~1;
-    for (int i = 0; i < 10; i++) {
-        if (DISP_REG(0x000) & 2) break;
-        rb->sleep(1);
-    }
-
-    MIXER_REG(0x000) &= ~1;
-    for (int i = 0; i < 10; i++) {
-        if (MIXER_REG(0x000) & 2) break;
-        rb->sleep(1);
-    }
-
-    CLCD_REG(0x000) &= ~1;
-    for (int i = 0; i < 10; i++) {
-        if (CLCD_REG(0x000) & 2) break;
-        rb->sleep(1);
-    }
-
-    vpp_clocks_enable(false);
-    vpp_svid_enable(false);
-
-    /* Restore LCD (v5b: suggested order — passthrough off first) */
-    LCD_REG(0x70) = 0;              /* 1. disable passthrough mux */
-    PWRCON(0) |= 0x2080;           /* 2. kill compositor clocks (stops source) */
-    for (volatile int d = 0; d < 50000; d++);  /* 3. settle delay */
-    LCD_REG(0x7C) = saved_lcd_7c;  /* 4. restore LCD config registers */
-    LCD_REG(0x88) = saved_lcd_88;
-    LCD_REG(0x20) = saved_lcd_20;
-    LCD_CON = saved_lcd_con;       /* 5. restore normal MCU mode */
-    rb->lcd_update();              /* 6. force normal LCD refresh to reclaim panel */
+    /* v8: Simplified shutdown — just disconnect and restore.
+     * Apple NEVER shuts down compositor (X2). Just disconnect from LCD bus. */
+    LCD_REG(0x70) = 0;              /* disconnect compositor from LCD */
+    LCD_CON = saved_lcd_con;        /* restore Rockbox LCD mode */
+    rb->lcd_update();               /* force Rockbox to reclaim panel */
 
     /* Close VPU-B */
     vpu_h264_close(dec);
