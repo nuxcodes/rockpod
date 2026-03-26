@@ -315,15 +315,16 @@ static void disp_go(void)
 
 /* ---- Compositor Init (ROM FUN_0014d240) ---- */
 
+static uint32_t iboot_timing[5];  /* saved iBoot timing for logging */
+
 static void compositor_init(void)
 {
-    /* Gate → ungate for clean state */
-    PWRCON(0) |= 0x2080;
-    for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) &= ~0x2080;
-    for (volatile int d = 0; d < 10000; d++);
-
+    /* NO gate-ungate — Apple doesn't do it (G1). Gate destroys iBoot timing. */
     volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
+
+    /* Save iBoot timing BEFORE any writes (G1: values from iBoot DRAM) */
+    for (int i = 0; i < 5; i++)
+        iboot_timing[i] = c[(0x1EC + i*4)/4];
 
     c[0x200/4] &= ~1;           /* clear SWTRGCMD */
     c[0x004/4] = 1;
@@ -355,12 +356,7 @@ static void compositor_init(void)
         c[0xC00/4 + i] = i * 4;
     }
 
-    /* Timing (from v54 iBoot capture) */
-    c[0x1EC/4] = 0x0C;
-    c[0x1F0/4] = 0x26;
-    c[0x1F4/4] = 0x10;
-    c[0x1F8/4] = 0x82;
-    c[0x1FC/4] = 0x4E;
+    /* comp+0x1EC-0x1FC: iBoot timing values preserved — NOT overwritten (G1) */
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
@@ -386,14 +382,9 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
 
-    /* Switch ILI9326 to 18-bit mode for P9 passthrough.
-     * Rockbox sets Entry Mode = 0x0230 (TRI=0 = 16-bit).
-     * Compositor uses P9 (18-bit). Apple sets TRI=1+DFM=1 via vtable[0x2C].
-     * ROM evidence: 0xC230 found at ROM 0x989B62 in panel config data. */
+    /* GRAM window for panel type 2 (ILI9326) */
     if (panel_type >= 2) {
         lcd_set_con(0x80000DA9);
-        lcd_cmd(0x003); lcd_data(0xC230);  /* Entry Mode: TRI=1, DFM=1, 18-bit P9 */
-        /* GRAM window */
         lcd_cmd(0x210); lcd_data(0);
         lcd_cmd(0x211); lcd_data(319);
         lcd_cmd(0x212); lcd_data(0);
@@ -457,7 +448,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v11 ===");
+    vlog("=== VPU-B → VPP Integration Test v12 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -596,6 +587,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* DO NOT write comp+0x038-0x044 (kills DMA in bypass mode — v66 proved) */
 
     vlog("  Compositor initialized + Layer 5 enabled");
+    vlog("  iBoot timing: %08lx %08lx %08lx %08lx %08lx",
+         (unsigned long)iboot_timing[0], (unsigned long)iboot_timing[1],
+         (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
+         (unsigned long)iboot_timing[4]);
 
     /* Wait for compositor to settle */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
@@ -775,16 +770,31 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x000) = 1;
     GRAM_TEST("TestA(L5=OFF,gray)", 3000000);
 
-    /* Test B: Layer 5 OFF, BG_COLOR = RED */
+    /* Test B: YCbCr gray hypothesis (G2) — if compositor uses YCbCr internally,
+     * 0x00808080 = Y=128,Cb=128,Cr=128 = neutral gray in YCbCr */
+    COMP_REG(0x00C) = 0x00808080;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestB(L5=OFF,YCbCr_gray)", 3000000);
+
+    /* Test C: Pure channels — R=255 */
     COMP_REG(0x00C) = 0x000000FF;
     COMP_REG(0x000) = 1;
-    GRAM_TEST("TestB(L5=OFF,red)", 3000000);
+    GRAM_TEST("TestC(L5=OFF,R=255)", 2000000);
 
-    /* Test C: Layer 5 ON, BG_COLOR = gray (restore) */
-    COMP_REG(0x028) = 0x100;
-    COMP_REG(0x00C) = 0x000F0F0F;
+    /* Test D: Pure channels — G=255 */
+    COMP_REG(0x00C) = 0x0000FF00;
     COMP_REG(0x000) = 1;
-    GRAM_TEST("TestC(L5=ON,gray)", 3000000);
+    GRAM_TEST("TestD(L5=OFF,G=255)", 2000000);
+
+    /* Test E: Pure channels — B=255 */
+    COMP_REG(0x00C) = 0x00FF0000;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestE(L5=OFF,B=255)", 2000000);
+
+    /* Test F: White */
+    COMP_REG(0x00C) = 0x00FFFFFF;
+    COMP_REG(0x000) = 1;
+    GRAM_TEST("TestF(L5=OFF,white)", 2000000);
 
 #undef GRAM_TEST
 
@@ -803,11 +813,6 @@ enum plugin_status plugin_start(const void *parameter)
     PWRCON(0) &= ~(1 << 1);         /* ungate LCD clock */
     for (volatile int d = 0; d < 10000; d++);
     LCD_PHTIME = 0x33;               /* re-init phase timing */
-    LCD_CON = saved_lcd_con;
-    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-    /* Restore ILI9326 Entry Mode to 16-bit (Rockbox's default) */
-    lcd_set_con(0x80000DA8);         /* P18 command mode */
-    lcd_cmd(0x003); lcd_data(0x0230);/* restore 16-bit Entry Mode */
     LCD_CON = saved_lcd_con;
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
