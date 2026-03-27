@@ -461,7 +461,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v13c ===");
+    vlog("=== VPU-B → VPP Integration Test v15 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type */
@@ -647,10 +647,14 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
-     * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
-     * DISCARDS all video data. 0x0B = bits 0+1+3. */
-    MIXER_REG(0x004) = 0x0B;
+    /* MIXER+0x004: Apple sets bits 1+2 = 0x06 for LCD progressive video.
+     * Bit 1: FUN_00168240 at ROM 0x168290 (ORR #2)
+     * Bit 2: FUN_00168180 at ROM 0x1681D0 (ORR #4, progressive/video mode)
+     * Bit 0: dead code only (FUN_00167880, zero callers — V5 exhaustive proof)
+     * Bit 3: dead code only (FUN_00166D24, zero callers — NOT VP_ENABLE)
+     * Previous 0x0B was based on S5PC100 datasheet (wrong for S5L8702).
+     * Verified by: Q4, M1, V1r×2, V5 (5 agents, raw byte decode). */
+    MIXER_REG(0x004) = 0x06;
     /* MIXER+0x008: Apple writes 0 (C1 verified). MIXER+0x010: Apple writes 0 (R2+C2). */
 
     vlog("  Buffers set: Y=%08lx Cr=%08lx Cb=%08lx",
