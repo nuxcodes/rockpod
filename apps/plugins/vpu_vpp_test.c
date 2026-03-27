@@ -218,7 +218,7 @@ static const uint32_t disp_regs_200[28] = {
 static void disp_init(void)
 {
     DISP_REG(0x000) = DISP_REG(0x000) & 2;
-    DISP_REG(0x00C) = 6;    /* progressive free-running */
+    DISP_REG(0x00C) = 5;    /* DE sync for progressive LCD (ROM 0x167C4C: MOV R5,#5 → 0x167C64: STREQ R5,[R4,#0xC]) */
     DISP_REG(0x010) = 1;    /* enable */
 
     for (int i = 0x01C; i <= 0x030; i += 4)
