@@ -244,7 +244,7 @@ static void disp_init(void)
     DISP_REG(0x19C) = 0x03FF0200;
     DISP_REG(0x1A0) = 0x1FF;
     DISP_REG(0x1A4) = 0x03FF0000;
-    DISP_REG(0x1A8) = 0x03FF0200;  /* B2-2: color range (was 0x1FF — wrong) */
+    DISP_REG(0x1A8) = 0x1FF;        /* B7-3: 0x1FF is CORRECT (B2-2 confused +0x19C with +0x1A8) */
     DISP_REG(0x1C0) = 0x11;           /* DD8: output format */
 
     for (int i = 0; i < 28; i++)
@@ -284,6 +284,7 @@ static void disp_init(void)
     DISP_REG(0x0E4) = 0x5a;
     DISP_REG(0x0E8) = 0x74;
     DISP_REG(0x0EC) = 0x7e;
+    DISP_REG(0x26C) = 0x00011A00;     /* B7-3: output config (written in every Apple init path) */
     DISP_REG(0x284) = 0;              /* FF2: clear before GO */
 }
 
@@ -440,7 +441,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v17 ===");
+    vlog("=== VPU-B → VPP Integration Test v18 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO strap pins (B6-1: matches lcd-6g.c:265) */
