@@ -199,7 +199,10 @@ static void mixer_init(void)
     MIXER_REG(0x084) = 0x3B4DACE1;
     MIXER_REG(0x088) = 0x0E1D13DC;
     MIXER_REG(0x800) = 1;           /* global enable */
-    MIXER_REG(0x00C) |= 0x200;     /* YUV420 format (FUN_001680e8, ROM 0x1680e8) */
+    /* MIXER+0x00C: format bits [11:8] stay at 0 for video layer 5 (B8-3: overlay only).
+     * BUT bit 16 (0x10000) = alpha processing enable IS set for layer 5
+     * (B24a: vtable[0x58] at ROM 0x167924: ORR #0x10000). */
+    MIXER_REG(0x00C) |= 0x10000;
     MIXER_REG(0x000) = 6;           /* pipeline active + data path (no GO yet) */
 }
 
@@ -218,7 +221,7 @@ static const uint32_t disp_regs_200[28] = {
 static void disp_init(void)
 {
     DISP_REG(0x000) = DISP_REG(0x000) & 2;
-    DISP_REG(0x00C) = 5;    /* DE sync for progressive LCD (ROM 0x167C4C: MOV R5,#5 → 0x167C64: STREQ R5,[R4,#0xC]) */
+    DISP_REG(0x00C) = 6;    /* Non-progressive free-running (B14 DEFINITIVE: progressive path is TV-out only. Internal LCD always uses 6. FUN_001773b8 skips progressive setter for no TV-out.) */
     DISP_REG(0x010) = 1;    /* enable */
 
     for (int i = 0x01C; i <= 0x030; i += 4)
@@ -252,6 +255,9 @@ static void disp_init(void)
     DISP_REG(0x280) = 0;
     DISP_REG(0x3C0) = 0;
     DISP_REG(0x3D0) = 1;              /* LCD select */
+    /* DISP sync registers: FUN_00069994, struct+7=0 for iPod 6G internal LCD (B7-1).
+     * FUN_000dcc14(0)=6, uVar6 = 0 | (6 << 14) = 0x18000. DISP+0x3C8 = 8 (progressive).
+     * struct+7 (sync type) ≠ struct+2 (display type=1 for mode/gamma). Independent fields. */
     DISP_REG(0x3C4) = 0x00018000;
     DISP_REG(0x3C8) = 0x00000008;
     DISP_REG(0x3CC) = 0x00018000;
@@ -261,6 +267,8 @@ static void disp_init(void)
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;
     for (int i = 0x080; i <= 0x090; i += 4) DISP_REG(i) = 0;
     for (int i = 0x0C0; i <= 0x0D0; i += 4) DISP_REG(i) = 0;
+    /* Gamma Mode 1 (B14 DEFINITIVE: internal LCD = non-progressive, struct+2=0
+     * → FUN_000c9fe0(1). Mode 2 is TV-out only. Pairs with DISP+0x00C=6.) */
     DISP_REG(0x070) = 0x25d;
     DISP_REG(0x094) = 1;
     DISP_REG(0x098) = 7;
@@ -283,11 +291,12 @@ static void disp_init(void)
 
 static void disp_go(void)
 {
-    /* DISP_MODE: target 0x1202 (M3 raw-byte verified: bits 1+9+12)
+    /* DISP_MODE: target 0x1200 (B14: bits 9+12, NO bit 1 for internal LCD)
      * Apple sequence: FUN_00168180 does bic#0xF then orr#0x2
      *                 FUN_001682cc does and#0x3F (preserves bit 1) then orr#0x200, orr#0x1000 */
     DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear bits 0-3 (Apple: bic #0xF at ROM 0x168194) */
-    DISP_REG(0x008) |= 0x2;            /* bit 1: video path enable (Apple: orr #0x2 at ROM 0x1681c4) */
+    /* B14: bit 1 NOT set for internal LCD (non-progressive). Apple only sets it for TV-out.
+     * FUN_00168180 param_2=0: clears bits 0-3 but does NOT orr #0x2. DISP_MODE = 0x1200. */
     DISP_REG(0x008) &= ~0x30;          /* clear bits 4+5 (stale Rockbox state, Apple starts clean) */
     DISP_REG(0x008) &= 0x3F;           /* keep bits 0-5, clear 6+ (Apple: and #0x3F at ROM 0x1682e4) */
     { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }  /* fence (Apple does 2) */
@@ -372,7 +381,7 @@ static void compositor_init(void)
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
-    c[0x024/4] = 0x7D;          /* J2: ROM 0x14D904, data table 0x9F172C */
+    c[0x024/4] = 0x00FFFFFF;    /* M2: ROM 0x14D410 mvn r1,#0xFF000000 → vtable[4]→ROM 0x14D900 */
     c[0x000/4] = 1;             /* GO */
     c[0x3AC/4] = 0x04004003;    /* pipeline config */
 }
@@ -385,6 +394,10 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
 
     /* Wait for bus idle */
     while (LCD_REG(0x8C) & 3);
+
+    /* Defensive: ensure compositor has bus (B21e: POR=0, Rockbox never writes,
+     * but a previous plugin crash could leave LCD+0x80=1) */
+    LCD_REG(0x80) = 0;
 
     /* LCD controller config (ROM FUN_000ca178) */
     LCD_CON = 0x81100DB9;
@@ -412,40 +425,6 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     LCD_REG(0x70) = 1;          /* passthrough enable */
 }
 
-/* ---- LCD Push (v134 minimal working pattern) ---- */
-
-static void lcd_push_frame(int panel_type)
-{
-    /* Wait for bus idle (Apple ROM 0xbe7fc: no timeout) */
-    while (LCD_REG(0x8C) & 3);
-
-    /* Open gate: CPU takes bus (ROM 0xa5094) */
-    LCD_REG(0x80) = 1;
-
-    /* Fix 4: GRAM commands + LCD_CON mode transition inside bracket
-     * (F1: WR# restart, V2: panel gate, R02: Apple's exact sequence) */
-    lcd_set_con(0x80000DA9);  /* P18 for ILI9326 commands */
-    if (panel_type >= 2) {
-        lcd_cmd(0x210); lcd_data(0);
-        lcd_cmd(0x211); lcd_data(319);
-        lcd_cmd(0x212); lcd_data(0);
-        lcd_cmd(0x213); lcd_data(239);
-        lcd_cmd(0x200); lcd_data(0);
-        lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);  /* opens panel GRAM write gate */
-    }
-    /* v7 Fix 3: Raw P9 restore (W1+W2: Apple NEVER uses polled write with LCD+0x80=1.
-     * Poll kills compositor trigger by adding gap after GRAM cmd 0x202.) */
-    LCD_CON = 0x81100DB9;
-
-    /* v7 Fix 4: Close gate IMMEDIATELY — no delay (W3: Apple ROM 0xa50c4 has zero delay.
-     * Gate-open is ONLY for GRAM commands. Compositor pushes when gate CLOSED.) */
-    LCD_REG(0x80) = 0;
-
-    /* Wait for compositor to push frame (Apple ROM 0xbe7fc: no timeout) */
-    while (LCD_REG(0x8C) & 3);
-}
-
 /* ---- Main ---- */
 
 enum plugin_status plugin_start(const void *parameter)
@@ -461,12 +440,11 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v15 ===");
+    vlog("=== VPU-B → VPP Integration Test v16 ===");
     vlog("File: %s", test_path);
 
-    /* Detect panel type */
-    panel_type = (LCD_CON >> 4) & 3;
-    if (panel_type < 2) panel_type = LCD_CON & 1;
+    /* Detect panel type via GPIO strap pins (B6-1: matches lcd-6g.c:265) */
+    panel_type = (PDAT(6) & 0x30) >> 4;
     vlog("Panel type: %d", panel_type);
 
     /* ---- Phase 1: Allocate buffers ---- */
@@ -560,41 +538,33 @@ enum plugin_status plugin_start(const void *parameter)
 
     rb->splashf(HZ/2, "Decoded %dx%d", frame_w, frame_h);
 
-    /* ---- Phase 3: VPP pipeline init ---- */
+    /* ---- Phase 3: VPP pipeline init (B2-3: Apple Phase A→B order) ---- */
 
     vlog("Phase 3: VPP pipeline init");
     rb->backlight_on();
 
-    /* Enable VPP clocks */
-    vpp_svid_enable(true);
-    vpp_clocks_enable(true);
-    for (volatile int d = 0; d < 10000; d++);
-
-    /* Zero stale VPP state */
-    CLCD_REG(0x000) &= 2;
-    MIXER_REG(0x000) = 0;
-    DISP_REG(0x000) &= 2;
-    for (volatile int d = 0; d < 10000; d++);
-
-    /* Init VPP blocks */
     int out_w = 320, out_h = 240;
-    clcd_init(frame_w, frame_h, out_w, out_h);
-    mixer_init();
-    disp_init();
-    vlog("  VPP blocks initialized");
 
-    /* Init compositor */
+    /* === Phase A: Compositor + LCD passthrough (ROM FUN_0014deec) === */
+
+    /* Init compositor FIRST — downstream must be ready before VPP data flows.
+     * Apple's Phase A: compositor_init → comp+0x3AC → GRAM → LCD passthrough.
+     * compositor_init ungates its own clocks (PWRCON bits 7,13). */
     compositor_init();
 
-    /* Fix 1: Enable compositor Layer 5 (VPP input, YUV420 format)
+    /* Clear compositor layers 0-4 to prevent stale iBoot UI data (B6-5 medium).
+     * Apple calls vtable[0x3c](obj, i, 0) for i=0..5 in FUN_0014d240. */
+    for (int i = 0; i < 5; i++)
+        COMP_REG(0x05C + i * 0x18) = 0;
+
+    /* Layer 5 setup (VPP video input to compositor)
      * L2: FUN_0014cc90 at ROM 0x14cc90 writes comp+0x028 = 0x100 for layer 5.
      * Without this, compositor ignores VPP data and only shows BG_COLOR. */
     COMP_REG(0x028) = 0x100;                            /* layer 5 enable, YUV format 8 */
-    /* Fix 1: Layer 5 stride (N1+N2: ROM 0x14cebc, stale 0x01E001E0 from iBoot) */
     COMP_REG(0x02C) = frame_w | ((frame_w / 2) << 16); /* Y=320 | UV=160<<16 = 0x00A00140 */
     COMP_REG(0x030) = 0;                                /* source origin (0,0) */
-    COMP_REG(0x034) = ((uint32_t)frame_h << 16) | frame_w; /* source rect end */
-    COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
+    COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16);  /* source rect end: [15:0]=H, [31:16]=W (B5-2 verified) */
+    COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q4.12: [15:0]=H, [31:16]=V) */
     COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
     COMP_REG(0x054) = ((uint32_t)out_h << 16) | out_w;  /* dest size */
     /* DO NOT write comp+0x038-0x044 (kills DMA in bypass mode — v66 proved) */
@@ -605,22 +575,42 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
          (unsigned long)iboot_timing[4]);
 
-    /* Wait for compositor to settle */
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+    /* No settle delay needed — Apple uses ZERO delay after compositor GO (B25d).
+     * MMIO writes are strongly-ordered, compositor latches config synchronously. */
 
     /* Save LCD registers BEFORE modifying (for shutdown restore) */
     uint32_t saved_lcd_7c = LCD_REG(0x7C);
     uint32_t saved_lcd_88 = LCD_REG(0x88);
     uint32_t saved_lcd_20 = LCD_REG(0x20);
 
-    /* LCD passthrough */
+    /* LCD passthrough (Phase A final step) */
     lcd_passthrough_init(panel_type, &saved_lcd_con);
     vlog("  LCD passthrough initialized");
+
+    /* === Phase B: VPP blocks (ROM FUN_00168450) === */
+
+    /* Enable VPP clocks (Apple: inside vpp_enable_and_init FUN_00166d9c) */
+    vpp_svid_enable(true);
+    vpp_clocks_enable(true);
+    for (volatile int d = 0; d < 10000; d++);
+
+    /* Zero stale VPP state */
+    CLCD_REG(0x000) &= 2;
+    MIXER_REG(0x000) = 0;
+    DISP_REG(0x000) &= 2;
+    for (volatile int d = 0; d < 10000; d++);
+
+    /* Init VPP blocks (Apple: clcd_init + mixer_init inside vpp_enable_and_init,
+     * then disp_init via mixer_deinterlace) */
+    clcd_init(frame_w, frame_h, out_w, out_h);
+    mixer_init();
+    disp_init();
+    vlog("  VPP blocks initialized");
 
     /* Compositor GO already fired inside compositor_init() — no second fire needed.
      * WW2 verified: Apple fires comp[0]=1 exactly ONCE (ROM 0x14d420). */
 
-    /* DISP GO */
+    /* DISP GO (Phase B final step, ROM FUN_001682cc) */
     disp_go();
     vlog("  DISP GO fired");
 
@@ -647,15 +637,18 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w / 2;     /* chroma stride */
     CLCD_REG(0x3C0) = 1;               /* YUV planar mode */
 
-    /* MIXER+0x004 = 0x16: bits 1+2+4 for LCD progressive video.
-     * Bit 1: FUN_00168240 at ROM 0x168290 (ORR #2, always set)
-     * Bit 2: FUN_00168180 at ROM 0x1681D0 (ORR #4, progressive mode)
-     * Bit 4: FUN_00166D24 case 5 at ROM 0x166D6C (ORR #0x10, VIDEO layer enable)
-     *   - called via vtable[0x3c] (indirect, RAM function pointer)
-     *   - dispatch: case 0-3=bit3(overlay), case 4=bit5, case 5=bit4(VIDEO)
-     * Previous 0x0B had bit 3 (overlay, wrong layer) instead of bit 4 (video). */
-    MIXER_REG(0x004) = 0x16;
-    /* MIXER+0x008: Apple writes 0 (C1 verified). MIXER+0x010: Apple writes 0 (R2+C2). */
+    /* MIXER+0x004 = 0x13: bits 0+1+4 for LCD non-progressive video (B14 DEFINITIVE).
+     *   Bit 0: FUN_00167880 via vtable[0x20] (ROM 0x1678B0: ORR #1, CLCD input enable)
+     *   Bit 1: FUN_00168240 at ROM 0x168294 (ORR #2, layer control)
+     *   Bit 2: NOT SET for internal LCD (B14: FUN_00168180 param_2=0 → BIC only, no ORR)
+     *   Bit 4: FUN_00166D24 case 5 at ROM 0x166D6C (ORR #0x10, VIDEO layer)
+     * Progressive mode (bit 2) is TV-out only. Internal LCD always non-progressive. */
+    MIXER_REG(0x004) = 0x13;
+    /* MIXER+0x008: leave at 0 (B23a DEFINITIVE: 0x100FF was fabricated by merging
+     * two separate operations — bit 16 goes to +0x008, 0xFF goes to vtable[0x44]
+     * which writes a DIFFERENT register. The constant 0x100FF does NOT exist in ROM.
+     * MIXER+0x008 = 0 does NOT block video — it controls alpha blending, not data flow.
+     * Apple NEVER calls alpha enable during VPP startup.) */
 
     vlog("  Buffers set: Y=%08lx Cr=%08lx Cb=%08lx",
          (unsigned long)CLCD_REG(0x028),
@@ -696,7 +689,10 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("  Trigger fired");
 
-    /* Wait for pipeline to process */
+    /* Wait for pipeline to process (~15-20ms for 320x240, compositor auto-pushes
+     * via LCD+0x70=1 hardware passthrough — no LCD+0x80 push needed.
+     * TRACE-lcd-push DEFINITIVE: Apple NEVER uses LCD+0x80 for video.
+     * All 4 ROM writes are UI-only. Video uses continuous passthrough.) */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
     /* ---- Phase 5b: COMPREHENSIVE register dump ---- */
@@ -763,19 +759,13 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)LCD_REG(0x7C), (unsigned long)LCD_REG(0x80),
          (unsigned long)LCD_REG(0x88), (unsigned long)LCD_REG(0x8C));
 
-    /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
+    /* ---- Phase 6: Wait for auto-push (B1-4: no LCD+0x80 cycling for video) ---- */
+    /* Pipeline auto-pushes via LCD+0x70=1 passthrough. No CPU intervention needed.
+     * B1-4 verified: all 4 LCD+0x80 writes in ROM are UI-only (0xA5094, 0xA50C4,
+     * 0xBB4C4, 0xBB4F4). Apple NEVER does gate cycling for video frames.
+     * GRAM window set once in lcd_passthrough_init, persists across frames. */
 
-    vlog("Phase 6: Push loop (50 frames)");
-
-    for (int push = 0; push < 50; push++) {
-        uint32_t t0 = USEC_TIMER;
-        lcd_push_frame(panel_type);
-        uint32_t dt = USEC_TIMER - t0;
-        if (push < 5 || push == 49)
-            vlog("  Push %d: %lu us", push, (unsigned long)dt);
-    }
-
-    /* 3s observe */
+    vlog("Phase 6: Waiting for auto-push (no push loop)");
     vlog("  Observing 3s...");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
@@ -799,29 +789,61 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t px1 = LCD_DBUFF;
         vlog("  GRAM center(160,120)=%08lx corner(0,0)=%08lx",
              (unsigned long)px0, (unsigned long)px1);
-        LCD_CON = 0x81100DB9;
+        lcd_set_con(0x81100DB9);  /* B10-5: wait for bus idle before mode switch */
         LCD_REG(0x70) = 1;
     }
 
     /* Phase 7: removed (was Layer 5 diagnostic — interfered with shutdown) */
 
-    /* ---- Phase 8: Shutdown ---- */
+    /* ---- Phase 8: Shutdown (B2-2: ROM FUN_00166d9c sequence) ---- */
 
     vlog("Phase 8: Shutdown");
 
-    /* v10: LCD clockgate toggle to reset controller state machine (R3 fallback) */
-    while (LCD_REG(0x8C) & 3);
-    LCD_REG(0x88) = saved_lcd_88;
-    LCD_REG(0x20) = saved_lcd_20;
+    /* Step 1: VPP pipeline stop — DISP → MIXER → CLCD order (Q4, ROM 0x166df0)
+     * Each block: clear bit 0 (stop), poll bit 1 (idle), with 10x 10us timeout */
+    DISP_REG(0x280) = 1;               /* soft reset (ROM 0x166dec) */
+    DISP_REG(0x284) |= 1;              /* commit reset */
+    DISP_REG(0x03C) &= ~0xF;           /* clear trigger bits */
+    DISP_REG(0x000) &= ~1;             /* stop DISP */
+    for (int i = 0; i < 10; i++) {
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 10000); }  /* 10ms (B15e: Apple uses 10ms, not 10us) */
+        if (DISP_REG(0x000) & 2) break;
+    }
+    MIXER_REG(0x000) &= ~1;            /* stop MIXER */
+    for (int i = 0; i < 10; i++) {
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 10000); }  /* 10ms */
+        if (MIXER_REG(0x000) & 2) break;
+    }
+    CLCD_REG(0x000) &= ~1;             /* stop CLCD */
+    for (int i = 0; i < 10; i++) {
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 10000); }  /* 10ms */
+        if (CLCD_REG(0x000) & 2) break;
+    }
+    vlog("  VPP pipeline stopped");
+
+    /* Step 2: Gate VPP clocks (ROM 0x167e98) */
+    vpp_clocks_enable(false);
+    vpp_svid_enable(false);
+
+    /* Step 3: LCD restore — ORDER IS CRITICAL (B2-2):
+     * LCD+0x88 (RGB DMA) off BEFORE LCD+0x70 (passthrough) off.
+     * Disabling passthrough while RGB DMA is active leaves LCD in undefined state. */
+    LCD_REG(0x80) = 0;                 /* release bus if held */
+    while (LCD_REG(0x8C) & 3);         /* wait bus idle */
+    LCD_REG(0x88) = saved_lcd_88;      /* RGB DMA off FIRST */
+    LCD_REG(0x70) = 0;                 /* passthrough off SECOND */
     LCD_REG(0x7C) = saved_lcd_7c;
-    LCD_REG(0x70) = 0;
-    PWRCON(0) |= (1 << 1);          /* gate LCD clock */
-    for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) &= ~(1 << 1);         /* ungate LCD clock */
-    for (volatile int d = 0; d < 10000; d++);
-    LCD_PHTIME = 0x33;               /* re-init phase timing */
+    LCD_REG(0x74) = 0;
+    LCD_REG(0x78) = 0;
+    COMP_REG(0x000) = 0;               /* stop compositor */
+    PWRCON(0) |= 0x2080;               /* gate compositor clocks (bits 7+13) */
+
+    /* Step 4: LCD controller restore (B5-5: Apple does NOT toggle LCD clock gate) */
+    LCD_PHTIME = 0x33;
+    LCD_REG(0x20) = saved_lcd_20;
     LCD_CON = saved_lcd_con;
     while (LCD_REG(0x8C) & 3);
+    vlog("  LCD restored");
     rb->lcd_update();
 
     /* Close VPU-B */
