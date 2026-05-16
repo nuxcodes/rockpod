@@ -790,27 +790,54 @@ void main(void)
         rc = launch_onb(1); /* 27/2 = 13.5 MHz. */
     }
 
-    /* VPP diagnostic: capture compositor state BEFORE syscon_preinit */
+    /* VPP register snapshot: capture key state BEFORE system_preinit.
+     * Uses ONLY stack variables — no writes to DRAM/IRAM/MMIO.
+     * After warm-reset from RetailOS video playback, VPP clocks may
+     * still be enabled, giving us Apple's working configuration. */
 #ifdef IPOD_6G
-    volatile uint32_t *_comp = (volatile uint32_t *)0x38900000;
-    uint32_t comp_before_cfg  = 0xDEAD0001;
-    uint32_t comp_before_ctrl = 0xDEAD0002;
-    uint32_t comp_before_200  = 0xDEAD0003;
-    uint32_t pwrcon_before_sp = PWRCON(0);
-    if (!(pwrcon_before_sp & (1 << 7)) && !(pwrcon_before_sp & (1 << 13))) {
-        /* compositor AHB clocks are ON — safe to read */
-        comp_before_cfg  = _comp[0x008/4];
-        comp_before_ctrl = _comp[0x000/4];
-        comp_before_200  = _comp[0x200/4];
+#define VPP_SNAP_SIZE 48
+    uint32_t vpp_snap[VPP_SNAP_SIZE];
+    int vpp_n = 0;
+    uint32_t pwrcon0_before = PWRCON(0);
+    vpp_snap[vpp_n++] = 0x56505044;     /* "VPPD" magic */
+    vpp_snap[vpp_n++] = pwrcon0_before;
+    vpp_snap[vpp_n++] = PWRCON(1);
+    vpp_snap[vpp_n++] = *(volatile uint32_t *)(0x3C500008); /* CG16 */
+
+    int vpp_on = !(pwrcon0_before & 0x1C000);
+    vpp_snap[vpp_n++] = vpp_on;
+    if (vpp_on) {
+        volatile uint32_t *c = (volatile uint32_t *)0x39100000;
+        vpp_snap[vpp_n++] = c[0x000/4]; /* CLCD_CTRL */
+        vpp_snap[vpp_n++] = c[0x014/4]; /* VP_IMG_SIZE_Y */
+        vpp_snap[vpp_n++] = c[0x018/4]; /* VP_IMG_SIZE_C */
+        vpp_snap[vpp_n++] = c[0x028/4]; /* Y buf */
+        vpp_snap[vpp_n++] = c[0x02C/4]; /* Cb buf */
+        vpp_snap[vpp_n++] = c[0x030/4]; /* (NV12 CbCr) */
+        vpp_snap[vpp_n++] = c[0x034/4]; /* Y+stride */
+        vpp_snap[vpp_n++] = c[0x038/4]; /* Cb+stride */
+        vpp_snap[vpp_n++] = c[0x03C/4]; /* src_w */
+        vpp_snap[vpp_n++] = c[0x040/4]; /* src_h */
+        vpp_snap[vpp_n++] = c[0x044/4]; /* src_h_pos */
+        vpp_snap[vpp_n++] = c[0x3C0/4]; /* planar mode */
+        vpp_snap[vpp_n++] = c[0x3C4/4]; /* Y stride */
+        vpp_snap[vpp_n++] = c[0x3C8/4]; /* C stride */
+        vpp_snap[vpp_n++] = c[0x3CC/4]; /* endian */
+        c = (volatile uint32_t *)0x39200000;
+        vpp_snap[vpp_n++] = c[0x000/4]; /* MIXER_CTRL */
+        vpp_snap[vpp_n++] = c[0x004/4]; /* MIXER_CFG */
+        vpp_snap[vpp_n++] = c[0x00C/4]; /* MIXER format */
+        c = (volatile uint32_t *)0x39300000;
+        vpp_snap[vpp_n++] = c[0x000/4]; /* DISP_CTRL */
+        vpp_snap[vpp_n++] = c[0x008/4]; /* DISP_MODE */
     }
+    vpp_snap[vpp_n++] = 0xDEADDEAD;
 #endif
 
     system_preinit();
 
 #ifdef IPOD_6G
-    uint32_t comp_after_cfg  = _comp[0x008/4];
-    uint32_t comp_after_ctrl = _comp[0x000/4];
-    uint32_t pwrcon_after_sp = PWRCON(0);
+    uint32_t pwrcon0_after = PWRCON(0);
 #endif
 
     memory_init();
@@ -858,17 +885,12 @@ void main(void)
     lcd_setfont(FONT_SYSFIXED);
 
 #ifdef IPOD_6G
-    /* VPP diagnostic: show compositor state before/after syscon_preinit */
-    lcd_putsf(0, 10, "VPP COMPOSITOR DIAGNOSTIC");
-    lcd_putsf(0, 11, "CFG  B:%08lx A:%08lx", comp_before_cfg, comp_after_cfg);
-    lcd_putsf(0, 12, "CTRL B:%08lx A:%08lx", comp_before_ctrl, comp_after_ctrl);
-    lcd_putsf(0, 13, "PWR  B:%08lx A:%08lx", pwrcon_before_sp, pwrcon_after_sp);
-    lcd_putsf(0, 14, "+200 B:%08lx", comp_before_200);
-    lcd_putsf(0, 15, comp_before_cfg == 0x41118101 ? "iBoot CONFIGURED!" :
-              comp_before_cfg == 0x01110100 ? "iBoot NEVER configured" :
-              comp_before_cfg == 0xDEAD0001 ? "clocks GATED (cant read)" : "UNKNOWN");
+    /* VPP diagnostic */
+    lcd_putsf(0, 10, "PWR0 %08lx->%08lx VPP:%s",
+              (unsigned long)pwrcon0_before, (unsigned long)pwrcon0_after,
+              vpp_on ? "ON" : "off");
     lcd_update();
-    sleep(HZ * 5);
+    sleep(HZ);
 #endif
 
     // TODO: see if removing this causes the nano3g LCD to initialize properly
@@ -1009,6 +1031,18 @@ void main(void)
     }
 
     /* comp_timing.bin save removed */
+
+#ifdef IPOD_6G
+    /* Write VPP register snapshot to file (after disk_mount_all) */
+    if (vpp_snap[0] == 0x56505044) {
+        int fd = open("/vpp_dump.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
+        if (fd >= 0) {
+            write(fd, vpp_snap, vpp_n * 4);
+            close(fd);
+            printf("VPP dump: %d regs, clk=%s", vpp_n, vpp_on ? "ON" : "off");
+        }
+    }
+#endif
 
     printf("Loading Rockbox...");
     unsigned char *loadbuffer = (unsigned char *)DRAM_ORIG;

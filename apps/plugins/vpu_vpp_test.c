@@ -154,6 +154,15 @@ static void clcd_init(int src_w, int src_h, int out_w, int out_h)
     CLCD_REG(0x008) = 0;
     CLCD_REG(0x00C) = 0;
 
+    /* VP_IMG_SIZE: DMA buffer geometry. Apple never writes these because iBoot
+     * pre-sets them for the boot logo. Rockbox bootloader doesn't use VPP,
+     * so these contain STALE values (0x3F, 0xA00 = garbage).
+     * Samsung VP uses these for DMA address calculation:
+     *   HSIZE (bits 29:16) = stride in pixels
+     *   VSIZE (bits 13:0)  = height in lines */
+    CLCD_REG(0x014) = (src_w << 16) | src_h;          /* VP_IMG_SIZE_Y */
+    CLCD_REG(0x018) = ((src_w / 2) << 16) | (src_h / 2); /* VP_IMG_SIZE_C */
+
     /* Scale coefficients (init value, overwritten per-frame with buf addrs) */
     for (int i = 0x028; i <= 0x038; i += 4)
         CLCD_REG(i) = 0x8000000;
@@ -328,6 +337,14 @@ static void disp_go(void)
         DISP_REG(0x02C) = 0x7B9;
         DISP_REG(0x030) = 0x79A;
     }
+
+    /* DISP ENABLE — starts the display data pump (ROM 0x1683DC-0x1683E8).
+     * Without this, DISP never pulls from MIXER, MIXER never generates vsync,
+     * VP shadow registers never commit, DMA never starts.
+     * THIS WAS THE ROOT CAUSE — missing since v8. */
+    DISP_REG(0x000) = 0;                   /* clear */
+    { uint32_t tmp = DISP_REG(0x000); }    /* readback (HW sync) */
+    DISP_REG(0x000) = DISP_REG(0x000) | 1; /* ENABLE */
 
     /* FF2: DISP+0x284 = 0 immediately before GO */
     DISP_REG(0x284) = 0;
@@ -581,7 +598,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->splashf(HZ/2, "Decoded %dx%d", frame_w, frame_h);
 
     /* ---- Phase 2b: Test pattern — prove CLCD DMA reads buffer ---- */
-    vlog("Phase 2b: Y gradient test pattern");
+    vlog("Phase 2b: Y=0xFF solid white test pattern");
     {
         uint8_t *y_buf = (uint8_t *)y_out;
         uint8_t *cb_buf = (uint8_t *)cb_out;
@@ -590,7 +607,7 @@ enum plugin_status plugin_start(const void *parameter)
         int row, col;
         for (row = 0; row < frame_h; row++)
             for (col = 0; col < frame_w; col++)
-                y_buf[row * frame_w + col] = (uint8_t)(col & 0xFF);
+                y_buf[row * frame_w + col] = 0xFF; /* solid white */
         rb->memset(cb_buf, 128, chroma_sz);
         rb->memset(cr_buf, 128, chroma_sz);
         rb->commit_discard_dcache();
@@ -641,6 +658,36 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_svid_enable(true);
     vpp_clocks_enable(true);
     for (volatile int d = 0; d < 10000; d++);
+
+    /* Pre-init register dump: see what iBoot/HW defaults are BEFORE we touch anything.
+     * Clocks just ungated — registers retain state from last power cycle. */
+    vlog("Phase 3a: Pre-init CLCD dump (iBoot defaults)");
+    {
+        volatile uint32_t *c = (volatile uint32_t *)0x39100000;
+        vlog("  000=%08lx 004=%08lx 008=%08lx 00C=%08lx 010=%08lx",
+             (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2],
+             (unsigned long)c[3], (unsigned long)c[4]);
+        vlog("  014=%08lx 018=%08lx 01C=%08lx 020=%08lx 024=%08lx",
+             (unsigned long)c[5], (unsigned long)c[6], (unsigned long)c[7],
+             (unsigned long)c[8], (unsigned long)c[9]);
+        vlog("  028=%08lx 02C=%08lx 030=%08lx 034=%08lx 038=%08lx",
+             (unsigned long)c[0x28/4], (unsigned long)c[0x2C/4], (unsigned long)c[0x30/4],
+             (unsigned long)c[0x34/4], (unsigned long)c[0x38/4]);
+        vlog("  03C=%08lx 040=%08lx 044=%08lx 048=%08lx 04C=%08lx",
+             (unsigned long)c[0x3C/4], (unsigned long)c[0x40/4], (unsigned long)c[0x44/4],
+             (unsigned long)c[0x48/4], (unsigned long)c[0x4C/4]);
+        vlog("  050=%08lx 054=%08lx 058=%08lx 05C=%08lx 060=%08lx",
+             (unsigned long)c[0x50/4], (unsigned long)c[0x54/4], (unsigned long)c[0x58/4],
+             (unsigned long)c[0x5C/4], (unsigned long)c[0x60/4]);
+        vlog("  064=%08lx 068=%08lx 200=%08lx 3C0=%08lx 3C4=%08lx",
+             (unsigned long)c[0x64/4], (unsigned long)c[0x68/4], (unsigned long)c[0x200/4],
+             (unsigned long)c[0x3C0/4], (unsigned long)c[0x3C4/4]);
+        vlog("  3C8=%08lx 3CC=%08lx", (unsigned long)c[0x3C8/4], (unsigned long)c[0x3CC/4]);
+        /* MIXER pre-init */
+        c = (volatile uint32_t *)0x39200000;
+        vlog("  MXR: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
+             (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2], (unsigned long)c[3]);
+    }
 
     /* Zero stale VPP state */
     CLCD_REG(0x000) &= 2;
@@ -722,10 +769,12 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x3C8) = frame_w;                      /* chroma stride FULL (v30 had /2) */
     CLCD_REG(0x3C0) = 0;                            /* I420 planar mode (v30 had 1 = NV12!) */
 
+    /* CLCD+0x008 = 0 (VP_SHADOW_UPDATE cleared, matches Apple init) */
+
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
      * DISCARDS all video data. 0x0B = bits 0+1+3. */
-    MIXER_REG(0x004) = 0x17;   /* DC-1+DC-2: bits 0+1+2+4. Bit 4 = video layer 5. */
+    MIXER_REG(0x004) = 0x1F;   /* bits 0+1+2+3+4. Bit 3 = Samsung VP enable, bit 4 = video layer 5 */
     MIXER_REG(0x008) = 0x100FF; /* DEEP-1: alpha=0 makes layer invisible. 0x100FF = opaque. */
 
     vlog("  Buffers set: Y=%08lx Cb=%08lx",
@@ -754,6 +803,20 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x03C), (unsigned long)CLCD_REG(0x040),
          (unsigned long)CLCD_REG(0x048), (unsigned long)CLCD_REG(0x000));
 
+    /* Per-frame dimension update (Apple FUN_001669c8 case 5 writes these) */
+    CLCD_REG(0x044) = frame_w << 4;    /* src_width << 4 (fractional, was 0!) */
+    CLCD_REG(0x048) = frame_h;         /* src_height */
+
+    /* Full CLCD register dump for comparison with Apple's ROM */
+    vlog("Phase 4b: CLCD register dump");
+    for (int off = 0; off <= 0x068; off += 4) {
+        vlog("  CLCD+0x%03x=%08lx", off, (unsigned long)CLCD_REG(off));
+    }
+    vlog("  CLCD+0x200=%08lx +0x3C0=%08lx +0x3C4=%08lx +0x3C8=%08lx +0x3CC=%08lx",
+         (unsigned long)CLCD_REG(0x200), (unsigned long)CLCD_REG(0x3C0),
+         (unsigned long)CLCD_REG(0x3C4), (unsigned long)CLCD_REG(0x3C8),
+         (unsigned long)CLCD_REG(0x3CC));
+
     /* ---- Phase 5: Trigger pipeline ---- */
 
     vlog("Phase 5: Pipeline trigger");
@@ -762,17 +825,49 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x040) = frame_h;
 
     /* FF2 VERIFIED: 3 separate RMW ops for DISP trigger */
-    CLCD_REG(0x000) |= 1;              /* CLCD enable */
+    CLCD_REG(0x000) |= 1;              /* CLCD enable (shadow) */
     MIXER_REG(0x000) = 7;              /* MIXER GO */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }  /* latch config */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }  /* latch buffer */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }  /* latch output */
 
+    /* Note: MIXER+0x008 bit 16 (video layer alpha) already set in Phase 4.
+     * CLCD+0x008 (VP_SHADOW_UPDATE) = 0 per Apple ROM — no shadow commit needed. */
+
     vlog("  Trigger fired");
     vlog("  CLCD_CTRL: %08lx", (unsigned long)CLCD_REG(0x000));
-    vlog("  MIXER_CTRL: %08lx", (unsigned long)MIXER_REG(0x000));
-    vlog("  MIXER_00C: %08lx", (unsigned long)MIXER_REG(0x00C));
-    vlog("  DISP_CTRL: %08lx", (unsigned long)DISP_REG(0x000));
+    vlog("  MIXER: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
+         (unsigned long)MIXER_REG(0x000), (unsigned long)MIXER_REG(0x004),
+         (unsigned long)MIXER_REG(0x008), (unsigned long)MIXER_REG(0x00C));
+    vlog("  DISP: 000=%08lx 008=%08lx 00C=%08lx 03C=%08lx",
+         (unsigned long)DISP_REG(0x000), (unsigned long)DISP_REG(0x008),
+         (unsigned long)DISP_REG(0x00C), (unsigned long)DISP_REG(0x03C));
+
+    /* Vsync diagnostic: poll MIXER status for 100ms to see if vsync events occur */
+    {
+        uint32_t m0 = MIXER_REG(0x000);
+        uint32_t m10 = MIXER_REG(0x010);  /* possible interrupt status */
+        uint32_t d0 = DISP_REG(0x000);
+        uint32_t d3c = DISP_REG(0x03C);
+        uint32_t t0 = USEC_TIMER;
+        /* Poll for 50ms — check if any status bits change */
+        uint32_t m0_changed = 0, m10_changed = 0;
+        while ((USEC_TIMER - t0) < 50000) {
+            m0_changed |= MIXER_REG(0x000) ^ m0;
+            m10_changed |= MIXER_REG(0x010) ^ m10;
+        }
+        vlog("  VSYNC diag: MXR_000 changed=%08lx MXR_010 changed=%08lx",
+             (unsigned long)m0_changed, (unsigned long)m10_changed);
+        /* Also read DISP status registers */
+        vlog("  DISP: 010=%08lx 014=%08lx 038=%08lx 280=%08lx 284=%08lx",
+             (unsigned long)DISP_REG(0x010), (unsigned long)DISP_REG(0x014),
+             (unsigned long)DISP_REG(0x038), (unsigned long)DISP_REG(0x280),
+             (unsigned long)DISP_REG(0x284));
+        /* MIXER extended status */
+        vlog("  MXR: 010=%08lx 014=%08lx 018=%08lx 01C=%08lx",
+             (unsigned long)MIXER_REG(0x010), (unsigned long)MIXER_REG(0x014),
+             (unsigned long)MIXER_REG(0x018), (unsigned long)MIXER_REG(0x01C));
+    }
 
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
@@ -788,9 +883,67 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("  Push %d: %lu us", push, (unsigned long)dt);
     }
 
-    /* 3s observe */
-    vlog("  Observing 3s...");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    /* DIRECT LCD WRITE TEST — bypass EVERYTHING (VPP, compositor, passthrough).
+     * Write pixels directly to panel GRAM via MCU interface.
+     * If this shows color → LCD works, issue is VPP pipeline.
+     * If still blue → LCD path itself is broken. */
+    vlog("  Direct LCD write test (5s)");
+    LCD_REG(0x70) = 0;               /* disable passthrough */
+    LCD_REG(0x88) = 0;               /* disable RGB DMA */
+    for (volatile int d = 0; d < 10000; d++);
+
+    while (LCD_REG(0x8C) & 3);
+    LCD_REG(0x80) = 1;               /* CPU takes bus */
+    LCD_CON = 0x80000DA9;            /* cmd mode */
+    if (panel_type >= 2) {
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        /* Write 320x240 = 76800 pixels of RED (RGB565: 0xF800) */
+        for (int p = 0; p < 76800; p++) {
+            lcd_data(0xF800);
+        }
+    }
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81100DB9;
+    LCD_REG(0x80) = 0;
+    vlog("  Wrote 76800 red pixels directly to GRAM");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* Re-enable passthrough for VPP test */
+    LCD_REG(0x70) = 1;
+
+    /* DMA ADDRESS TEST: point at Rockbox code (0x08000000) instead of our buffer.
+     * If output CHANGES from blue → DMA IS reading, just wrong color/format.
+     * If output STAYS blue → DMA truly doesn't read from ANY address. */
+    vlog("  DMA test: buf=0x08000000 (Rockbox code) for 5s");
+    CLCD_REG(0x028) = 0x08000000;
+    CLCD_REG(0x02C) = 0x08010000;
+    CLCD_REG(0x034) = 0x08000000 + frame_w;
+    CLCD_REG(0x038) = 0x08010000 + frame_w/2;
+    for (int vt = 0; vt < 3; vt++) {
+        lcd_push_frame(panel_type);
+    }
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* Now point at our actual white buffer */
+    vlog("  DMA test: buf=Y(white) for 5s");
+    CLCD_REG(0x028) = PHYS(y_out);
+    CLCD_REG(0x02C) = PHYS(cb_out);
+    CLCD_REG(0x034) = PHYS(y_out) + frame_w;
+    CLCD_REG(0x038) = PHYS(cb_out) + frame_w/2;
+    for (int vt = 0; vt < 3; vt++) {
+        lcd_push_frame(panel_type);
+    }
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* Push one more frame to get CURRENT compositor output into GRAM */
+    CLCD_REG(0x008) |= 0x10000;  /* shadow commit */
+    lcd_push_frame(panel_type);
 
     /* GRAM readback — 5-point X scan at Y=120 (test gradient) */
     vlog("Phase 6b: GRAM gradient scan (Y=120)");
