@@ -447,6 +447,7 @@ static int usb_as_source_intf_alt; /* source streaming interface alternate setti
 
 static int as_playback_freq_idx; /* audio playback streaming frequency index (in hw_freq_sampr) */
 static int as_source_freq_idx; /* audio source streaming frequency index (in hw_freq_sampr) */
+static bool source_freq_set_by_host;
 
 #if USB_NUM_ENDPOINTS <= 3
 /* Source-only: no sink endpoints on limited-EP targets (iPod 5G).
@@ -615,6 +616,8 @@ static const void *source_pull_buf;     /* current buffer from PCM mixer */
 static size_t source_pull_size;         /* total size of current buffer */
 static size_t source_pull_cursor;       /* bytes consumed from current buffer */
 static bool source_pull_mode = false;   /* true when USB ISR drives audio */
+
+static void set_source_sampling_frequency(unsigned long f);
 
 /* DMA inhibit flag defined in pcm-s5l8702.c — prevents I2S DMA restart
  * when the PCM engine internally calls pcm_play_dma_start() during
@@ -980,8 +983,9 @@ static void usb_audio_stop_playback(void)
 /*
  * Compute number of bytes to send in this USB frame.
  * Handles non-integer sample rates (e.g. 44100 Hz / 1000 = 44.1 samples/frame)
- * using a fractional accumulator. Uses the nominal frequency (what the DAC
- * expects via USB descriptor). The write-side throttle in source_buffer_hook()
+ * using a fractional accumulator. Uses the nominal frequency requested by
+ * the host, or the mixer frequency if the host has not requested one.
+ * The write-side throttle in source_buffer_hook()
  * handles the I2S vs USB clock drift.
  */
 static int source_frame_bytes(void)
@@ -1015,8 +1019,23 @@ static void set_source_sampling_frequency(unsigned long f)
             as_source_freq_idx = i;
     }
 
-    logf("usbaudio: set source sampling frequency to %lu Hz for a requested %lu Hz",
-        hw_freq_sampr[as_source_freq_idx], f);
+    source_frac_num = 0;
+
+    if (!source_streaming)
+        logf("usbaudio: set source sampling frequency to %lu Hz for a requested %lu Hz",
+            hw_freq_sampr[as_source_freq_idx], f);
+}
+
+static void usb_audio_sync_source_sampling_frequency(void)
+{
+    if (!source_freq_set_by_host)
+        set_source_sampling_frequency(mixer_get_frequency());
+}
+
+void usb_audio_set_source_sampling_frequency(unsigned long f)
+{
+    source_freq_set_by_host = false;
+    set_source_sampling_frequency(f);
 }
 
 /* Ring buffer hook for legacy (non-pull) source mode.
@@ -1132,6 +1151,8 @@ static void source_fill_buffer(unsigned char *buf, int frame_bytes)
 
 static void usb_audio_start_source(void)
 {
+    usb_audio_sync_source_sampling_frequency();
+
     logf("usbaudio: start source (pull) at %lu Hz ep=0x%02X", hw_freq_sampr[as_source_freq_idx], EP_ISO_SOURCE_IN);
 
     source_streaming = true;
@@ -1371,6 +1392,7 @@ static bool usb_audio_source_endpoint_request(struct usb_ctrlrequest* req, void 
             }
             if (reqdata) {
                 set_source_sampling_frequency(decode3(reqdata));
+                source_freq_set_by_host = true;
                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
                 return true;
             } else {
@@ -1720,11 +1742,13 @@ void usb_audio_init_connection(void)
 
     /* source mode init */
     usb_as_source_intf_alt = 0;
-    as_source_freq_idx = HW_FREQ_44; /* default to 44.1kHz */
+    as_source_freq_idx = HW_FREQ_DEFAULT;
+    source_freq_set_by_host = false;
     source_streaming = false;
     source_frac_num = 0;
     tx_write_pos = 0;
     tx_read_pos = 0;
+    usb_audio_sync_source_sampling_frequency();
 }
 
 void usb_audio_disconnect(void)
