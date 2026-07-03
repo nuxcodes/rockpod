@@ -468,6 +468,22 @@ static int pictureflow_scrn(void* param)
             return GO_TO_PREVIOUS;
     }
 }
+
+/* param is (void*)(intptr_t) mode: 1=Albums 2=Artists 3=Genres 4=Years */
+static int artbrowser_scrn(void* param)
+{
+    int ret = filetype_load_plugin("artbrowser", param);
+    switch (ret)
+    {
+        case PLUGIN_GOTO_WPS:
+            return GO_TO_WPS;
+        case PLUGIN_USB_CONNECTED:
+        case PLUGIN_ERROR:
+            return GO_TO_ROOT;
+        default:
+            return GO_TO_PREVIOUS;
+    }
+}
 #endif
 
 /* These are all static const'd from apps/menus/ *.c
@@ -509,6 +525,10 @@ static const struct root_items items[] = {
     [GO_TO_SHORTCUTMENU] = { do_shortcut_menu, NULL, NULL },
 #ifdef HAVE_TAGCACHE
     [GO_TO_PICTUREFLOW] = { pictureflow_scrn, NULL, NULL },
+    [GO_TO_ALBUMS]  = { artbrowser_scrn, (void *)(intptr_t)1, NULL },
+    [GO_TO_ARTISTS] = { artbrowser_scrn, (void *)(intptr_t)2, NULL },
+    [GO_TO_GENRES]  = { artbrowser_scrn, (void *)(intptr_t)3, NULL },
+    [GO_TO_YEARS]   = { artbrowser_scrn, (void *)(intptr_t)4, NULL },
 #endif
 
 };
@@ -528,6 +548,14 @@ MENUITEM_RETURNVALUE(db_browser, ID2P(LANG_TAGCACHE), GO_TO_DBBROWSER,
                         NULL, Icon_Audio);
 MENUITEM_RETURNVALUE(pictureflow_item, "Cover Flow", GO_TO_PICTUREFLOW,
                         NULL, Icon_Rockbox);
+MENUITEM_RETURNVALUE(albums_item,  ID2P(LANG_ALBUMS),  GO_TO_ALBUMS,
+                        NULL, Icon_Audio);
+MENUITEM_RETURNVALUE(artists_item, ID2P(LANG_ARTISTS), GO_TO_ARTISTS,
+                        NULL, Icon_Audio);
+MENUITEM_RETURNVALUE(genres_item,  ID2P(LANG_GENRES),  GO_TO_GENRES,
+                        NULL, Icon_Audio);
+MENUITEM_RETURNVALUE(years_item,   ID2P(LANG_YEARS),   GO_TO_YEARS,
+                        NULL, Icon_Audio);
 #endif
 MENUITEM_RETURNVALUE(rocks_browser, ID2P(LANG_PLUGINS), GO_TO_BROWSEPLUGINS,
                         NULL, Icon_Plugin);
@@ -566,8 +594,12 @@ static struct menu_callback_with_desc root_menu_desc = {
 
 static struct menu_table menu_table[] = {
 #ifdef HAVE_TAGCACHE
+    { "albums",      &albums_item },
+    { "artists",     &artists_item },
+    { "genres",      &genres_item },
+    { "years",       &years_item },
     { "pictureflow", &pictureflow_item },
-    { "database", &db_browser },
+    { "database",    &db_browser },
 #endif
     { "files", &file_browser },
     { "wps", &wps_item },

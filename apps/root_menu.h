@@ -67,6 +67,10 @@ enum {
     GO_TO_SHORTCUTMENU,
 #ifdef HAVE_TAGCACHE
     GO_TO_PICTUREFLOW,
+    GO_TO_ALBUMS,
+    GO_TO_ARTISTS,
+    GO_TO_GENRES,
+    GO_TO_YEARS,
 #endif
 };
 #ifndef PLUGIN

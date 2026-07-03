@@ -144,6 +144,7 @@ recorder/albumart.c
 gui/color_picker.c
 #ifdef HAVE_ALBUMART
 gui/skin_engine/skin_albumart_color.c
+gui/skin_engine/skin_albumart_backdrop.c
 #endif
 #endif
 

@@ -16528,6 +16528,34 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_GENRES
+  desc: Art browser main menu entry
+  user: core
+  <source>
+    *: "Genres"
+  </source>
+  <dest>
+    *: "Genres"
+  </dest>
+  <voice>
+    *: "Genres"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_YEARS
+  desc: Art browser main menu entry
+  user: core
+  <source>
+    *: "Years"
+  </source>
+  <dest>
+    *: "Years"
+  </dest>
+  <voice>
+    *: "Years"
+  </voice>
+</phrase>
+<phrase>
   id: LANG_TRACKS
   desc: Database menu
   user: core
@@ -17137,5 +17165,22 @@
   <voice>
     *: none
     lcd_color: "Dynamic Colors"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUR_BACKDROP
+  desc: in display settings
+  user: core
+  <source>
+    *: none
+    lcd_color: "Blurred Backdrop"
+  </source>
+  <dest>
+    *: none
+    lcd_color: "Blurred Backdrop"
+  </dest>
+  <voice>
+    *: none
+    lcd_color: "Blurred Backdrop"
   </voice>
 </phrase>

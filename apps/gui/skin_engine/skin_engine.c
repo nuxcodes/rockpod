@@ -40,6 +40,7 @@
 #include "statusbar-skinned.h"
 #include "wps_internals.h"
 #include "skin_albumart_color.h"
+#include "skin_albumart_backdrop.h"
 
 #define FAILSAFENAME "rockbox_failsafe"
 
@@ -153,6 +154,7 @@ void gui_sync_skin_init(void)
         }
     }
     dynamic_colors_init();
+    aa_backdrop_init();
 }
 
 void skin_unload_all(void)

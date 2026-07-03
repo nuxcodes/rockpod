@@ -52,6 +52,7 @@
 #include "wps.h"
 #include "strmemccpy.h"
 #include "skin_albumart_color.h"
+#include "skin_albumart_backdrop.h"
 
 #define MAX_LINE 1024
 
@@ -937,10 +938,11 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
         if (!skin_viewport) continue;
 
 #if defined(HAVE_ALBUMART) && defined(HAVE_LCD_COLOR)
-        /* Check for pending color extraction once per render pass */
+        /* Check for pending color/backdrop extraction once per render pass */
         if (!dc_extraction_done)
         {
             dynamic_colors_check_extraction(data->playback_aa_slot);
+            aa_backdrop_check_extraction(data->playback_aa_slot);
             dc_extraction_done = true;
         }
 #endif
@@ -1003,6 +1005,7 @@ void skin_render(struct gui_wps *gwps, unsigned refresh_mode)
 #if (LCD_DEPTH > 1) || (defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1))
     skin_backdrop_set_buffer(-1, skin_viewport);
     skin_backdrop_show(data->backdrop_id);
+    aa_backdrop_apply_if_active();
 #endif
 
     if (((refresh_mode&SKIN_REFRESH_ALL) == SKIN_REFRESH_ALL))

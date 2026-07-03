@@ -30,6 +30,7 @@ rockboy
 #endif
 
 #if defined(HAVE_TAGCACHE)
+artbrowser
 pictureflow
 tagcache
 #endif

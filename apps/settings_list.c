@@ -2191,6 +2191,8 @@ const struct settings_list settings[] = {
 #ifdef HAVE_ALBUMART
     OFFON_SETTING(0, dynamic_colors, LANG_DYNAMIC_COLORS, true,
                   "dynamic colors", NULL),
+    OFFON_SETTING(0, art_blur_backdrop, LANG_BLUR_BACKDROP, false,
+                  "art blur backdrop", NULL),
 #endif
 #endif
 #ifdef HAVE_BUTTON_LIGHT
