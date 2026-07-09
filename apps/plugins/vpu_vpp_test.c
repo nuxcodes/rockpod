@@ -7,6 +7,11 @@
  *
  * All register values are ROM-verified (500+ RE agents, 2026-03-24).
  * v31: I420 format fix + bandwidth enable + comp mask (2026-03-30).
+ * v32: REVERT v31 format regression — restore ROM-exact format 8 (3-plane planar):
+ *      VP+0x30=Cr restored, VP+0x3C0=1, chroma stride=luma/2. Raw-ROM verified
+ *      (dispatch 0x167690; compositor comp+0x28=(fmt==8)?0x100:0 at 0x14ce5c).
+ *      + read-only clock/domain dump (0x3C700000 x8, CG16, PWRCON, VP) to diagnose
+ *      whether VP DMA is clock-gated. (2026-07-08)
  *
  * Usage: open a .264 (Annex B) file from the file browser.
  ****************************************************************************/
@@ -47,7 +52,7 @@
 /* ---- Logging (RAM-buffered for VPP phase when disk I/O is unsafe) ---- */
 
 static int log_fd = -1;
-#define RLOG_SIZE 4096
+#define RLOG_SIZE 8192   /* v32: enlarged — 3 clock/domain dumps add ~2KB of RAM-mode log */
 static char rlog_buf[RLOG_SIZE];
 static int rlog_pos = 0;
 static bool rlog_mode = false;  /* true = buffer to RAM, false = write to file */
@@ -79,6 +84,39 @@ static void rlog_flush(void)
         rlog_pos = 0;
     }
 }
+
+/* ---- v32 diagnostic: dump clock/power + VP DMA-relevant state ----
+ * Read-only. Captures the data needed to prove/disprove whether the VP DMA is
+ * clock-gated. Covers:
+ *  - 0x3C700000 per-domain clock controller (8 domains x 0x20) — UNMODELED by Rockbox,
+ *    programmed by Apple's SRAM clock manager. Each domain: +0x00 ctrl, +0x04 status,
+ *    +0x08 divisor, +0x10 count (driver FUN_0036e130). Enable command writes 0x40 to +0x00.
+ *  - CLK block: 0x3C500008 (CG16_2L|SVID), PWRCON(0)=0x3C500048, 0x3CF00200 (VP route)
+ *  - VP DMA plane/format regs + CTRL. */
+static void dump_clock_vp_state(const char *tag)
+{
+    vlog("== CLKDUMP [%s] ==", tag);
+    vlog("  CG16(3C500008)=%08lx PWRCON0(3C500048)=%08lx VProute(3CF00200)=%08lx",
+         (unsigned long)(*(volatile uint32_t *)0x3C500008),
+         (unsigned long)(*(volatile uint32_t *)0x3C500048),
+         (unsigned long)(*(volatile uint32_t *)0x3CF00200));
+    for (int d = 0; d < 8; d++) {
+        volatile uint32_t *dom = (volatile uint32_t *)(0x3C700000 + d * 0x20);
+        vlog("  DOM%d(%08lx): +00=%08lx +04=%08lx +08=%08lx +10=%08lx", d,
+             (unsigned long)(0x3C700000 + d * 0x20),
+             (unsigned long)dom[0], (unsigned long)dom[1],
+             (unsigned long)dom[2], (unsigned long)dom[4]);
+    }
+    vlog("  VP: 000=%08lx 028=%08lx 02C=%08lx 030=%08lx 034=%08lx",
+         (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x028),
+         (unsigned long)CLCD_REG(0x02C), (unsigned long)CLCD_REG(0x030),
+         (unsigned long)CLCD_REG(0x034));
+    vlog("  VP: 3C0=%08lx 3C4=%08lx 3C8=%08lx 3CC=%08lx 200=%08lx",
+         (unsigned long)CLCD_REG(0x3C0), (unsigned long)CLCD_REG(0x3C4),
+         (unsigned long)CLCD_REG(0x3C8), (unsigned long)CLCD_REG(0x3CC),
+         (unsigned long)CLCD_REG(0x200));
+}
+
 
 /* ---- LCD command helpers ---- */
 
@@ -499,7 +537,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v30 ===");
+    vlog("=== VPU-B → VPP Integration Test v32 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -643,15 +681,15 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Phase 3: VPP pipeline init");
     rb->backlight_on();
 
-    /* Fix 4: iBoot bandwidth enable — Apple calls thunk_EXT_FUN_220043e8(1, 0x40)
-     * as step 1 of VPP init. The SRAM function sets bit 6 in a power management
-     * struct processed by a bytecode VM. Best guess: PWRCON(0) bit 6 (Clk_UNK).
-     * Rockbox system_init gates this bit, we never ungate it. */
+    /* NOTE (v32 RE): the old "Fix 4" below clears PWRCON(0) bit 6 based on a MIS-DECODE of
+     * SRAM 0x220043e8(1,0x40) — that fn actually sets bit 0x40 in an SRAM software-vote word
+     * at 0x2200f8c0, NOT a PWRCON bit. Kept UNCHANGED this build to isolate the format fix;
+     * flagged for removal once the dumps confirm it's inert. */
     PWRCON(0) &= ~(1 << 6);
     vlog("  PWRCON(0) bit 6 ungated: %08lx", (unsigned long)PWRCON(0));
 
-    /* Fix 3: GPIOCMD IRQ 57 routing — Apple step 5: FUN_0036d3f0(0x39, 1, 1)
-     * writes 0x0007010F to GPIOCMD for VPP completion interrupt. */
+    /* Apple step (d): VP device clock routing — FUN_0036d3f0(0x39,1,1) writes
+     * 0x0007010F to 0x3CF00200 (verified: (0x39>>3)<<16|(0x39&7)<<8|0xf). */
     *(volatile uint32_t *)0x3CF00200 = 0x0007010F;
 
     /* Enable VPP clocks (steps 2-4 of Apple's sequence) */
@@ -688,6 +726,9 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("  MXR: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
              (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2], (unsigned long)c[3]);
     }
+
+    /* v32: clock/power domain state right after our clock pokes (Apple SRAM path not run) */
+    dump_clock_vp_state("post-clock-enable");
 
     /* Zero stale VPP state */
     CLCD_REG(0x000) &= 2;
@@ -757,17 +798,22 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Phase 4: Feed frame to CLCD");
 
-    /* Fix 1: I420 buffer layout (Apple format 9 path, ROM 0x1676FC-0x16773C)
-     * Triple-verified from raw bytes: 2 agents + manual decode. Zero gaps.
-     * v30 was in NV12 mode (format 8, 0x3C0=1). VPU-B outputs I420 (format 9). */
-    CLCD_REG(0x028) = PHYS(y_out);                  /* Y plane addr */
-    CLCD_REG(0x02C) = PHYS(cb_out);                 /* Cb plane addr (v30 had Cr — SWAPPED) */
-    /* Fix 5: DO NOT write 0x030 — not used in I420 mode (NV12's CbCr pointer) */
-    CLCD_REG(0x034) = PHYS(y_out) + frame_w;        /* Y + luma_stride (v30 had 0) */
-    CLCD_REG(0x038) = PHYS(cb_out) + (frame_w / 2); /* Cb + chroma_stride (v30 MISSING) */
-    CLCD_REG(0x3C4) = frame_w;                      /* luma stride (unchanged) */
-    CLCD_REG(0x3C8) = frame_w;                      /* chroma stride FULL (v30 had /2) */
-    CLCD_REG(0x3C0) = 0;                            /* I420 planar mode (v30 had 1 = NV12!) */
+    /* v32: FORMAT 8 = 3-plane planar YUV420 (Apple's H.264 video format).
+     * ROM-verified (raw capstone decode of per-frame dispatch at 0x167690):
+     *   format 8 handler (0x1676bc): VP+0x28=Y, VP+0x2C=Cb, VP+0x30=Cr, VP+0x34=0,
+     *                                VP+0x3C4=luma_stride, VP+0x3C8=luma_stride/2, VP+0x3C0=1
+     *   format 9 handler (0x1676fc): 2-plane NV12, VP+0x3C0=0 (NOT what VPU-B outputs)
+     * Cross-confirmed: compositor sets comp+0x28=(fmt==8)?0x100:0 (ROM 0x14ce5c-0x14ce64),
+     * i.e. Apple only enables the video layer for format 8. The type-8 H.264 codec reports
+     * format 8 (ROM 0x1c052c: mov r6,#8; strb r6,[r8]).
+     * v31 "I420 fix" was BACKWARDS (dropped VP+0x30, set 0x3C0=0, chroma stride full). */
+    CLCD_REG(0x028) = PHYS(y_out);      /* Y  plane (struct[0]) */
+    CLCD_REG(0x02C) = PHYS(cb_out);     /* Cb plane (struct[2] -> VP+0x2C) */
+    CLCD_REG(0x030) = PHYS(cr_out);     /* Cr plane (struct[1] -> VP+0x30)  RESTORED */
+    CLCD_REG(0x034) = 0;                /* 0 for 4:2:0 (ROM: str lr(=0),[r1,#0x34]) */
+    CLCD_REG(0x3C4) = frame_w;          /* luma stride = width (ctx+0x19c) */
+    CLCD_REG(0x3C8) = frame_w / 2;      /* chroma stride = luma/2 (ROM: asr #1) */
+    CLCD_REG(0x3C0) = 1;                /* 1 = planar 4:2:0 (ROM: mov r0,#1; str [r1,#0x3c0]) */
 
     /* CLCD+0x008 = 0 (VP_SHADOW_UPDATE cleared, matches Apple init) */
 
@@ -824,6 +870,8 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x03C) = frame_w;
     CLCD_REG(0x040) = frame_h;
 
+    dump_clock_vp_state("pre-trigger");
+
     /* FF2 VERIFIED: 3 separate RMW ops for DISP trigger */
     CLCD_REG(0x000) |= 1;              /* CLCD enable (shadow) */
     MIXER_REG(0x000) = 7;              /* MIXER GO */
@@ -872,6 +920,8 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
+    dump_clock_vp_state("post-trigger");
+
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
     vlog("Phase 6: Push loop (10 frames)");
@@ -919,23 +969,24 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* DMA ADDRESS TEST: point at Rockbox code (0x08000000) instead of our buffer.
      * If output CHANGES from blue → DMA IS reading, just wrong color/format.
-     * If output STAYS blue → DMA truly doesn't read from ANY address. */
+     * If output STAYS blue → DMA truly doesn't read from ANY address.
+     * v32: format-8 3-plane layout (0x28/0x2C/0x30), matching Phase 4. */
     vlog("  DMA test: buf=0x08000000 (Rockbox code) for 5s");
     CLCD_REG(0x028) = 0x08000000;
     CLCD_REG(0x02C) = 0x08010000;
-    CLCD_REG(0x034) = 0x08000000 + frame_w;
-    CLCD_REG(0x038) = 0x08010000 + frame_w/2;
+    CLCD_REG(0x030) = 0x08018000;
+    CLCD_REG(0x034) = 0;
     for (int vt = 0; vt < 3; vt++) {
         lcd_push_frame(panel_type);
     }
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
-    /* Now point at our actual white buffer */
+    /* Now point at our actual white buffer (format-8 3-plane) */
     vlog("  DMA test: buf=Y(white) for 5s");
     CLCD_REG(0x028) = PHYS(y_out);
     CLCD_REG(0x02C) = PHYS(cb_out);
-    CLCD_REG(0x034) = PHYS(y_out) + frame_w;
-    CLCD_REG(0x038) = PHYS(cb_out) + frame_w/2;
+    CLCD_REG(0x030) = PHYS(cr_out);
+    CLCD_REG(0x034) = 0;
     for (int vt = 0; vt < 3; vt++) {
         lcd_push_frame(panel_type);
     }
