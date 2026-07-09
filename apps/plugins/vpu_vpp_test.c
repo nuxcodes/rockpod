@@ -436,7 +436,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     LCD_REG(0x80) = 0;
     LCD_REG(0x84) = 0;
     LCD_REG(0x88) = 0;
-    LCD_REG(0x8C) = 0;  /* note: read-only status, write may be ignored */
+    /* skip 0x8C — read-only status register (LCD_STATUS) */
     LCD_REG(0x90) = 0;
     for (int i = 0xC0; i <= 0xD0; i += 4) LCD_REG(i) = 0;
 
