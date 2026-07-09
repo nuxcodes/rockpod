@@ -805,6 +805,9 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x200) |= 0x80;
     for (volatile int d = 0; d < 10000; d++);
     vlog("  Compositor GO + i80 re-strobe fired");
+    vlog("  comp: 000=%08lx 010=%08lx 200=%08lx 70=%08lx",
+         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
+         (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x70));
 
     /* Diagnostics: verify register state after init */
     vlog("  DISP_MODE=%08lx MIXER_004=%08lx",
