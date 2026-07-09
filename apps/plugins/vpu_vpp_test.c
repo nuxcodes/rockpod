@@ -1004,7 +1004,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Phase 5c: GRAM window + release — set panel to receive, then let
      * compositor push via passthrough. Single setup, no per-frame toggle. */
-    vlog("Phase 5c: GRAM setup + release (3s)");
+    vlog("Phase 5c: GRAM setup + release + strobe (3s)");
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
@@ -1020,6 +1020,8 @@ enum plugin_status plugin_start(const void *parameter)
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
     LCD_REG(0x80) = 0;  /* release bus to compositor */
+    /* NOW trigger compositor i80 push — panel is ready, bus is released */
+    COMP_REG(0x200) |= 0x80;
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
     vlog("  After 3s: LCD_8C=%08lx comp+0x200=%08lx",
          (unsigned long)LCD_REG(0x8C), (unsigned long)COMP_REG(0x200));
@@ -1030,12 +1032,9 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* Fire compositor i80 strobe before each push (auto-clears) */
-        { uint32_t c200 = COMP_REG(0x200); COMP_REG(0x200) = c200 | 0x10080; }
-        COMP_REG(0x000) = 1;  /* compositor GO */
-        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
-        /* vpp_test.c v137 proven push pattern */
+        /* Step 1: CPU takes bus to set up GRAM window on panel */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+        LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
         if (panel_type >= 2) {
             lcd_cmd(0x210); lcd_data(0);
@@ -1044,13 +1043,15 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x213); lcd_data(239);
             lcd_cmd(0x200); lcd_data(0);
             lcd_cmd(0x201); lcd_data(0);
-            lcd_cmd(0x202);
+            lcd_cmd(0x202);  /* panel now in data-receive mode */
         }
+        while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
-        LCD_REG(0x80) = 1;
-        { uint32_t v = LCD_CON; LCD_CON = v; }  /* WR# trigger */
-        for (volatile int d = 0; d < 50000; d++);
+        /* Step 2: Release bus to compositor BEFORE triggering */
         LCD_REG(0x80) = 0;
+        /* Step 3: NOW trigger compositor i80 push (bit 7 = one-shot) */
+        COMP_REG(0x200) |= 0x80;
+        /* Step 4: Wait for compositor to push full frame via i80 */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
