@@ -315,31 +315,37 @@ static void disp_init(void)
     DISP_REG(0x284) = 0;              /* FF2: clear before GO */
 }
 
-/* ---- DISP GO (ROM FUN_001682cc) ---- */
+/* ---- DISP GO (ROM FUN_001682cc, case 2 = internal LCD) ---- */
 
 static void disp_go(void)
 {
-    /* DISP_MODE: target 0x1200 (bits 9+12. V13-3: bit 1 is TV-out only, NOT internal LCD.
-     * v13 had bit 1 set BEFORE mask which cleared it — it was already dead code.) */
-    DISP_REG(0x008) &= 0xFFFFFFF0;     /* clear format bits 0-3 */
-    DISP_REG(0x008) &= ~0x10;          /* clear stale bit 4 = deinterlace */
-    DISP_REG(0x008) &= 0x3F;           /* J5: preserve bits 0-5 (ROM 0x1682e4, was 0x1F) */
-    { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
-    { uint32_t tmp = DISP_REG(0x008); DISP_REG(0x008) = tmp; }
-    DISP_REG(0x008) |= 0x200;
-    DISP_REG(0x008) |= 0x1000;
-    DISP_REG(0x034) = 0;               /* progressive = 0 (Q3) */
+    /* ROM 0x1682E4: mask DISP+0x008 to bits 0-5 only */
+    DISP_REG(0x008) &= 0x3F;
 
-    /* Color correction per chip variant */
+    /* ROM 0x168324: progressive mode */
+    DISP_REG(0x034) = 0;
+
+    /* ROM 0x16832C-0x168350: DISP_MODE enable sequence.
+     * Case 2 (internal LCD) sets bits 6, 18, 21 with self-writes between.
+     * Prior versions WRONGLY set bits 9+12 (0x1200) — different bits entirely.
+     * ROM confirmed: 0x40 (bit 6), 0x40000 (bit 18), 0x200000 (bit 21). */
+    { uint32_t t = DISP_REG(0x008); DISP_REG(0x008) = t | 0x40; }
+    { uint32_t t = DISP_REG(0x008); DISP_REG(0x008) = t; }  /* self-write commit */
+    { uint32_t t = DISP_REG(0x008); DISP_REG(0x008) = t | 0x40000; }
+    { uint32_t t = DISP_REG(0x008); DISP_REG(0x008) = t | 0x200000; }
+
+    /* Color correction per chip variant (ROM 0x16835C-0x168370).
+     * Writes to DISP+0x01C/0x020/0x024 — overwrites disp_init's 0x800 scaling.
+     * Prior versions WRONGLY wrote to 0x028/0x02C/0x030 (wrong offsets). */
     uint32_t chipid2 = *(volatile uint32_t *)0x3D100004;
     if (chipid2 & 0x100) {
-        DISP_REG(0x028) = 0x7B5;
-        DISP_REG(0x02C) = 0x7FF;
-        DISP_REG(0x030) = 0x792;
+        DISP_REG(0x01C) = 0x7FF;
+        DISP_REG(0x020) = 0x792;
+        DISP_REG(0x024) = 0x7B5;
     } else {
-        DISP_REG(0x028) = 0x79F;
-        DISP_REG(0x02C) = 0x7B9;
-        DISP_REG(0x030) = 0x79A;
+        DISP_REG(0x01C) = 0x7B9;
+        DISP_REG(0x020) = 0x79A;
+        DISP_REG(0x024) = 0x79F;
     }
 
     /* DISP ENABLE — starts the display data pump (ROM 0x1683DC-0x1683E8).
