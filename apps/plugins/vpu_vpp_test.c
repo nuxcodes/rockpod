@@ -814,7 +814,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
      * DISCARDS all video data. 0x0B = bits 0+1+3. */
-    MIXER_REG(0x004) = 0x1F;   /* bits 0+1+2+3+4. Bit 3 = Samsung VP enable, bit 4 = video layer 5 */
+    MIXER_REG(0x004) = 0x13;   /* v34e: ROM-exact (bits 0+1+4). v31 had 0x1F which
+                                 * includes bit 2 (interlaced) + bit 3 (overlay) —
+                                 * bit 2 could cause MIXER/DISP mode mismatch. */
     MIXER_REG(0x008) = 0x100FF; /* DEEP-1: alpha=0 makes layer invisible. 0x100FF = opaque. */
 
     vlog("  Buffers set: Y=%08lx Cb=%08lx",
