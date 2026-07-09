@@ -1166,9 +1166,8 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x02C) = 0x08010000;
     CLCD_REG(0x034) = 0x08000000 + frame_w;
     CLCD_REG(0x038) = 0x08010000 + frame_w/2;
-    for (int vt = 0; vt < 3; vt++) {
-        lcd_push_frame(panel_type);
-    }
+    lcd_push_frame(panel_type);
+    COMP_REG(0x200) |= 0x80;  /* strobe after GRAM setup + bus release */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Now point at our actual white buffer */
@@ -1177,14 +1176,15 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x02C) = PHYS(cb_out);
     CLCD_REG(0x034) = PHYS(y_out) + frame_w;
     CLCD_REG(0x038) = PHYS(cb_out) + frame_w/2;
-    for (int vt = 0; vt < 3; vt++) {
-        lcd_push_frame(panel_type);
-    }
+    lcd_push_frame(panel_type);
+    COMP_REG(0x200) |= 0x80;  /* strobe after GRAM setup + bus release */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Push one more frame to get CURRENT compositor output into GRAM */
     CLCD_REG(0x008) |= 0x10000;  /* shadow commit */
     lcd_push_frame(panel_type);
+    COMP_REG(0x200) |= 0x80;  /* strobe to push current frame to GRAM */
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }  /* wait push */
 
     /* GRAM readback — 5-point X scan at Y=120. 2 dummy + 1 data per point. */
     vlog("Phase 6b: GRAM gradient scan (Y=120)");
