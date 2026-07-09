@@ -411,18 +411,40 @@ static void compositor_init(void)
         c[0xC00/4 + i] = i * 4;
     }
 
-    /* i80 bus timing (iBoot capture — only known values).
-     * These registers reset to 0 when compositor clocks are gated.
-     * comp+0x1E0/0x1E4: i80 engine config, also from iBoot residuals.
-     * vpp_test.c log showed: +1E0=0x4A8 +1E4=0x812 +1E8=0x0 */
+    /* i80 bus timing — ROM FUN_0014D240 copies 5 values from DRAM 0x0890D2DC
+     * to comp+0x1EC-0x1FC (via memcpy at 0x14D254, writer at 0x0D972C).
+     * Source is a runtime struct populated by iBoot. Try reading it live;
+     * fall back to captured values if DRAM was overwritten by Rockbox. */
+    {
+        volatile uint32_t *iboot_src = (volatile uint32_t *)0x0890D2DC;
+        uint32_t t0 = iboot_src[0], t1 = iboot_src[1], t2 = iboot_src[2];
+        uint32_t t3 = iboot_src[3], t4 = iboot_src[4];
+        vlog("  iBoot DRAM 0x0890D2DC: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)t0, (unsigned long)t1, (unsigned long)t2,
+             (unsigned long)t3, (unsigned long)t4);
+        /* Use DRAM values if they look valid (non-zero, reasonable range).
+         * iBoot values: {0x0C, 0x26, 0x10, 0x82, 0x4E}. All < 0x100. */
+        if (t0 > 0 && t0 < 0x1000 && t4 > 0 && t4 < 0x1000) {
+            c[0x1EC/4] = t0;
+            c[0x1F0/4] = t1;
+            c[0x1F4/4] = t2;
+            c[0x1F8/4] = t3;
+            c[0x1FC/4] = t4;
+            vlog("  Using LIVE iBoot timing from DRAM");
+        } else {
+            c[0x1EC/4] = 0x0C;
+            c[0x1F0/4] = 0x26;
+            c[0x1F4/4] = 0x10;
+            c[0x1F8/4] = 0x82;
+            c[0x1FC/4] = 0x4E;
+            vlog("  Using HARDCODED timing (DRAM overwritten)");
+        }
+    }
+    /* comp+0x1E0/0x1E4: from vpp_test.c iBoot residuals after gate->ungate.
+     * NOT in ROM — either POR defaults or iBoot-set. Writing observed values. */
     c[0x1E0/4] = 0x4A8;
     c[0x1E4/4] = 0x812;
     c[0x1E8/4] = 0;
-    c[0x1EC/4] = 0x0C;
-    c[0x1F0/4] = 0x26;
-    c[0x1F4/4] = 0x10;
-    c[0x1F8/4] = 0x82;
-    c[0x1FC/4] = 0x4E;
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
