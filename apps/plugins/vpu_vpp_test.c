@@ -575,7 +575,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34q ===");
+    vlog("=== VPU-B → VPP Integration Test v34r ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -884,7 +884,14 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* v34: Format 8 = 3-plane planar YUV420 (ROM-verified at dispatch 0x167690).
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
-     * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c). */
+     * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
+     *
+     * v34r: VP must be DISABLED when writing plane addresses to bypass the
+     * shadow register mechanism. On i80 panels, VSYNC never occurs so
+     * VP+0x008 shadow commit never triggers. With VP disabled, register
+     * writes go directly to active registers (no shadow). */
+    CLCD_REG(0x000) &= ~1;  /* disable VP for direct register write */
+    for (volatile int d = 0; d < 1000; d++);
     CLCD_REG(0x028) = PHYS(y_out);                  /* Y  plane */
     CLCD_REG(0x02C) = PHYS(cb_out);                 /* Cb plane */
     CLCD_REG(0x030) = PHYS(cr_out);                 /* Cr plane (v31 DROPPED this) */
@@ -902,6 +909,9 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x03C) = PHYS(cb_out);                 /* Layer 5 struct[2] = VP+0x02C */
     COMP_REG(0x040) = 0;                            /* unused for 3-plane */
     COMP_REG(0x044) = PHYS(cr_out);                 /* Layer 5 struct[1] = VP+0x030 */
+
+    /* Re-enable VP — addresses now in active registers (no shadow needed) */
+    CLCD_REG(0x000) |= 1;
 
     /* v34e: VP shadow commit — try BOTH Samsung (0x008=1) and Apple (0x3C0=1).
      * Samsung kernel (exynos_mixer.c:406): VP_SHADOW_UPDATE=1 commits addresses.
@@ -1078,6 +1088,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* Phase 5c: GRAM window + release — set panel to receive, then let
      * compositor push via passthrough. Single setup, no per-frame toggle. */
     vlog("Phase 5c: GRAM setup + release (Apple pattern, 3s)");
+    /* Disable Layer 5 to test BG_COLOR only (no VP data) */
+    COMP_REG(0x028) = 0;  /* Layer 5 OFF */
+    COMP_REG(0x00C) = 0x0000FF00;  /* BG_COLOR = bright GREEN */
+    vlog("  L5 OFF, BG=GREEN. If screen turns GREEN → compositor output works!");
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
