@@ -348,20 +348,11 @@ static void disp_go(void)
         DISP_REG(0x024) = 0x79F;
     }
 
-    /* DISP ENABLE — starts the display data pump (ROM 0x1683DC-0x1683E8).
-     * Without this, DISP never pulls from MIXER, MIXER never generates vsync,
-     * VP shadow registers never commit, DMA never starts.
-     * THIS WAS THE ROOT CAUSE — missing since v8. */
-    DISP_REG(0x000) = 0;                   /* clear */
-    { uint32_t tmp = DISP_REG(0x000); }    /* readback (HW sync) */
-    DISP_REG(0x000) = DISP_REG(0x000) | 1; /* ENABLE */
-
-    /* FF2: DISP+0x284 = 0 immediately before GO */
-    DISP_REG(0x284) = 0;
-
-    /* GO: clear then enable with read-fence */
+    /* DISP ENABLE (ROM 0x1683DC-0x1683E8): write 0, read back, set bit 0.
+     * Prior versions did this twice with DISP+0x284=0 between — unnecessary.
+     * Apple does it once, cleanly. */
     DISP_REG(0x000) = 0;
-    { uint32_t tmp = DISP_REG(0x000); DISP_REG(0x000) = tmp | 1; }
+    { uint32_t t = DISP_REG(0x000); DISP_REG(0x000) = t | 1; }
 }
 
 /* ---- Compositor Init (ROM FUN_0014d240) ---- */
