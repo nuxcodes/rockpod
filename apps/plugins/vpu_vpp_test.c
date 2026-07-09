@@ -780,6 +780,7 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x02C) = PHYS(cb_out);                 /* Cb plane */
     CLCD_REG(0x030) = PHYS(cr_out);                 /* Cr plane (v31 DROPPED this) */
     CLCD_REG(0x034) = 0;                            /* unused for 3-plane */
+    CLCD_REG(0x038) = 0;                            /* clear stale 0x8000000 from init */
     CLCD_REG(0x3C4) = frame_w;                      /* luma stride */
     CLCD_REG(0x3C8) = frame_w / 2;                  /* chroma stride = luma/2 */
     CLCD_REG(0x3C0) = 1;                            /* 1 = planar (v31 had 0 = NV12, WRONG) */
@@ -799,6 +800,9 @@ enum plugin_status plugin_start(const void *parameter)
      * version. ILI9326 has no vsync pin — shadow latch may need explicit trigger.
      * VP+0x3C0=1 was already set above (planar mode). Try 0x008=1 as well. */
     CLCD_REG(0x008) = 1;
+    vlog("  VP diag: +0x008=%08lx +0x010=%08lx +0x3C0=%08lx",
+         (unsigned long)CLCD_REG(0x008), (unsigned long)CLCD_REG(0x010),
+         (unsigned long)CLCD_REG(0x3C0));
 
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
