@@ -668,14 +668,20 @@ enum plugin_status plugin_start(const void *parameter)
     rlog_mode = true;  /* all vlog() now buffers to RAM */
 
     /* GPIO7.1 = function 0xF for VPP DMA bus access.
-     * v28b/v29b had WRONG address (0x3CF0001C instead of 0x3CF000E0)!
-     * PCON(x) = GPIO_BASE + x*0x20, NOT x*4. */
+     * v34l: DISABLED — Finding 3 confirmed Apple NEVER writes PCON(7).
+     * Zero references to 0x3CF000E0 in entire retailos.bin.
+     * VPP DMA is internal AHB bus master, doesn't need GPIO pins.
+     * v34 log showed PCON(7) write gave 44444414 not 444444F4 — HW rejected 0xF. */
+#if 0
     {
         uint32_t old = PCON(7);
         PCON(7) = (old & ~0xF0) | 0xF0;  /* pin 1 nibble = 0xF, preserve others */
         vlog("PCON(7): before=%08lx after=%08lx (expect nibble 1 = F)",
              (unsigned long)old, (unsigned long)PCON(7));
     }
+#endif
+    vlog("PCON(7) = %08lx (untouched — Apple never writes PCON(7))",
+         (unsigned long)PCON(7));
 
     /* ---- Phase 3: VPP pipeline init ---- */
 
@@ -1267,8 +1273,7 @@ enum plugin_status plugin_start(const void *parameter)
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
 
-    /* ---- Restore GPIO7.1 to ATA before disk I/O ---- */
-    PCON(7) = (PCON(7) & ~0xF0) | 0x40;  /* pin 1 = function 4 (ATA) */
+    /* ---- GPIO7.1 no longer modified — skip restore ---- */
     rlog_mode = false;  /* vlog() back to file mode */
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_APPEND, 0666);
     rlog_flush();        /* write RAM-buffered logs to disk */
