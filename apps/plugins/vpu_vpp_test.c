@@ -1099,6 +1099,7 @@ enum plugin_status plugin_start(const void *parameter)
      * ILI9326: 1-2 dummy reads before real data.
      * Try both 1-dummy and 2-dummy, log raw + shifted values. */
     {
+        LCD_REG(0x80) = 1;  /* CPU must own bus for GRAM read commands */
         LCD_CON = 0x80000DA8;  /* P18 read mode (bit 0=0 = read direction) */
         lcd_cmd(0x200); lcd_data(160);
         lcd_cmd(0x201); lcd_data(120);
