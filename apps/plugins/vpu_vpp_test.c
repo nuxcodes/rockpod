@@ -1040,6 +1040,34 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x8C),
          (unsigned long)CLCD_REG(0x000));
 
+    /* Phase 5b2: Strobe test — fire compositor strobe and immediately
+     * sample LCD+0x8C to detect bus activity. If compositor pushes,
+     * LCD_8C should show non-zero (bus busy) within microseconds. */
+    vlog("Phase 5b2: Strobe bus-activity test");
+    {
+        uint32_t pre_8c = LCD_REG(0x8C);
+        uint32_t pre_200 = COMP_REG(0x200);
+        COMP_REG(0x200) |= 0x80;  /* strobe */
+        uint32_t post_200 = COMP_REG(0x200);
+        /* Sample LCD_8C rapidly 10 times over ~10µs */
+        uint32_t samples[10];
+        for (int i = 0; i < 10; i++) {
+            samples[i] = LCD_REG(0x8C);
+            for (volatile int d = 0; d < 100; d++);
+        }
+        vlog("  pre: 8C=%08lx 200=%08lx  post: 200=%08lx",
+             (unsigned long)pre_8c, (unsigned long)pre_200,
+             (unsigned long)post_200);
+        vlog("  8C samples: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)samples[0], (unsigned long)samples[1],
+             (unsigned long)samples[2], (unsigned long)samples[3],
+             (unsigned long)samples[4]);
+        vlog("  8C samples: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)samples[5], (unsigned long)samples[6],
+             (unsigned long)samples[7], (unsigned long)samples[8],
+             (unsigned long)samples[9]);
+    }
+
     /* Phase 5c: GRAM window + release — set panel to receive, then let
      * compositor push via passthrough. Single setup, no per-frame toggle. */
     vlog("Phase 5c: GRAM setup + release + strobe (3s)");
