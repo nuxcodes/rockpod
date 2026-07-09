@@ -531,6 +531,9 @@ enum plugin_status plugin_start(const void *parameter)
     struct vpu_h264 *dec;
     uint32_t saved_lcd_con = 0;
     int panel_type;
+    uint32_t saved_devroute = *(volatile uint32_t *)0x3CF00200;
+    uint32_t saved_cg32 = *(volatile uint32_t *)0x3C500008;
+    uint32_t saved_pwrcon0 = PWRCON(0);
 
     rb->cpu_boost(true);
 
@@ -1171,6 +1174,18 @@ enum plugin_status plugin_start(const void *parameter)
     rb->lcd_update();
 
     /* v33: no GPIO restore needed — PCON(7) was never changed */
+
+    /* Restore system registers to pre-plugin state */
+    *(volatile uint32_t *)0x3CF00200 = saved_devroute;
+    *(volatile uint32_t *)0x3C500008 = saved_cg32;
+    PWRCON(0) = saved_pwrcon0;
+    for (volatile int d = 0; d < 10000; d++);
+
+    /* Restore system registers to pre-plugin state */
+    *(volatile uint32_t *)0x3CF00200 = saved_devroute;
+    *(volatile uint32_t *)0x3C500008 = saved_cg32;
+    PWRCON(0) = saved_pwrcon0;
+    for (volatile int d = 0; d < 10000; d++);
 
     /* Close VPU-B */
     vpu_h264_close(dec);
