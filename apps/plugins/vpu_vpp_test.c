@@ -973,6 +973,10 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
+        /* Fire compositor i80 strobe before each push (auto-clears) */
+        { uint32_t c200 = COMP_REG(0x200); COMP_REG(0x200) = c200 | 0x10080; }
+        COMP_REG(0x000) = 1;  /* compositor GO */
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
         /* vpp_test.c v137 proven push pattern */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_CON = 0x80000DA9;
