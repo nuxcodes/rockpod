@@ -452,7 +452,25 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     }
 
     LCD_REG(0x74) = 0x00F00140;
-    LCD_REG(0x70) = 1;          /* passthrough enable */
+    LCD_REG(0x70) = 0x281;      /* passthrough CONFIG — NOT just 1!
+                                 * ROM 0x0ca0dc: panel type 2 writes 0x281 (bits 0+7+9).
+                                 * All prior versions wrote 1 (bit 0 only) — MISSING bits 7+9.
+                                 * This register also needs LCD+0x94-0xEC gamma values. */
+    /* Panel type 2 gamma/timing regs (ROM 0x0ca0e0-0xca0d4, never written before) */
+    LCD_REG(0x94) = 0x01;
+    LCD_REG(0x98) = 0x07;
+    LCD_REG(0x9C) = 0x15;
+    LCD_REG(0xA0) = 0x2A;
+    LCD_REG(0xA4) = 0x44;
+    LCD_REG(0xA8) = 0x57;
+    LCD_REG(0xAC) = 0x5F;
+    LCD_REG(0xD4) = 0x02;
+    LCD_REG(0xD8) = 0x0A;
+    LCD_REG(0xDC) = 0x1D;
+    LCD_REG(0xE0) = 0x3C;
+    LCD_REG(0xE4) = 0x5F;
+    LCD_REG(0xE8) = 0x7B;
+    LCD_REG(0xEC) = 0x86;
 }
 
 /* ---- LCD Push (v134 minimal working pattern) ---- */
@@ -998,7 +1016,7 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Re-enable passthrough for VPP test */
-    LCD_REG(0x70) = 1;
+    LCD_REG(0x70) = 0x281;
 
     /* DMA ADDRESS TEST: point at Rockbox code (0x08000000) instead of our buffer.
      * If output CHANGES from blue → DMA IS reading, just wrong color/format.
@@ -1046,7 +1064,7 @@ enum plugin_status plugin_start(const void *parameter)
             vlog("  GRAM(%d,120)=%08lx", test_x[ti], (unsigned long)px);
         }
         LCD_CON = 0x81100DB9;
-        LCD_REG(0x70) = 1;
+        LCD_REG(0x70) = 0x281;
     }
 
     /* ---- Phase 7: Layer 5 ON/OFF diagnostic ---- */
@@ -1090,7 +1108,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
     { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx", label, (unsigned long)_g); } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 1; \
+    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 0x281; \
 } while(0)
 
     /* Test A: Layer 5 OFF, BG_COLOR = gray */
