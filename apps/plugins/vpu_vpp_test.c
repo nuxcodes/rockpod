@@ -668,6 +668,20 @@ enum plugin_status plugin_start(const void *parameter)
     vpp_clocks_enable(true);
     for (volatile int d = 0; d < 10000; d++);
 
+    /* v34e: 0x3C700000 clock domain dump — never touched by any version.
+     * 8 domains at stride 0x20. If a domain is enabled: +00 has 0x40.
+     * If all zero: SRAM clock manager never ran. */
+    vlog("Phase 3 clock domains (0x3C700000):");
+    vlog("  CG16=%08lx PWRCON0=%08lx DEVRT=%08lx",
+         (unsigned long)(*(volatile uint32_t *)0x3C500008),
+         (unsigned long)PWRCON(0),
+         (unsigned long)(*(volatile uint32_t *)0x3CF00200));
+    for (int dom = 0; dom < 8; dom++) {
+        volatile uint32_t *dr = (volatile uint32_t *)(0x3C700000 + dom * 0x20);
+        vlog("  D%d: %08lx %08lx %08lx %08lx", dom,
+             (unsigned long)dr[0], (unsigned long)dr[1],
+             (unsigned long)dr[2], (unsigned long)dr[4]);
+    }
     /* Pre-init register dump: see what iBoot/HW defaults are BEFORE we touch anything.
      * Clocks just ungated — registers retain state from last power cycle. */
     vlog("Phase 3a: Pre-init CLCD dump (iBoot defaults)");
