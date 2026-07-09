@@ -575,7 +575,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34n ===");
+    vlog("=== VPU-B → VPP Integration Test v34p ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -842,6 +842,8 @@ enum plugin_status plugin_start(const void *parameter)
     uint32_t saved_lcd_7c = LCD_REG(0x7C);
     uint32_t saved_lcd_88 = LCD_REG(0x88);
     uint32_t saved_lcd_20 = LCD_REG(0x20);
+    uint32_t saved_lcd_74 = LCD_REG(0x74);
+    uint32_t saved_lcd_78 = LCD_REG(0x78);
 
     /* LCD passthrough */
     lcd_passthrough_init(panel_type, &saved_lcd_con);
@@ -1190,6 +1192,7 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Re-enable passthrough for VPP test */
+    LCD_REG(0x88) = 0x01000000;  /* restore compositor data input */
     LCD_REG(0x70) = 1;
     DISP_REG(0x70) = 0x281;
 
@@ -1325,35 +1328,21 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Phase 8: Shutdown");
 
-    /* Stop VPP pipeline BEFORE touching LCD */
-    COMP_REG(0x000) = 0;  /* compositor stop */
-    COMP_REG(0x200) &= ~0x10080;  /* clear i80 enable + strobe */
-    MIXER_REG(0x000) = 0;  /* mixer stop */
-    CLCD_REG(0x000) &= ~1;  /* VP disable */
-    DISP_REG(0x000) = 0;  /* DISP disable */
-    for (volatile int d = 0; d < 10000; d++);
-
-    /* Restore DISP registers to pre-init state */
-    DISP_REG(0x008) = 0;  /* clear mode bits */
-    DISP_REG(0x070) = 0;  /* clear panel routing */
-    DISP_REG(0x034) = 0;
-
-    /* Re-gate VPP + compositor clocks */
-    PWRCON(0) |= (1 << 14) | (1 << 15) | (1 << 16);  /* gate VPP */
-    PWRCON(0) |= 0x2080;  /* gate compositor (bits 7+13) */
-    PWRCON(0) |= (1 << 6);  /* gate bandwidth bit */
-    for (volatile int d = 0; d < 10000; d++);
-
-    /* Restore LCD to Rockbox state */
+    /* v34 proven shutdown: restore LCD, turn off passthrough, return.
+     * Do NOT gate VPP/compositor clocks — gating mid-operation corrupts
+     * the bus arbiter and causes post-exit panic on USB connect.
+     * The VPP pipeline is left running but harmless with passthrough off. */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
     LCD_REG(0x7C) = saved_lcd_7c;
-    LCD_REG(0x70) = 0;  /* passthrough off */
-    LCD_REG(0x80) = 0;  /* release bus */
-    PWRCON(0) |= (1 << 1);          /* gate LCD clock */
+    LCD_REG(0x74) = saved_lcd_74;    /* restore passthrough dimensions */
+    LCD_REG(0x78) = saved_lcd_78;    /* restore passthrough timing */
+    LCD_REG(0x70) = 0;               /* passthrough OFF */
+    LCD_REG(0x80) = 0;               /* release bus */
+    PWRCON(0) |= (1 << 1);           /* gate LCD clock */
     for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) &= ~(1 << 1);         /* ungate LCD clock */
+    PWRCON(0) &= ~(1 << 1);          /* ungate LCD clock */
     for (volatile int d = 0; d < 10000; d++);
     LCD_PHTIME = 0x33;               /* re-init phase timing */
     LCD_CON = saved_lcd_con;
