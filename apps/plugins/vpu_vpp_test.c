@@ -239,10 +239,8 @@ static void mixer_init(void)
     MIXER_REG(0x088) = 0x0E1D13DC;
     MIXER_REG(0x800) = 1;           /* global enable */
     MIXER_REG(0x00C) |= 0x200;     /* YUV420 format (FUN_001680e8, ROM 0x1680e8) */
-    MIXER_REG(0x000) = 2;           /* v34f: bit 1 only, NO SYNC_ENABLE (bit 2).
-                                     * S5PC100: SYNC_ENABLE defers ALL reg updates to VSYNC.
-                                     * If no VSYNC on i80 path, everything stalls.
-                                     * Without SYNC_ENABLE: updates take effect IMMEDIATELY. */
+    MIXER_REG(0x000) = 6;           /* pipeline active (bits 1+2). Bit 2 = SYNC_ENABLE
+                                     * (S5PC100: values applied at VSYNC when set). */
 }
 
 /* ---- DISP Init (ROM FUN_00167c34) ---- */
@@ -885,7 +883,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* FF2 VERIFIED: 3 separate RMW ops for DISP trigger */
     CLCD_REG(0x000) |= 1;              /* CLCD enable (shadow) */
-    MIXER_REG(0x000) = 3;              /* v34f: MIXER GO without SYNC_ENABLE */
+    MIXER_REG(0x000) = 7;              /* MIXER GO (bits 0+1+2, SYNC_ENABLE required) */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }  /* latch config */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }  /* latch buffer */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }  /* latch output */
