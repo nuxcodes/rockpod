@@ -47,7 +47,7 @@
 /* ---- Logging (RAM-buffered for VPP phase when disk I/O is unsafe) ---- */
 
 static int log_fd = -1;
-#define RLOG_SIZE 4096
+#define RLOG_SIZE 8192
 static char rlog_buf[RLOG_SIZE];
 static int rlog_pos = 0;
 static bool rlog_mode = false;  /* true = buffer to RAM, false = write to file */
