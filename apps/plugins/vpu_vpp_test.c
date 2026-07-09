@@ -283,20 +283,13 @@ static void disp_init(void)
     for (int i = 0; i < 28; i++)
         DISP_REG(0x200 + i * 4) = disp_regs_200[i];
 
-    DISP_REG(0x014) = 0x0000440C;     /* DD8: timing */
+    DISP_REG(0x014) = 0x000777FF;     /* iBoot residual (v34q log confirmed) */
 
     DISP_REG(0x280) = 0;
     DISP_REG(0x3C0) = 0;              /* ROM 0x167E30 */
     DISP_REG(0x3D0) = 1;              /* LCD select — ROM 0x167E34 */
-    /* DISP+0x3C4/3C8/3CC/3D4: ROM FUN at 0x69A24 writes these.
-     * 0x3C8/0x3D4 = 0x08 verified (panel_cfg[6]=0, panel_cfg[7]=0 path).
-     * 0x3C4/0x3CC depend on PLL computation (ROM 0x699EC BL 0xDCC14) —
-     * 0x18000 was from earlier agent, kept as best available value.
-     * Added iBoot residual dump to capture actual values for verification. */
-    DISP_REG(0x3C4) = 0x00018000;
-    DISP_REG(0x3C8) = 0x00000008;
-    DISP_REG(0x3CC) = 0x00018000;
-    DISP_REG(0x3D4) = 0x00000008;
+    /* DISP+0x3C4/3C8/3CC/3D4: v34q log confirmed iBoot left ALL ZERO.
+     * Previous writes (0x18000/0x08) had no iBoot basis — removed. */
 
     /* Gamma LCD mode */
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;
@@ -575,7 +568,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34r ===");
+    vlog("=== VPU-B → VPP Integration Test v34s ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -886,7 +879,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v34r: VP must be DISABLED when writing plane addresses to bypass the
+     * v34s: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
