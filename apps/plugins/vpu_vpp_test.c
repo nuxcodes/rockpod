@@ -898,11 +898,28 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
-    vlog("Phase 6: Push loop (10 frames)");
+    vlog("Phase 6: Push loop (10 frames, vpp_test.c pattern)");
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        lcd_push_frame(panel_type);
+        /* vpp_test.c v137 proven push pattern */
+        { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+        LCD_CON = 0x80000DA9;
+        if (panel_type >= 2) {
+            lcd_cmd(0x210); lcd_data(0);
+            lcd_cmd(0x211); lcd_data(319);
+            lcd_cmd(0x212); lcd_data(0);
+            lcd_cmd(0x213); lcd_data(239);
+            lcd_cmd(0x200); lcd_data(0);
+            lcd_cmd(0x201); lcd_data(0);
+            lcd_cmd(0x202);
+        }
+        LCD_CON = 0x81100DB9;
+        LCD_REG(0x80) = 1;
+        { uint32_t v = LCD_CON; LCD_CON = v; }  /* WR# trigger */
+        for (volatile int d = 0; d < 50000; d++);
+        LCD_REG(0x80) = 0;
+        { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         vlog("  Push %d: %lu us", push, (unsigned long)dt);
     }
@@ -999,20 +1016,33 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Helper macro: set GRAM window + observe + readback */
 #define GRAM_TEST(label, obs_us) do { \
+    /* Re-fire compositor DMA + GO (from vpp_test.c v137 working pattern) */ \
+    { uint32_t _c200 = COMP_REG(0x200); COMP_REG(0x200) = _c200 | 0x10080; } \
+    COMP_REG(0x000) = 1; \
+    { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < 100000); } \
+    /* Bus idle */ \
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
-    LCD_REG(0x80) = 1; \
-    lcd_set_con(0x80000DA9); \
+    /* GRAM window setup */ \
+    LCD_CON = 0x80000DA9; \
     if (panel_type >= 2) { \
         lcd_cmd(0x210); lcd_data(0); lcd_cmd(0x211); lcd_data(319); \
         lcd_cmd(0x212); lcd_data(0); lcd_cmd(0x213); lcd_data(239); \
         lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0); \
         lcd_cmd(0x202); \
     } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0; \
+    LCD_CON = 0x81100DB9; \
+    /* Compositor push: LCD+0x80=1, LCD_CON self-write (triggers WR#), hold, release */ \
+    LCD_REG(0x80) = 1; \
+    { uint32_t _v = LCD_CON; LCD_CON = _v; } \
+    for (volatile int _d = 0; _d < 50000; _d++); \
+    LCD_REG(0x80) = 0; \
+    { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
+    /* Observe */ \
     { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < (obs_us)) rb->backlight_on(); } \
+    /* GRAM readback (passthrough off) */ \
     LCD_REG(0x70) = 0; \
     for (volatile int _d = 0; _d < 10000; _d++); \
-    lcd_set_con(0x80000DA8); \
+    LCD_CON = 0x80000DA8; \
     lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
     while (!(LCD_STATUS & 0x2)); \
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
