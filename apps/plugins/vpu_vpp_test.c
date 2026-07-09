@@ -429,6 +429,17 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Wait for bus idle */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 
+    /* LCD register bulk-zero (ROM 0xc9fe8-0xca03c). Apple zeros these during
+     * LCD panel init. After Rockbox's clock gate/ungate, they may have stale
+     * values. Clear them to match Apple's fresh-init state. */
+    for (int i = 0x44; i <= 0x6C; i += 4) LCD_REG(i) = 0;
+    LCD_REG(0x80) = 0;
+    LCD_REG(0x84) = 0;
+    LCD_REG(0x88) = 0;
+    LCD_REG(0x8C) = 0;  /* note: read-only status, write may be ignored */
+    LCD_REG(0x90) = 0;
+    for (int i = 0xC0; i <= 0xD0; i += 4) LCD_REG(i) = 0;
+
     /* LCD controller config (ROM FUN_000ca178) */
     LCD_CON = 0x81100DB9;
     LCD_REG(0x88) = 0x01000000;
