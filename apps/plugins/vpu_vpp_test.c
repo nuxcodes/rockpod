@@ -976,6 +976,41 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
+    /* Phase 5b: Passive observation — compositor should push automatically
+     * via passthrough. No lcd_push_frame, no LCD+0x80 toggle.
+     * Apple's per-frame trigger never touches LCD+0x80.
+     * If screen shows color here → compositor pushes autonomously.
+     * If still blue → compositor needs explicit push trigger. */
+    vlog("Phase 5b: Passive 3s (no push, compositor auto)");
+    vlog("  comp+0x200=%08lx LCD_8C=%08lx",
+         (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x8C));
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    vlog("  After 3s: comp+0x200=%08lx LCD_8C=%08lx CLCD=%08lx",
+         (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x8C),
+         (unsigned long)CLCD_REG(0x000));
+
+    /* Phase 5c: GRAM window + release — set panel to receive, then let
+     * compositor push via passthrough. Single setup, no per-frame toggle. */
+    vlog("Phase 5c: GRAM setup + release (3s)");
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    LCD_REG(0x80) = 1;
+    LCD_CON = 0x80000DA9;
+    if (panel_type >= 2) {
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+    }
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81100DB9;
+    LCD_REG(0x80) = 0;  /* release bus to compositor */
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    vlog("  After 3s: LCD_8C=%08lx comp+0x200=%08lx",
+         (unsigned long)LCD_REG(0x8C), (unsigned long)COMP_REG(0x200));
+
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
     vlog("Phase 6: Push loop (10 frames, vpp_test.c pattern)");
