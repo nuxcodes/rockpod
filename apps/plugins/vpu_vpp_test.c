@@ -150,16 +150,12 @@ static void clcd_init(int src_w, int src_h, int out_w, int out_h)
 {
     CLCD_REG(0x000) = CLCD_REG(0x000) & 2;  /* reset, preserve busy */
 
-    /* v34c: VP_SRESET pulse — reset DMA state machine.
-     * Samsung VP_SRESET at +0x004: write 1 to trigger, clears when done.
-     * May be needed to unstick VP from prior run's state. */
-    CLCD_REG(0x004) = 1;
-    for (volatile int d = 0; d < 10000; d++);
-    CLCD_REG(0x004) = 0;
+    CLCD_REG(0x004) = 0;  /* Apple writes 0 (ROM 0x16729c). NOT pulsing 1→0. */
 
     CLCD_REG(0x008) = 0;
     CLCD_REG(0x00C) = 0;
-    CLCD_REG(0x010) = 0;  /* v34c: clear POR value 0x200 (undocumented bit 9) */
+    /* VP+0x010 (VP_MODE): Apple NEVER writes this. POR value 0x200 preserved.
+     * Was cleared to 0 in v34c but Apple expects POR defaults for unwritten regs. */
 
     /* VP_IMG_SIZE: DMA buffer geometry. Apple never writes these because iBoot
      * pre-sets them for the boot logo. Rockbox bootloader doesn't use VPP,
