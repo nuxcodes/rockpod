@@ -286,12 +286,15 @@ static void disp_init(void)
     DISP_REG(0x014) = 0x0000440C;     /* DD8: timing */
 
     DISP_REG(0x280) = 0;
-    DISP_REG(0x3C0) = 0;
-    DISP_REG(0x3D0) = 1;              /* LCD select */
-    DISP_REG(0x3C4) = 0x00018000;
+    DISP_REG(0x3C0) = 0;              /* ROM 0x167E30 */
+    DISP_REG(0x3D0) = 1;              /* LCD select — ROM 0x167E34 */
+    /* DISP+0x3C8/0x3D4: ROM FUN at 0x69A24 computes from panel config.
+     * For panel_cfg[6]=0, panel_cfg[7]=0: value = 8. ROM-verified. */
     DISP_REG(0x3C8) = 0x00000008;
-    DISP_REG(0x3CC) = 0x00018000;
     DISP_REG(0x3D4) = 0x00000008;
+    /* NOTE: DISP+0x3C4/0x3CC depend on PLL computation (ROM 0x699EC BL 0xDCC14).
+     * Cannot determine statically — leave at POR/iBoot defaults.
+     * DISP+0x014 = 0x440C is set separately below. */
 
     /* Gamma LCD mode */
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;
@@ -736,6 +739,14 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("  MXR: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
              (unsigned long)c[0], (unsigned long)c[1], (unsigned long)c[2], (unsigned long)c[3]);
     }
+    /* DISP pre-init dump (iBoot defaults for 0x3Cx range) */
+    vlog("  DISP: 008=%08lx 014=%08lx 070=%08lx 3C0=%08lx",
+         (unsigned long)DISP_REG(0x008), (unsigned long)DISP_REG(0x014),
+         (unsigned long)DISP_REG(0x070), (unsigned long)DISP_REG(0x3C0));
+    vlog("  DISP: 3C4=%08lx 3C8=%08lx 3CC=%08lx 3D0=%08lx 3D4=%08lx",
+         (unsigned long)DISP_REG(0x3C4), (unsigned long)DISP_REG(0x3C8),
+         (unsigned long)DISP_REG(0x3CC), (unsigned long)DISP_REG(0x3D0),
+         (unsigned long)DISP_REG(0x3D4));
 
     /* Zero stale VPP state */
     CLCD_REG(0x000) &= 2;
