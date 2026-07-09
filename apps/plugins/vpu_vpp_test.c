@@ -1028,6 +1028,21 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_CON = 0x81100DB9;
     LCD_REG(0x80) = 0;
     vlog("  Wrote 76800 red pixels directly to GRAM");
+    /* GRAM readback sanity: verify the RED pixels are readable.
+     * If this reads 0xF800 (RGB565 RED) → readback procedure works.
+     * If 0x0BFF → readback is broken (all prior GRAM reads unreliable). */
+    {
+        LCD_CON = 0x80000DA8;  /* P18 read mode */
+        lcd_cmd(0x200); lcd_data(160);
+        lcd_cmd(0x201); lcd_data(120);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; /* dummy */
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1));
+        uint32_t red_gram = LCD_DBUFF;
+        vlog("  RED GRAM readback: %08lx (expect ~F800 for RED)", (unsigned long)red_gram);
+        LCD_CON = 0x81100DB9;
+    }
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Re-enable passthrough for VPP test */
