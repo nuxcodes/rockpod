@@ -1004,7 +1004,15 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
-        vlog("  Push %d: %lu us", push, (unsigned long)dt);
+        if (push == 0) {
+            /* First push: monitor LCD STATUS to detect incoming compositor data */
+            vlog("  Push %d: %lu us STATUS=%08lx 8C=%08lx 70=%08lx",
+                 push, (unsigned long)dt,
+                 (unsigned long)LCD_STATUS, (unsigned long)LCD_REG(0x8C),
+                 (unsigned long)LCD_REG(0x70));
+        } else {
+            vlog("  Push %d: %lu us", push, (unsigned long)dt);
+        }
     }
 
     /* DIRECT LCD WRITE TEST — bypass EVERYTHING (VPP, compositor, passthrough).
