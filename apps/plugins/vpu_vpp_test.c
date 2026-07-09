@@ -1095,18 +1095,22 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x80) = 0;
     vlog("  Wrote 76800 red pixels directly to GRAM");
     /* GRAM readback sanity: verify the RED pixels are readable.
-     * If this reads 0xF800 (RGB565 RED) → readback procedure works.
-     * If 0x0BFF → readback is broken (all prior GRAM reads unreliable). */
+     * ROM 0xB0B68: Apple shifts LCD_DBUFF >> 1 (data on D[8:1] for P8).
+     * ILI9326: 1-2 dummy reads before real data.
+     * Try both 1-dummy and 2-dummy, log raw + shifted values. */
     {
-        LCD_CON = 0x80000DA8;  /* P18 read mode */
+        LCD_CON = 0x80000DA8;  /* P18 read mode (bit 0=0 = read direction) */
         lcd_cmd(0x200); lcd_data(160);
         lcd_cmd(0x201); lcd_data(120);
         lcd_cmd(0x202);
         while (!(LCD_STATUS & 0x2));
-        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; /* dummy */
-        LCD_RDATA = 0; while (!(LCD_STATUS & 1));
-        uint32_t red_gram = LCD_DBUFF;
-        vlog("  RED GRAM readback: %08lx (expect ~F800 for RED)", (unsigned long)red_gram);
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d0 = LCD_DBUFF;
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d1 = LCD_DBUFF;
+        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d2 = LCD_DBUFF;
+        vlog("  RED GRAM: d0=%08lx d1=%08lx d2=%08lx",
+             (unsigned long)d0, (unsigned long)d1, (unsigned long)d2);
+        vlog("  RED >>1:  d0=%08lx d1=%08lx d2=%08lx",
+             (unsigned long)(d0>>1), (unsigned long)(d1>>1), (unsigned long)(d2>>1));
         LCD_CON = 0x81100DB9;
     }
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
@@ -1143,12 +1147,13 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x008) |= 0x10000;  /* shadow commit */
     lcd_push_frame(panel_type);
 
-    /* GRAM readback — 5-point X scan at Y=120 (test gradient) */
+    /* GRAM readback — 5-point X scan at Y=120. 2 dummy + 1 data per point. */
     vlog("Phase 6b: GRAM gradient scan (Y=120)");
     {
         static const int test_x[] = {0, 64, 128, 192, 256};
         LCD_REG(0x70) = 0;
         for (volatile int d = 0; d < 10000; d++);
+        LCD_REG(0x80) = 1;
         lcd_set_con(0x80000DA8);
         for (int ti = 0; ti < 5; ti++) {
             lcd_cmd(0x200); lcd_data(test_x[ti]);
@@ -1156,9 +1161,10 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x202);
             while (!(LCD_STATUS & 0x2));
             LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
+            LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
             LCD_RDATA = 0; while (!(LCD_STATUS & 1));
             uint32_t px = LCD_DBUFF;
-            vlog("  GRAM(%d,120)=%08lx", test_x[ti], (unsigned long)px);
+            vlog("  GRAM(%d,120)=%08lx >>1=%08lx", test_x[ti], (unsigned long)px, (unsigned long)(px>>1));
         }
         LCD_CON = 0x81100DB9;
         LCD_REG(0x70) = 1;
@@ -1194,16 +1200,18 @@ enum plugin_status plugin_start(const void *parameter)
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     /* Observe */ \
     { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < (obs_us)) rb->backlight_on(); } \
-    /* GRAM readback (passthrough off) */ \
+    /* GRAM readback (passthrough off). 3 reads: 2 dummy + 1 data (ILI9326). */ \
     LCD_REG(0x70) = 0; \
     for (volatile int _d = 0; _d < 10000; _d++); \
+    LCD_REG(0x80) = 1; \
     LCD_CON = 0x80000DA8; \
     lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
     while (!(LCD_STATUS & 0x2)); \
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
+    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
-    { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx", label, (unsigned long)_g); } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281; \
+    { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx >>1=%08lx", label, (unsigned long)_g, (unsigned long)(_g>>1)); } \
+    LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0; LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281; \
 } while(0)
 
     /* Test A: Layer 5 OFF, BG_COLOR = gray */
