@@ -411,7 +411,8 @@ static void compositor_init(void)
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
     c[0x024/4] = 0x00FFFFFF;    /* Fix 2: color mask — ROM 0x14D410 MVN r1,#0xFF000000 */
-    c[0x000/4] = 1;             /* GO */
+    /* DO NOT fire GO here — must wait until LCD passthrough is active.
+     * vpp_test.c v137 fires GO in Phase 6 AFTER passthrough, and that works. */
     c[0x3AC/4] = 0x04004003;    /* pipeline config */
 }
 
@@ -737,12 +738,19 @@ enum plugin_status plugin_start(const void *parameter)
     lcd_passthrough_init(panel_type, &saved_lcd_con);
     vlog("  LCD passthrough initialized");
 
-    /* Compositor GO already fired inside compositor_init() — no second fire needed.
-     * WW2 verified: Apple fires comp[0]=1 exactly ONCE (ROM 0x14d420). */
-
     /* DISP GO */
     disp_go();
     vlog("  DISP GO fired");
+
+    /* Compositor GO — MUST be AFTER passthrough (LCD+0x70=1).
+     * vpp_test.c v137 proved: GO before passthrough = no output.
+     * GO after passthrough = BG_COLOR visible. */
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+    /* Re-fire i80 strobe (from vpp_test.c v137 working pattern) */
+    COMP_REG(0x200) |= 0x80;
+    for (volatile int d = 0; d < 10000; d++);
+    vlog("  Compositor GO + i80 re-strobe fired");
 
     /* Diagnostics: verify register state after init */
     vlog("  DISP_MODE=%08lx MIXER_004=%08lx",
