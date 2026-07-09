@@ -892,6 +892,19 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("  Trigger fired");
     vlog("  CLCD_CTRL: %08lx", (unsigned long)CLCD_REG(0x000));
+
+    /* v34e: VP_SHADOW_UPDATE diagnostic — S5PC100 doc says VP+0x008 is
+     * auto-cleared by HW at vertical sync. Write 1 again (in case Phase 4's
+     * write was consumed), wait 50ms (several frame periods), then check.
+     * If still 1: NO VSYNC reaching VP → shadows never latch → DMA never starts.
+     * If 0: VSYNC occurred, shadows latched, VP should be scanning. */
+    CLCD_REG(0x008) = 1;  /* schedule shadow commit */
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 50000); }
+    vlog("  VP+008 after 50ms: %08lx (0=committed, 1=NO VSYNC)",
+         (unsigned long)CLCD_REG(0x008));
+    vlog("  CLCD_CTRL after 50ms: %08lx (expect 0x05 if DMA started)",
+         (unsigned long)CLCD_REG(0x000));
+
     vlog("  MIXER: 000=%08lx 004=%08lx 008=%08lx 00C=%08lx",
          (unsigned long)MIXER_REG(0x000), (unsigned long)MIXER_REG(0x004),
          (unsigned long)MIXER_REG(0x008), (unsigned long)MIXER_REG(0x00C));
