@@ -429,16 +429,15 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Wait for bus idle */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 
-    /* LCD register bulk-zero (ROM 0xc9fe8-0xca03c). Apple zeros these during
-     * LCD panel init. After Rockbox's clock gate/ungate, they may have stale
-     * values. Clear them to match Apple's fresh-init state. */
-    for (int i = 0x44; i <= 0x6C; i += 4) LCD_REG(i) = 0;
-    LCD_REG(0x80) = 0;
-    LCD_REG(0x84) = 0;
-    LCD_REG(0x88) = 0;
-    /* skip 0x8C — read-only status register (LCD_STATUS) */
-    LCD_REG(0x90) = 0;
-    for (int i = 0xC0; i <= 0xD0; i += 4) LCD_REG(i) = 0;
+    /* DISP register bulk-zero (ROM 0xc9fe8-0xca03c). Apple zeros DISP+0x44-0xD0
+     * (base 0x39300000, NOT LCD 0x38300000!) during display pipeline init.
+     * ROM literal at 0xCA14C = 0x39300000 confirms base register. */
+    for (int i = 0x44; i <= 0x6C; i += 4) DISP_REG(i) = 0;
+    DISP_REG(0x80) = 0;
+    DISP_REG(0x84) = 0;
+    DISP_REG(0x88) = 0;
+    DISP_REG(0x90) = 0;
+    for (int i = 0xC0; i <= 0xD0; i += 4) DISP_REG(i) = 0;
 
     /* LCD controller config (ROM FUN_000ca178) */
     LCD_CON = 0x81100DB9;
@@ -463,25 +462,28 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     }
 
     LCD_REG(0x74) = 0x00F00140;
-    LCD_REG(0x70) = 0x281;      /* passthrough CONFIG — NOT just 1!
-                                 * ROM 0x0ca0dc: panel type 2 writes 0x281 (bits 0+7+9).
-                                 * All prior versions wrote 1 (bit 0 only) — MISSING bits 7+9.
-                                 * This register also needs LCD+0x94-0xEC gamma values. */
-    /* Panel type 2 gamma/timing regs (ROM 0x0ca0e0-0xca0d4, never written before) */
-    LCD_REG(0x94) = 0x01;
-    LCD_REG(0x98) = 0x07;
-    LCD_REG(0x9C) = 0x15;
-    LCD_REG(0xA0) = 0x2A;
-    LCD_REG(0xA4) = 0x44;
-    LCD_REG(0xA8) = 0x57;
-    LCD_REG(0xAC) = 0x5F;
-    LCD_REG(0xD4) = 0x02;
-    LCD_REG(0xD8) = 0x0A;
-    LCD_REG(0xDC) = 0x1D;
-    LCD_REG(0xE0) = 0x3C;
-    LCD_REG(0xE4) = 0x5F;
-    LCD_REG(0xE8) = 0x7B;
-    LCD_REG(0xEC) = 0x86;
+    LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable (ROM FUN_0014deec) */
+    /* DISP+0x70 = 0x281 — panel type 2 routing config.
+     * ROM 0x0ca0dc: writes to DISP base 0x39300000 (literal at 0xCA14C),
+     * NOT LCD base 0x38300000! All prior versions wrote 0x281 to LCD+0x70
+     * instead of DISP+0x70 — WRONG register entirely. */
+    DISP_REG(0x70) = 0x281;
+    /* Panel type 2 gamma/timing regs — also DISP block, not LCD.
+     * ROM 0x0ca0e0-0xca140, base r0 = 0x39300000 */
+    DISP_REG(0x94) = 0x01;
+    DISP_REG(0x98) = 0x07;
+    DISP_REG(0x9C) = 0x15;
+    DISP_REG(0xA0) = 0x2A;
+    DISP_REG(0xA4) = 0x44;
+    DISP_REG(0xA8) = 0x57;
+    DISP_REG(0xAC) = 0x5F;
+    DISP_REG(0xD4) = 0x02;
+    DISP_REG(0xD8) = 0x0A;
+    DISP_REG(0xDC) = 0x1D;
+    DISP_REG(0xE0) = 0x3C;
+    DISP_REG(0xE4) = 0x5F;
+    DISP_REG(0xE8) = 0x7B;
+    DISP_REG(0xEC) = 0x86;
 }
 
 /* ---- LCD Push (v134 minimal working pattern) ---- */
@@ -805,9 +807,10 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x200) |= 0x80;
     for (volatile int d = 0; d < 10000; d++);
     vlog("  Compositor GO + i80 re-strobe fired");
-    vlog("  comp: 000=%08lx 010=%08lx 200=%08lx 70=%08lx",
+    vlog("  comp: 000=%08lx 010=%08lx 200=%08lx LCD70=%08lx DISP70=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
-         (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x70));
+         (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x70),
+         (unsigned long)DISP_REG(0x70));
 
     /* Diagnostics: verify register state after init */
     vlog("  DISP_MODE=%08lx MIXER_004=%08lx",
@@ -815,8 +818,9 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  comp+0x008=%08lx comp+0x00C=%08lx comp+0x220=%08lx",
          (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C),
          (unsigned long)COMP_REG(0x220));
-    vlog("  LCD_CON=%08lx +0x70=%08lx +0x7C=%08lx +0x88=%08lx",
+    vlog("  LCD_CON=%08lx LCD70=%08lx DISP70=%08lx +0x7C=%08lx +0x88=%08lx",
          (unsigned long)LCD_CON, (unsigned long)LCD_REG(0x70),
+         (unsigned long)DISP_REG(0x70),
          (unsigned long)LCD_REG(0x7C), (unsigned long)LCD_REG(0x88));
 
     /* ---- Phase 4: Feed decoded frame to CLCD ---- */
@@ -1062,7 +1066,8 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Re-enable passthrough for VPP test */
-    LCD_REG(0x70) = 0x281;
+    LCD_REG(0x70) = 1;
+    DISP_REG(0x70) = 0x281;
 
     /* DMA ADDRESS TEST: point at Rockbox code (0x08000000) instead of our buffer.
      * If output CHANGES from blue → DMA IS reading, just wrong color/format.
@@ -1110,7 +1115,8 @@ enum plugin_status plugin_start(const void *parameter)
             vlog("  GRAM(%d,120)=%08lx", test_x[ti], (unsigned long)px);
         }
         LCD_CON = 0x81100DB9;
-        LCD_REG(0x70) = 0x281;
+        LCD_REG(0x70) = 1;
+        DISP_REG(0x70) = 0x281;
     }
 
     /* ---- Phase 7: Layer 5 ON/OFF diagnostic ---- */
@@ -1154,7 +1160,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
     LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
     { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx", label, (unsigned long)_g); } \
-    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 0x281; \
+    LCD_CON = 0x81100DB9; LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281; \
 } while(0)
 
     /* Test A: Layer 5 OFF, BG_COLOR = gray */
