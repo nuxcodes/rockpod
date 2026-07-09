@@ -1084,7 +1084,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable Layer 5 to test BG_COLOR only (no VP data) */
     COMP_REG(0x028) = 0;  /* Layer 5 OFF */
     COMP_REG(0x00C) = 0x0000FF00;  /* BG_COLOR = bright GREEN */
-    vlog("  L5 OFF, BG=GREEN. If screen turns GREEN → compositor output works!");
+    vlog("  L5 OFF, BG=GREEN. comp: 000=%08lx 0D4=%08lx 200=%08lx",
+         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x0D4),
+         (unsigned long)COMP_REG(0x200));
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
@@ -1100,9 +1102,27 @@ enum plugin_status plugin_start(const void *parameter)
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
     LCD_REG(0x80) = 0;  /* compositor pushes on 1→0 transition (Apple pattern) */
-    /* NO strobe — Apple FUN_000A5080 never fires comp+0x200 per frame */
     vlog("  LCD_8C=%08lx (nonzero=bus busy=compositor pushing)",
          (unsigned long)LCD_REG(0x8C));
+    /* Wait for push to finish, then check GRAM at (0,0) */
+    { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0);
+      vlog("  bus idle after %s", t > 0 ? "transfer" : "timeout"); }
+    /* Quick GRAM spot check: read pixel at (0,0) */
+    LCD_REG(0x70) = 0;  /* passthrough off for read */
+    LCD_REG(0x80) = 1;
+    LCD_CON = 0x80000DA8;
+    lcd_cmd(0x200); lcd_data(0);
+    lcd_cmd(0x201); lcd_data(0);
+    lcd_cmd(0x202);
+    { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+    LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+    LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+    LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
+    vlog("  GRAM(0,0) after comp push: %08lx", (unsigned long)LCD_DBUFF);
+    LCD_CON = 0x81100DB9;
+    LCD_REG(0x80) = 0;
+    LCD_REG(0x70) = 1;
+    DISP_REG(0x70) = 0x281;
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
     vlog("  After 3s: LCD_8C=%08lx comp+0x200=%08lx",
          (unsigned long)LCD_REG(0x8C), (unsigned long)COMP_REG(0x200));
