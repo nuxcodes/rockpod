@@ -575,7 +575,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34p ===");
+    vlog("=== VPU-B → VPP Integration Test v34q ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1077,7 +1077,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Phase 5c: GRAM window + release — set panel to receive, then let
      * compositor push via passthrough. Single setup, no per-frame toggle. */
-    vlog("Phase 5c: GRAM setup + release + strobe (3s)");
+    vlog("Phase 5c: GRAM setup + release (Apple pattern, 3s)");
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
@@ -1092,20 +1092,21 @@ enum plugin_status plugin_start(const void *parameter)
     }
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
-    LCD_REG(0x80) = 0;  /* release bus to compositor */
-    /* NOW trigger compositor i80 push — panel is ready, bus is released */
-    COMP_REG(0x200) |= 0x80;
+    LCD_REG(0x80) = 0;  /* compositor pushes on 1→0 transition (Apple pattern) */
+    /* NO strobe — Apple FUN_000A5080 never fires comp+0x200 per frame */
+    vlog("  LCD_8C=%08lx (nonzero=bus busy=compositor pushing)",
+         (unsigned long)LCD_REG(0x8C));
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
     vlog("  After 3s: LCD_8C=%08lx comp+0x200=%08lx",
          (unsigned long)LCD_REG(0x8C), (unsigned long)COMP_REG(0x200));
 
     /* ---- Phase 6: Per-frame push loop (K1+K2: gate cycling required) ---- */
 
-    vlog("Phase 6: Push loop (10 frames, vpp_test.c pattern)");
+    vlog("Phase 6: Push loop (Apple pattern: LCD+0x80 toggle, NO strobe)");
 
-    for (int push = 0; push < 10; push++) {
+    for (int push = 0; push < 5; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* Step 1: CPU takes bus to set up GRAM window on panel */
+        /* Apple FUN_000A5080 pattern: bus idle → LCD+0x80=1 → GRAM → LCD+0x80=0 → bus idle */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
@@ -1116,15 +1117,11 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x213); lcd_data(239);
             lcd_cmd(0x200); lcd_data(0);
             lcd_cmd(0x201); lcd_data(0);
-            lcd_cmd(0x202);  /* panel now in data-receive mode */
+            lcd_cmd(0x202);
         }
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
-        /* Step 2: Release bus to compositor BEFORE triggering */
-        LCD_REG(0x80) = 0;
-        /* Step 3: NOW trigger compositor i80 push (bit 7 = one-shot) */
-        COMP_REG(0x200) |= 0x80;
-        /* Step 4: Wait for compositor to push full frame via i80 */
+        LCD_REG(0x80) = 0;  /* compositor pushes on this 1→0 transition */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
@@ -1269,10 +1266,8 @@ enum plugin_status plugin_start(const void *parameter)
     } \
     while (!(LCD_STATUS & 0x2)); \
     LCD_CON = 0x81100DB9; \
-    /* Step 2: Release bus THEN trigger compositor (bit 7 = one-shot) */ \
+    /* Step 2: Release bus — compositor pushes on 1→0 (Apple pattern, no strobe) */ \
     LCD_REG(0x80) = 0; \
-    COMP_REG(0x000) = 1; \
-    COMP_REG(0x200) |= 0x80; \
     /* Step 3: Wait for compositor to push frame via i80 */ \
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     /* Observe */ \
@@ -1333,13 +1328,19 @@ enum plugin_status plugin_start(const void *parameter)
      * the bus arbiter and causes post-exit panic on USB connect.
      * The VPP pipeline is left running but harmless with passthrough off. */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+    /* Disable passthrough and VPP output BEFORE restoring LCD */
+    LCD_REG(0x70) = 0;               /* passthrough OFF */
+    LCD_REG(0x80) = 0;               /* release bus */
+    DISP_REG(0x70) = 0;              /* clear DISP panel routing */
+    DISP_REG(0x000) = 0;             /* stop DISP */
+    COMP_REG(0x000) = 0;             /* stop compositor */
+    for (volatile int d = 0; d < 10000; d++);
+    /* Restore LCD registers */
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
     LCD_REG(0x7C) = saved_lcd_7c;
-    LCD_REG(0x74) = saved_lcd_74;    /* restore passthrough dimensions */
-    LCD_REG(0x78) = saved_lcd_78;    /* restore passthrough timing */
-    LCD_REG(0x70) = 0;               /* passthrough OFF */
-    LCD_REG(0x80) = 0;               /* release bus */
+    LCD_REG(0x74) = saved_lcd_74;
+    LCD_REG(0x78) = saved_lcd_78;
     PWRCON(0) |= (1 << 1);           /* gate LCD clock */
     for (volatile int d = 0; d < 10000; d++);
     PWRCON(0) &= ~(1 << 1);          /* ungate LCD clock */
@@ -1349,7 +1350,8 @@ enum plugin_status plugin_start(const void *parameter)
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
 
-    /* ---- GPIO7.1 no longer modified — skip restore ---- */
+    /* ---- Restore GPIO7.1 to ATA (v34 always did this) ---- */
+    PCON(7) = (PCON(7) & ~0xF0) | 0x40;  /* pin 1 = function 4 (ATA) */
     rlog_mode = false;  /* vlog() back to file mode */
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_APPEND, 0666);
     rlog_flush();        /* write RAM-buffered logs to disk */
