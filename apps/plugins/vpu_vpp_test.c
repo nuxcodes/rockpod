@@ -288,13 +288,15 @@ static void disp_init(void)
     DISP_REG(0x280) = 0;
     DISP_REG(0x3C0) = 0;              /* ROM 0x167E30 */
     DISP_REG(0x3D0) = 1;              /* LCD select — ROM 0x167E34 */
-    /* DISP+0x3C8/0x3D4: ROM FUN at 0x69A24 computes from panel config.
-     * For panel_cfg[6]=0, panel_cfg[7]=0: value = 8. ROM-verified. */
+    /* DISP+0x3C4/3C8/3CC/3D4: ROM FUN at 0x69A24 writes these.
+     * 0x3C8/0x3D4 = 0x08 verified (panel_cfg[6]=0, panel_cfg[7]=0 path).
+     * 0x3C4/0x3CC depend on PLL computation (ROM 0x699EC BL 0xDCC14) —
+     * 0x18000 was from earlier agent, kept as best available value.
+     * Added iBoot residual dump to capture actual values for verification. */
+    DISP_REG(0x3C4) = 0x00018000;
     DISP_REG(0x3C8) = 0x00000008;
+    DISP_REG(0x3CC) = 0x00018000;
     DISP_REG(0x3D4) = 0x00000008;
-    /* NOTE: DISP+0x3C4/0x3CC depend on PLL computation (ROM 0x699EC BL 0xDCC14).
-     * Cannot determine statically — leave at POR/iBoot defaults.
-     * DISP+0x014 = 0x440C is set separately below. */
 
     /* Gamma LCD mode */
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;
