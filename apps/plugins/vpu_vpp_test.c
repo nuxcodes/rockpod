@@ -793,7 +793,12 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x040) = 0;                            /* unused for 3-plane */
     COMP_REG(0x044) = PHYS(cr_out);                 /* Layer 5 struct[1] = VP+0x030 */
 
-    /* CLCD+0x008 = 0 (VP_SHADOW_UPDATE cleared, matches Apple init) */
+    /* v34e: VP shadow commit — try BOTH Samsung (0x008=1) and Apple (0x3C0=1).
+     * Samsung kernel (exynos_mixer.c:406): VP_SHADOW_UPDATE=1 commits addresses.
+     * Apple ROM writes 0x008=0 during init but VP DMA has NEVER started in ANY
+     * version. ILI9326 has no vsync pin — shadow latch may need explicit trigger.
+     * VP+0x3C0=1 was already set above (planar mode). Try 0x008=1 as well. */
+    CLCD_REG(0x008) = 1;
 
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
