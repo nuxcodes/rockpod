@@ -910,7 +910,12 @@ enum plugin_status plugin_start(const void *parameter)
     CLCD_REG(0x040) = frame_h;
 
     /* FF2 VERIFIED: 3 separate RMW ops for DISP trigger */
-    CLCD_REG(0x000) |= 1;              /* CLCD enable (shadow) */
+    /* VP trigger: disable→re-enable to force immediate shadow latch.
+     * Samsung VP shadows latch at VSYNC (S5PC100 doc). If no VSYNC on i80 path,
+     * shadows never commit. Disable→re-enable might force immediate latch. */
+    CLCD_REG(0x000) &= ~1;             /* disable VP first */
+    for (volatile int d = 0; d < 1000; d++);
+    CLCD_REG(0x000) |= 1;              /* re-enable → force latch */
     MIXER_REG(0x000) = 7;              /* MIXER GO (bits 0+1+2, SYNC_ENABLE required) */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }  /* latch config */
     { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }  /* latch buffer */
