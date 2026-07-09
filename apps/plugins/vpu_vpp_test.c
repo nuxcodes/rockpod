@@ -732,6 +732,13 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)iboot_timing[0], (unsigned long)iboot_timing[1],
          (unsigned long)iboot_timing[2], (unsigned long)iboot_timing[3],
          (unsigned long)iboot_timing[4]);
+    {
+        volatile uint32_t *ct = (volatile uint32_t *)COMP_BASE;
+        vlog("  POST-WRITE timing: %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)ct[0x1EC/4], (unsigned long)ct[0x1F0/4],
+             (unsigned long)ct[0x1F4/4], (unsigned long)ct[0x1F8/4],
+             (unsigned long)ct[0x1FC/4]);
+    }
 
     /* Wait for compositor to settle */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
