@@ -1142,15 +1142,17 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(160);
         lcd_cmd(0x201); lcd_data(120);
         lcd_cmd(0x202);
-        while (!(LCD_STATUS & 0x2));
-        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d0 = LCD_DBUFF;
-        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d1 = LCD_DBUFF;
-        LCD_RDATA = 0; while (!(LCD_STATUS & 1)); uint32_t d2 = LCD_DBUFF;
+        { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+        uint32_t d0 = 0xDEAD, d1 = 0xDEAD, d2 = 0xDEAD;
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } d0 = LCD_DBUFF;
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } d1 = LCD_DBUFF;
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } d2 = LCD_DBUFF;
         vlog("  RED GRAM: d0=%08lx d1=%08lx d2=%08lx",
              (unsigned long)d0, (unsigned long)d1, (unsigned long)d2);
         vlog("  RED >>1:  d0=%08lx d1=%08lx d2=%08lx",
              (unsigned long)(d0>>1), (unsigned long)(d1>>1), (unsigned long)(d2>>1));
         LCD_CON = 0x81100DB9;
+        LCD_REG(0x80) = 0;
     }
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
@@ -1198,10 +1200,10 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x200); lcd_data(test_x[ti]);
             lcd_cmd(0x201); lcd_data(120);
             lcd_cmd(0x202);
-            while (!(LCD_STATUS & 0x2));
-            LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
-            LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF;
-            LCD_RDATA = 0; while (!(LCD_STATUS & 1));
+            { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+            LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+            LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+            LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
             uint32_t px = LCD_DBUFF;
             vlog("  GRAM(%d,120)=%08lx >>1=%08lx", test_x[ti], (unsigned long)px, (unsigned long)(px>>1));
         }
@@ -1239,16 +1241,16 @@ enum plugin_status plugin_start(const void *parameter)
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     /* Observe */ \
     { uint32_t _t = USEC_TIMER; while ((USEC_TIMER - _t) < (obs_us)) rb->backlight_on(); } \
-    /* GRAM readback (passthrough off). 3 reads: 2 dummy + 1 data (ILI9326). */ \
+    /* GRAM readback (passthrough off). 3 reads with timeouts. */ \
     LCD_REG(0x70) = 0; \
     for (volatile int _d = 0; _d < 10000; _d++); \
     LCD_REG(0x80) = 1; \
     LCD_CON = 0x80000DA8; \
     lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
-    while (!(LCD_STATUS & 0x2)); \
-    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
-    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); (void)LCD_DBUFF; \
-    LCD_RDATA = 0; while (!(LCD_STATUS & 1)); \
+    { int _w = 100000; while (!(LCD_STATUS & 0x2) && --_w > 0); } \
+    LCD_RDATA = 0; { int _w = 100000; while (!(LCD_STATUS & 1) && --_w > 0); } (void)LCD_DBUFF; \
+    LCD_RDATA = 0; { int _w = 100000; while (!(LCD_STATUS & 1) && --_w > 0); } (void)LCD_DBUFF; \
+    LCD_RDATA = 0; { int _w = 100000; while (!(LCD_STATUS & 1) && --_w > 0); } \
     { uint32_t _g = LCD_DBUFF; vlog("  %s: GRAM=%08lx >>1=%08lx", label, (unsigned long)_g, (unsigned long)(_g>>1)); } \
     LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0; LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281; \
 } while(0)
