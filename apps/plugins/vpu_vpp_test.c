@@ -374,8 +374,12 @@ static void compositor_init(void)
     volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
 
     /* Log compositor register state after ungate */
+    /* Capture iBoot residuals before we overwrite */
     for (int i = 0; i < 5; i++)
         iboot_timing[i] = c[(0x1EC + i*4)/4];
+    vlog("  comp residuals: 1E0=%08lx 1E4=%08lx 1E8=%08lx",
+         (unsigned long)c[0x1E0/4], (unsigned long)c[0x1E4/4],
+         (unsigned long)c[0x1E8/4]);
 
     c[0x200/4] &= ~1;           /* clear SWTRGCMD */
     c[0x004/4] = 1;
@@ -407,7 +411,13 @@ static void compositor_init(void)
         c[0xC00/4 + i] = i * 4;
     }
 
-    /* i80 bus timing (v54 iBoot capture — only known values) */
+    /* i80 bus timing (iBoot capture — only known values).
+     * These registers reset to 0 when compositor clocks are gated.
+     * comp+0x1E0/0x1E4: i80 engine config, also from iBoot residuals.
+     * vpp_test.c log showed: +1E0=0x4A8 +1E4=0x812 +1E8=0x0 */
+    c[0x1E0/4] = 0x4A8;
+    c[0x1E4/4] = 0x812;
+    c[0x1E8/4] = 0;
     c[0x1EC/4] = 0x0C;
     c[0x1F0/4] = 0x26;
     c[0x1F4/4] = 0x10;
