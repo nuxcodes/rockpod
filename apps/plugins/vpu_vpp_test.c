@@ -963,12 +963,11 @@ enum plugin_status plugin_start(const void *parameter)
      * Without this, compositor GO might fire before DISP VSYNC is ready. */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 50000) rb->backlight_on(); }
 
-    /* Fire initial per-frame trigger to get DISP/MIXER/VP into active state */
-    CLCD_REG(0x000) |= 1;
-    MIXER_REG(0x000) = 7;
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+    /* v52: Do NOT fire VP/MIXER/DISP trigger here.
+     * Those are the TV-out chain (per agent: VP→MIXER→DISP = TV-out only).
+     * The compositor reads directly from DRAM and pushes to LCD.
+     * Enabling VP DMA wastes bandwidth and may interfere. */
+    vlog("  VP/MIXER/DISP NOT triggered (TV-out chain, not LCD)");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 50000) rb->backlight_on(); }
 
     /* Compositor GO — MUST be AFTER passthrough (LCD+0x70=1).
