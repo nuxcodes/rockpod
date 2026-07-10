@@ -347,10 +347,11 @@ static void disp_go(void)
     }
 
     /* DISP ENABLE (ROM 0x1683DC-0x1683E8): write 0, read back, set bit 0.
-     * Prior versions did this twice with DISP+0x284=0 between — unnecessary.
-     * Apple does it once, cleanly. */
+     * Also set bit 1 (ENVID_F) for continuous VSYNC generation.
+     * Samsung: ENVID=1 + ENVID_F=0 stops after current frame.
+     * Without VSYNC, compositor render never triggers. */
     DISP_REG(0x000) = 0;
-    { uint32_t t = DISP_REG(0x000); DISP_REG(0x000) = t | 1; }
+    { uint32_t t = DISP_REG(0x000); DISP_REG(0x000) = t | 3; }  /* bits 0+1 */
 }
 
 /* ---- Compositor Init (ROM FUN_0014d240) ---- */
