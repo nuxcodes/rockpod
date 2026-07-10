@@ -871,11 +871,14 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x050) = 0;
     COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);
 
-    /* Buffer addresses (ROM FUN_0014D6B4 format 8 path) */
+    /* Buffer addresses (ROM FUN_0014D6B4 format 8 path):
+     * comp+0x038 = dma_addrs[0] = Y plane
+     * comp+0x03C = dma_addrs[2] = U/Cb plane
+     * comp+0x044 = dma_addrs[1] = V/Cr plane */
     COMP_REG(0x038) = PHYS(y_out);
-    COMP_REG(0x03C) = PHYS(cr_out);
+    COMP_REG(0x03C) = PHYS(cb_out);    /* Cb/U at 0x03C (agent-verified) */
     COMP_REG(0x040) = 0;
-    COMP_REG(0x044) = PHYS(cb_out);
+    COMP_REG(0x044) = PHYS(cr_out);    /* Cr/V at 0x044 (agent-verified) */
 
     /* v47: Initialize scaler coefficient tables.
      * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
@@ -1410,17 +1413,16 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* ROM FUN_000A5080 push sequence (ROM-verified):
-         * 1. Wait LCD bus idle (FUN_000be7fc)
-         * 2. iBoot call (FUN_000bf0ec) — can't replicate
-         * 3. LCD+0x80 = 1
-         * 4. vtable[0x0C](0,0,240,320) — can't replicate
-         * 5. LCD+0x80 = 0
-         * 6. Wait LCD bus idle
-         * We substitute step 4 with compositor GO + delay. */
+        /* v49 push pattern (produced consistent output): */
+        CLCD_REG(0x000) |= 1;
+        MIXER_REG(0x000) = 7;
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+        for (volatile int d = 0; d < 10000; d++);
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-        /* GRAM window setup — ILI9326 needs to know where pixels go */
-        lcd_set_con(0x80000DA9);
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
         if (panel_type >= 2) {
             lcd_cmd(0x210); lcd_data(0);
             lcd_cmd(0x211); lcd_data(319);
@@ -1430,12 +1432,9 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x201); lcd_data(0);
             lcd_cmd(0x202);
         }
-        lcd_set_con(0x81100DB9);
-        COMP_REG(0x200) |= 0x10080;  /* re-latch */
-        COMP_REG(0x000) = 1;          /* compositor GO */
-        LCD_REG(0x80) = 1;            /* take bus */
-        for (volatile int d = 0; d < 50000; d++);  /* render time */
-        LCD_REG(0x80) = 0;            /* release → push */
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x81100DB9;
+        LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
