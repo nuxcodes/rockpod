@@ -517,7 +517,6 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
          * arrives with DC=0 → panel treats as commands → GRAM not updated.
          * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
          * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
-        lcd_data(0x0000);  /* dummy pixel to force DC=1 */
         lcd_set_con(0x81100DB9);
     }
 
@@ -598,7 +597,6 @@ static void lcd_push_frame(int panel_type)
          * arrives with DC=0 → panel treats as commands → GRAM not updated.
          * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
          * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
-        lcd_data(0x0000);  /* dummy pixel to force DC=1 */  /* panel enters GRAM-write state */
     }
     /* OOB-8: Apple polls LCD_STATUS bit 1 BEFORE restoring LCD_CON.
      * Without poll, P9 restore corrupts 0x202 still on the bus. */
@@ -627,7 +625,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35e ===");
+    vlog("=== VPU-B → VPP Integration Test v35f ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -966,7 +964,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35e: VP must be DISABLED when writing plane addresses to bypass the
+     * v35f: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
@@ -1245,7 +1243,6 @@ enum plugin_status plugin_start(const void *parameter)
          * arrives with DC=0 → panel treats as commands → GRAM not updated.
          * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
          * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
-        lcd_data(0x0000);  /* dummy pixel to force DC=1 */
     }
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
@@ -1307,7 +1304,6 @@ enum plugin_status plugin_start(const void *parameter)
          * arrives with DC=0 → panel treats as commands → GRAM not updated.
          * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
          * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
-        lcd_data(0x0000);  /* dummy pixel to force DC=1 */
         }
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
@@ -1351,7 +1347,6 @@ enum plugin_status plugin_start(const void *parameter)
          * arrives with DC=0 → panel treats as commands → GRAM not updated.
          * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
          * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
-        lcd_data(0x0000);  /* dummy pixel to force DC=1 */
         /* Write 320x240 = 76800 pixels of RED (RGB565: 0xF800) */
         for (int p = 0; p < 76800; p++) {
             lcd_data(0xF800);
