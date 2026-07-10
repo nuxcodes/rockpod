@@ -714,28 +714,21 @@ enum plugin_status plugin_start(const void *parameter)
     rb->splashf(HZ/2, "Decoded %dx%d", frame_w, frame_h);
 
     /* ---- Phase 2b: Test pattern selection ---- */
-#if 1 /* Gradient test pattern for visual verification */
-    vlog("Phase 2b: GRADIENT test pattern (Y=row, Cb=Cr=128)");
+#if 1 /* SOLID COLOR test — verify compositor reads uniform data correctly */
+    vlog("Phase 2b: SOLID Y=128 Cb=128 Cr=128 (should be uniform gray)");
     {
-        /* v47: Write through UNCACHED alias to guarantee DRAM visibility.
-         * Previous versions wrote through cached memory + dcache flush,
-         * but the compositor still showed the decoded frame. The VPU-B
-         * decoder writes via DMA (uncached), so the gradient must also
-         * bypass cache to be visible to the compositor's DMA engine. */
         uint8_t *y_unc = (uint8_t *)((uintptr_t)y_out | 0x40000000);
         uint8_t *cb_unc = (uint8_t *)((uintptr_t)cb_out | 0x40000000);
         uint8_t *cr_unc = (uint8_t *)((uintptr_t)cr_out | 0x40000000);
-        for (int row = 0; row < frame_h; row++)
-            for (int col = 0; col < frame_w; col++)
-                y_unc[row * frame_w + col] = (row * 255) / (frame_h - 1);
+        for (int i = 0; i < frame_w * frame_h; i++)
+            y_unc[i] = 128;
         for (int i = 0; i < (frame_w/2)*(frame_h/2); i++) {
             cb_unc[i] = 128;
             cr_unc[i] = 128;
         }
-        /* Also invalidate dcache so CPU reads see the uncached writes */
         rb->commit_discard_dcache();
         uint8_t *y_buf = (uint8_t *)y_out;
-        vlog("  Y[0,0]=%d Y[120,0]=%d Y[239,0]=%d", y_buf[0], y_buf[120*frame_w], y_buf[239*frame_w]);
+        vlog("  Y[0]=%d Y[mid]=%d Y[last]=%d", y_buf[0], y_buf[120*frame_w], y_buf[frame_w*frame_h-1]);
     }
 #else
     vlog("Phase 2b: Using ACTUAL decoded frame (not white override)");
