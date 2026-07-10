@@ -555,7 +555,15 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
 
 static void lcd_push_frame(int panel_type)
 {
-    /* Wait for bus idle — no timeout (Apple ROM 0xbe7fc has none) */
+    /* Apple per-frame trigger FIRST (render compositor output) */
+    CLCD_REG(0x000) |= 1;
+    MIXER_REG(0x000) = 7;
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+    for (volatile int d = 0; d < 5000; d++);
+
+    /* Wait for bus idle */
     while (LCD_REG(0x8C) & 3);
 
     /* CPU takes bus (ROM 0xa5094) */
@@ -589,12 +597,6 @@ static void lcd_push_frame(int panel_type)
     /* OOB-7: LCD+0x80=0 STARTS autonomous push. MCU controller pushes
      * full frame (~12ms for 76800px). Apple polls 0x8C with no timeout. */
     LCD_REG(0x80) = 0;
-    /* Full Apple per-frame trigger */
-    CLCD_REG(0x000) |= 1;
-    MIXER_REG(0x000) = 7;
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
     while (LCD_REG(0x8C) & 3);
 }
 
@@ -1393,6 +1395,14 @@ enum plugin_status plugin_start(const void *parameter)
     /* Helper macro: set GRAM window + observe + readback */
 #define GRAM_TEST(label, obs_us) do { \
     /* Step 1: CPU takes bus, set GRAM window on panel */ \
+    /* Step 1: Trigger FIRST (prepare compositor output) */ \
+    CLCD_REG(0x000) |= 1; \
+    MIXER_REG(0x000) = 7; \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 1; } \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 2; } \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 4; } \
+    for (volatile int _rd = 0; _rd < 10000; _rd++); \
+    /* Step 2: LCD push */ \
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     LCD_REG(0x80) = 1; \
     LCD_CON = 0x80000DA9; \
@@ -1405,13 +1415,8 @@ enum plugin_status plugin_start(const void *parameter)
     } \
     while (!(LCD_STATUS & 0x2)); \
     LCD_CON = 0x81100DB9; \
-    /* Step 2: Release bus + full Apple per-frame trigger */ \
+    /* Step 3: Release bus */ \
     LCD_REG(0x80) = 0; \
-    CLCD_REG(0x000) |= 1; \
-    MIXER_REG(0x000) = 7; \
-    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 1; } \
-    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 2; } \
-    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 4; } \
     /* Step 3: Wait for compositor to push frame via i80 */ \
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     /* Observe */ \
