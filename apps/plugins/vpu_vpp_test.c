@@ -480,10 +480,7 @@ static void compositor_init(void)
     c[0x024/4] = 0x00FFFFFF;    /* Fix 2: color mask — ROM 0x14D410 MVN r1,#0xFF000000 */
     /* DO NOT fire GO here — must wait until LCD passthrough is active.
      * vpp_test.c v137 fires GO in Phase 6 AFTER passthrough, and that works. */
-    /* comp+0x3AC: Apple writes during passthrough init (FUN_0014DEEC calls
-     * FUN_000D7384(0x40,0x40,0,1,1) → 0x40<<20|0x40<<8|0<<2|1<<1|1 = 0x04004003).
-     * ROM-verified from literal pool DAT_000d73b0 = 0x38900000. */
-    c[0x3AC/4] = 0x04004003;
+    /* comp+0x3AC: v49 did NOT write this. Leave at default. */
 }
 
 /* ---- LCD Passthrough Init ---- */
@@ -620,7 +617,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v58 ===");
+    vlog("=== VPU-B → VPP Integration Test v59 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -876,15 +873,6 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x050) = 0;
     COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);
 
-    /* Buffer addresses (ROM FUN_0014D6B4 format 8 path):
-     * comp+0x038 = dma_addrs[0] = Y plane
-     * comp+0x03C = dma_addrs[2] = U/Cb plane
-     * comp+0x044 = dma_addrs[1] = V/Cr plane */
-    COMP_REG(0x038) = PHYS(y_out);
-    COMP_REG(0x03C) = PHYS(cb_out);    /* Cb/U at 0x03C (agent-verified) */
-    COMP_REG(0x040) = 0;
-    COMP_REG(0x044) = PHYS(cr_out);    /* Cr/V at 0x044 (agent-verified) */
-
     /* v47: Initialize scaler coefficient tables.
      * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
      * comp+0x180-0x1C4 (9x2=18 dwords): horizontal 2-tap
@@ -962,11 +950,12 @@ enum plugin_status plugin_start(const void *parameter)
      * Without this, compositor GO might fire before DISP VSYNC is ready. */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 50000) rb->backlight_on(); }
 
-    /* v52: Do NOT fire VP/MIXER/DISP trigger here.
-     * Those are the TV-out chain (per agent: VP→MIXER→DISP = TV-out only).
-     * The compositor reads directly from DRAM and pushes to LCD.
-     * Enabling VP DMA wastes bandwidth and may interfere. */
-    vlog("  VP/MIXER/DISP NOT triggered (TV-out chain, not LCD)");
+    /* Fire initial VP/MIXER/DISP trigger (v49 had this, v58 removed it) */
+    CLCD_REG(0x000) |= 1;
+    MIXER_REG(0x000) = 7;
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 50000) rb->backlight_on(); }
 
     /* Compositor GO — MUST be AFTER passthrough (LCD+0x70=1).
@@ -978,9 +967,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Clear compositor status/interrupts before GO — pending flags
      * might prevent render engine from starting */
     COMP_REG(0x010) = 0x003FEFFE;  /* write-to-clear all pending bits */
-    COMP_REG(0x200) |= 0x80;   /* bit 7 only — do NOT set bit 0 (SWTRGCMD).
-                                 * Apple clears SWTRGCMD for continuous rendering.
-                                 * Setting bit 0 puts compositor in single-shot mode. */
+    COMP_REG(0x200) |= 0x81;   /* bit 7 + bit 0 (SWTRGCMD) — v49 had this */
     COMP_REG(0x204) = 2;      /* step 15: re-assert DMA config */
     COMP_REG(0x20C) = 2;
     COMP_REG(0x208) = 0;
@@ -1420,13 +1407,27 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* v58: Minimal push — match Apple ROM FUN_000A5080.
-         * Apple does: bus_idle → LCD+0x80=1 → vtable → LCD+0x80=0 → bus_idle
-         * No GRAM window commands, no LCD_CON switching, no VPP triggers.
-         * GRAM window was set in lcd_passthrough_init. */
+        /* v49 push pattern restored */
+        CLCD_REG(0x000) |= 1;
+        MIXER_REG(0x000) = 7;
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+        for (volatile int d = 0; d < 10000; d++);
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
-        for (volatile int d = 0; d < 50000; d++);
+        LCD_CON = 0x80000DA9;
+        if (panel_type >= 2) {
+            lcd_cmd(0x210); lcd_data(0);
+            lcd_cmd(0x211); lcd_data(319);
+            lcd_cmd(0x212); lcd_data(0);
+            lcd_cmd(0x213); lcd_data(239);
+            lcd_cmd(0x200); lcd_data(0);
+            lcd_cmd(0x201); lcd_data(0);
+            lcd_cmd(0x202);
+        }
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x81100DB9;
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
