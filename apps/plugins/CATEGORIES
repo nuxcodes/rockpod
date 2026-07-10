@@ -212,3 +212,5 @@ jpeg_hw_test,apps
 h264_poc,apps
 jpeg_poc,apps
 vpp_test,apps
+vpp_mvp_test,apps
+vpu_vpp_test,apps
