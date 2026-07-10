@@ -875,10 +875,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* Fix 1: Layer 5 stride (N1+N2: ROM 0x14cebc, stale 0x01E001E0 from iBoot) */
     COMP_REG(0x02C) = frame_w | ((frame_w / 2) << 16); /* Y=320 | UV=160<<16 = 0x00A00140 */
     COMP_REG(0x030) = 0;                                /* source origin (0,0) */
-    COMP_REG(0x034) = ((uint32_t)frame_h << 16) | frame_w; /* source rect end */
+    COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16); /* source rect: H_low | W_high */
     COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
     COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
-    COMP_REG(0x054) = ((uint32_t)out_h << 16) | out_w;  /* dest size */
+    COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);  /* dest: H_low | W_high */
 
     /* v47: Initialize scaler coefficient tables.
      * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
