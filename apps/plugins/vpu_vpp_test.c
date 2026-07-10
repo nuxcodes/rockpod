@@ -548,7 +548,9 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
      * Agent-verified: 0x80000DA9 does NOT exist in ROM. */
     {
         uint32_t spi_saved = lcd_enter_spi_cmd();
-        spi_cmd(0x3A); spi_data(0x66);         /* COLMOD: RGB666 18-bit */
+        /* Apple FUN_000d70d0 sends: MADCTL, CASET, PASET, RAMWR.
+         * Does NOT send COLMOD — panel keeps iBoot's pixel format.
+         * Rockbox lcd-6g.c also never sets COLMOD. */
         spi_cmd(0x36); spi_data(0x00);          /* MADCTL: normal orientation */
         spi_cmd(0x2A);                           /* CASET: column 0-239 (panel native) */
         spi_data(0x00); spi_data(0x00);
@@ -1696,8 +1698,7 @@ enum plugin_status plugin_start(const void *parameter)
     for (volatile int d = 0; d < 10000; d++);
     /* v35g EXACT shutdown — panel commands BEFORE clock cycle, NO LCD+0x80=1 */
     lcd_set_con(0x80000DA9);
-    lcd_cmd(0x003); lcd_data(0x0230);  /* Entry Mode: restore RGB */
-    lcd_cmd(0x3A); lcd_data(0x06);     /* COLMOD: restore Rockbox */
+    lcd_cmd(0x003); lcd_data(0x0230);  /* Entry Mode: restore RGB for Rockbox */
     lcd_set_con(0x81100DB9);
     /* Restore LCD registers */
     LCD_REG(0x88) = saved_lcd_88;
