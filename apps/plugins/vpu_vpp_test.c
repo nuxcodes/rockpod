@@ -509,10 +509,11 @@ static void compositor_init(void)
     c[0x024/4] = 0x00FFFFFF;    /* Fix 2: color mask — ROM 0x14D410 MVN r1,#0xFF000000 */
     /* DO NOT fire GO here — must wait until LCD passthrough is active.
      * vpp_test.c v137 fires GO in Phase 6 AFTER passthrough, and that works. */
-    /* comp+0x3AC: ROM FUN_0014DEEC calls FUN_000D7384(0x40,0x40,0,1,1).
-     * Enables landscape→portrait rotation for 240×320 native panel.
-     * Verified from ROM at 0xD7384 pool 0xD73B0=0x38900000. */
-    c[0x3AC/4] = 0x04004003;
+    /* comp+0x3AC: v49 did NOT have this and rendered full screen.
+     * Apple writes 0x04004003 for landscape→portrait rotation with
+     * MIPI DCS mode. With ILI9326/P18 GRAM window in landscape,
+     * rotation causes portrait/landscape mismatch → partial rendering.
+     * Leave at default (no rotation) for ILI9326 mode. */
 }
 
 /* ---- LCD Passthrough Init ---- */
