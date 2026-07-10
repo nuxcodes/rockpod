@@ -528,6 +528,10 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
      * Without DBI=RGB666, panel misinterprets compositor pixel data. */
     lcd_set_con(0x80000DA9);
     lcd_cmd(0x3A); lcd_data(0x66);  /* COLMOD: DBI=18-bit, DPI=18-bit */
+    /* Set panel Entry Mode to BGR (bit 12) to match compositor BGR output.
+     * Rockbox uses 0x0230 (RGB). Agent found compositor bits 17:16=01 = BGR.
+     * ILI9326 register 0x003 bit 12: 0=RGB, 1=BGR. */
+    lcd_cmd(0x003); lcd_data(0x1230);  /* Entry Mode: BGR + original bits */
     lcd_set_con(0x81100DB9);
     LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
     /* LCD+0x80 = 0: release bus to compositor. Without this, compositor
@@ -1565,6 +1569,11 @@ enum plugin_status plugin_start(const void *parameter)
     DISP_REG(0x000) = 0;             /* stop DISP */
     COMP_REG(0x000) = 0;             /* stop compositor */
     for (volatile int d = 0; d < 10000; d++);
+    /* Restore panel to Rockbox state (RGB mode, COLMOD=0x06) */
+    lcd_set_con(0x80000DA9);
+    lcd_cmd(0x003); lcd_data(0x0230);  /* Entry Mode: RGB (restore) */
+    lcd_cmd(0x3A); lcd_data(0x06);     /* COLMOD: restore Rockbox's value */
+    lcd_set_con(0x81100DB9);
     /* Restore LCD registers */
     LCD_REG(0x88) = saved_lcd_88;
     LCD_REG(0x20) = saved_lcd_20;
