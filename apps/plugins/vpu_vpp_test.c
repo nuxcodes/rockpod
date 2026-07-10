@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v55 ===");
+    vlog("=== VPU-B → VPP Integration Test v56 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -856,38 +856,26 @@ enum plugin_status plugin_start(const void *parameter)
     disp_init();
     vlog("  VPP blocks initialized");
 
-    /* Compositor clock reset via PWRCON(0) bits 7+13 (0x2080).
-     * vpp_test.c uses this exact pattern and successfully showed BG_COLOR.
-     * Rockbox headers don't document these bits but they work on S5L8702. */
-    {
-        volatile uint32_t *pwrcon2 = (volatile uint32_t *)0x3C500058;
-        *pwrcon2 &= ~1;  /* PWRCON(2) bit 0 — compositor fabric clock */
-    }
-    PWRCON(0) |= 0x2080;     /* gate compositor clocks */
-    for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) &= ~0x2080;    /* ungate compositor clocks */
-    for (volatile int d = 0; d < 10000; d++);
-    vlog("  Post-reset: comp000=%08lx 008=%08lx 028=%08lx 038=%08lx",
-         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x008),
-         (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x038));
-
     /* Init compositor */
-    vlog("  comp pre-init: 0D4=%08lx 0D8=%08lx 0DC=%08lx 0E0=%08lx",
-         (unsigned long)COMP_REG(0x0D4), (unsigned long)COMP_REG(0x0D8),
-         (unsigned long)COMP_REG(0x0DC), (unsigned long)COMP_REG(0x0E0));
+    vlog("  comp pre-init: 008=%08lx 028=%08lx 034=%08lx 038=%08lx",
+         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x028),
+         (unsigned long)COMP_REG(0x034), (unsigned long)COMP_REG(0x038));
     compositor_init();
 
-    /* Fix 1: Enable compositor Layer 5 (VPP input, YUV420 format)
-     * L2: FUN_0014cc90 at ROM 0x14cc90 writes comp+0x028 = 0x100 for layer 5.
-     * Without this, compositor ignores VPP data and only shows BG_COLOR. */
-    COMP_REG(0x028) = 0x100;  /* format 8 = YUV420 (hardwired CSC?) */
-    /* Fix 1: Layer 5 stride (N1+N2: ROM 0x14cebc, stale 0x01E001E0 from iBoot) */
-    COMP_REG(0x02C) = frame_w | ((frame_w / 2) << 16); /* Y=320 | UV=160<<16 = 0x00A00140 */
-    COMP_REG(0x030) = 0;                                /* source origin (0,0) */
-    COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16); /* source rect: H_low | W_high */
-    COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
-    COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
-    COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);  /* dest: H_low | W_high */
+    /* Layer 5 config (ROM FUN_0014CC90 case 5, format 8) */
+    COMP_REG(0x028) = 0x100;
+    COMP_REG(0x02C) = frame_w | ((frame_w / 2) << 16);
+    COMP_REG(0x030) = 0;
+    COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16);
+    COMP_REG(0x04C) = 0x10001000;
+    COMP_REG(0x050) = 0;
+    COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);
+
+    /* Buffer addresses (ROM FUN_0014D6B4 format 8 path) */
+    COMP_REG(0x038) = PHYS(y_out);
+    COMP_REG(0x03C) = PHYS(cr_out);
+    COMP_REG(0x040) = 0;
+    COMP_REG(0x044) = PHYS(cb_out);
 
     /* v47: Initialize scaler coefficient tables.
      * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
