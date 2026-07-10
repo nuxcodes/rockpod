@@ -856,17 +856,10 @@ enum plugin_status plugin_start(const void *parameter)
     disp_init();
     vlog("  VPP blocks initialized");
 
-    /* v51: Reset compositor via clock gate cycle before init.
-     * Apple's FUN_0014DEEC calls thunk_EXT_FUN_22000318(0x2080,0,1)
-     * before compositor init. 0x2080 = PWRCON bits 13+7.
-     * This likely gates then ungates the compositor clock to reset it.
-     * Without this reset, compositor retains iBoot state that may
-     * conflict with our configuration. */
-    PWRCON(0) |= (1 << 7) | (1 << 13);   /* gate compositor clocks */
-    for (volatile int d = 0; d < 10000; d++);
-    PWRCON(0) &= ~((1 << 7) | (1 << 13)); /* ungate compositor clocks */
-    for (volatile int d = 0; d < 10000; d++);
-    vlog("  Compositor clock reset done (PWRCON0=0x%08lx)", (unsigned long)PWRCON(0));
+    /* v53: The compositor clock gate is UNKNOWN. PWRCON(0) bits 7+13
+     * are UARTC2 and undefined (NOT compositor). The iBoot function
+     * thunk_EXT_FUN_22000318(0x2080,0,1) is not a PWRCON gate cycle.
+     * Skip the broken clock reset — it was gating wrong peripherals. */
     vlog("  Post-reset: comp000=%08lx 008=%08lx 028=%08lx 038=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x008),
          (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x038));
