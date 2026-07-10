@@ -471,11 +471,9 @@ static void compositor_init(void)
             vlog("  Using HARDCODED timing (DRAM overwritten)");
         }
     }
-    /* comp+0x1E0/0x1E4: from vpp_test.c iBoot residuals after gate->ungate.
-     * NOT in ROM — either POR defaults or iBoot-set. Writing observed values. */
-    c[0x1E0/4] = 0x4A8;
-    c[0x1E4/4] = 0x812;
-    c[0x1E8/4] = 0;
+    /* comp+0x1E0/0x1E4/0x1E8: Apple init does NOT write these.
+     * Previously wrote iBoot residuals (0x4A8, 0x812, 0) — removed
+     * to match ROM. Leave at POR/iBoot defaults. */
 
     /* Set bit 30 LAST (master output enable) */
     c[0x008/4] |= 0x40000000;
