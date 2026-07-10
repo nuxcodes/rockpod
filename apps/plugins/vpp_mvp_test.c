@@ -216,7 +216,6 @@ enum plugin_status plugin_start(const void *parameter)
         int nalu_start = pos + sc_pos + sc_len;
         int next_sc = find_start_code(file_buf + nalu_start, file_len - nalu_start, &sc_len);
         int nalu_len = (next_sc >= 0) ? next_sc : file_len - nalu_start;
-        int nal_type = file_buf[nalu_start] & 0x1F;
         int ret = vpu_h264_decode_nalu(dec, file_buf + nalu_start, nalu_len);
         if (ret == 1) {
             vpu_h264_get_frame(dec, &y_out, &cb_out, &cr_out, &frame_w, &frame_h);
@@ -255,6 +254,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* ---- Phase 3: Dump pre-init state ---- */
     vlog("Phase 3: Pre-init dumps");
     PWRCON(0) &= ~0x2080;  /* ungate compositor clocks (bits 7+13) */
+    PWRCON(0) &= ~((1<<14)|(1<<15)|(1<<16));  /* ungate VPP clocks for CSC/VPP reads */
     for (volatile int d = 0; d < 10000; d++);
 
     /* CSC block (0x39A00000) — the missing piece */
@@ -320,7 +320,11 @@ enum plugin_status plugin_start(const void *parameter)
     }
 
     /* GO */
-    COMP_REG(0x200) |= 0x81;
+    /* comp+0x3C4: from runtime data table (agent-found, not in decompiled functions) */
+    COMP_REG(0x3C4) = 2;
+
+    /* GO — do NOT set SWTRGCMD (bit 0). Apple clears it; auto-commit via VSYNC. */
+    COMP_REG(0x200) |= 0x80;  /* bit 7 only, NOT 0x81 */
     COMP_REG(0x000) = 1;
     vlog("  Compositor GO fired");
 
