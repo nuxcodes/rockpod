@@ -1156,20 +1156,26 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Phase 5c: Layer 0 RGB test — fill buffer with GREEN RGB565,
      * use compositor Layer 0 (single-buffer RGB) instead of Layer 5 (YUV) */
-    vlog("Phase 5c: Layer 0 RGB GREEN test (3s)");
+    vlog("Phase 5c: RGB DMA test (3s)");
     {
-        /* Fill our Y buffer with GREEN RGB565 (0x07E0) — reuse Y plane memory */
+        /* Fill buffer with GREEN RGB565 (0x07E0) */
         uint16_t *rgb_buf = (uint16_t *)y_out;
         for (int p = 0; p < frame_w * frame_h; p++)
-            rgb_buf[p] = 0x07E0;  /* RGB565 GREEN */
+            rgb_buf[p] = 0x07E0;
         rb->commit_discard_dcache();
 
-        /* Configure Layer 0 with RGB buffer */
-        COMP_REG(0x060) = PHYS(y_out);  /* Layer 0 buffer address */
-        /* Enable Layer 0 (bit 6), disable Layer 5 (bit 7) */
-        { uint32_t v = COMP_REG(0x008); v |= 0x40; v &= ~0x80; COMP_REG(0x008) = v; }
-        COMP_REG(0x028) = 0;  /* Layer 5 format = off */
-        COMP_REG(0x00C) = 0x00000000;  /* BG_COLOR = black (Layer 0 should show GREEN) */
+        /* Try MULTIPLE approaches to get compositor to read from DRAM:
+         * A. Layer 0 buffer at comp+0x060
+         * B. comp+0x208 as DMA source address
+         * C. Layer 5 Y buffer at comp+0x038 */
+        COMP_REG(0x060) = PHYS(y_out);  /* Layer 0 */
+        COMP_REG(0x208) = PHYS(y_out);  /* DMA source? */
+        COMP_REG(0x038) = PHYS(y_out);  /* Layer 5 Y */
+        /* Enable Layer 0 (bit 6), keep Layer 5 (bit 7) */
+        { uint32_t v = COMP_REG(0x008); v |= 0xC0; COMP_REG(0x008) = v; }
+        COMP_REG(0x028) = 0;  /* Layer 5 format off (use Layer 0 only) */
+        COMP_REG(0x00C) = 0x0000FF00;  /* BG_COLOR = GREEN */
+        COMP_REG(0x220) = 0x0000FF00;  /* try output register */
     }
     COMP_REG(0x220) = 0x0000FF00;  /* also write output readback register */
     vlog("  BEFORE GO: 008=%08lx 010=%08lx 200=%08lx 00C=%08lx",
