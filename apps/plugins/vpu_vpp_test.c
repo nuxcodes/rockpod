@@ -913,6 +913,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* ROM init: bit 7 at step 14, then steps 15-17, then GO at step 18.
      * Steps 15-17 provide ~10 register writes of timing gap between bit 7 and GO.
      * Our earlier back-to-back bit7+GO may not give HW enough time. */
+    /* Clear compositor status/interrupts before GO — pending flags
+     * might prevent render engine from starting */
+    COMP_REG(0x010) = 0x003FEFFE;  /* write-to-clear all pending bits */
     COMP_REG(0x200) |= 0x80;  /* step 14: accept new frame */
     COMP_REG(0x204) = 2;      /* step 15: re-assert DMA config */
     COMP_REG(0x20C) = 2;
