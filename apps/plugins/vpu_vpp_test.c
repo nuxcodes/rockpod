@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v50 ===");
+    vlog("=== VPU-B → VPP Integration Test v51 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -886,45 +886,24 @@ enum plugin_status plugin_start(const void *parameter)
      * all other phases = linear interpolation. */
     {
         volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
-        /* Dump current scaler coefficients BEFORE overwriting */
-        vlog("  comp scaler pre-init (0x0F0-0x10C, first 8):");
+        /* Dump current scaler coefficients — iBoot values */
+        vlog("  comp scaler iBoot (0x0F0-0x10C, first 8):");
         vlog("    %08lx %08lx %08lx %08lx",
              (unsigned long)c[0x0F0/4], (unsigned long)c[0x0F4/4],
              (unsigned long)c[0x0F8/4], (unsigned long)c[0x0FC/4]);
         vlog("    %08lx %08lx %08lx %08lx",
              (unsigned long)c[0x100/4], (unsigned long)c[0x104/4],
              (unsigned long)c[0x108/4], (unsigned long)c[0x10C/4]);
-        /* Dump DRAM source that Apple would use */
-        volatile uint32_t *dram_src = (volatile uint32_t *)0x08A18700;
-        vlog("  DRAM 0x08A18700 (Apple scaler src): %08lx %08lx %08lx %08lx",
-             (unsigned long)dram_src[0], (unsigned long)dram_src[1],
-             (unsigned long)dram_src[2], (unsigned long)dram_src[3]);
-        /* 9x4 vertical filter (comp+0x0F0): pass-through center tap */
-        for (int phase = 0; phase < 9; phase++) {
-            int base = 0x0F0/4 + phase * 4;
-            c[base + 0] = 0;     /* tap 0 */
-            c[base + 1] = 0;     /* tap 1 */
-            c[base + 2] = 128;    /* tap 2 = center (safe for 8/9-bit signed) */
-            c[base + 3] = 0;     /* tap 3 */
-        }
-        /* 9x2 horizontal filter (comp+0x180): pass-through */
-        for (int phase = 0; phase < 9; phase++) {
-            int base = 0x180/4 + phase * 2;
-            c[base + 0] = 128;   /* tap 0 = pass-through */
-            c[base + 1] = 0;     /* tap 1 */
-        }
-        /* 9x2 scaler table 2 (comp+0x31C): pass-through */
-        for (int phase = 0; phase < 9; phase++) {
-            int base = 0x31C/4 + phase * 2;
-            c[base + 0] = 128;
-            c[base + 1] = 0;
-        }
-        /* 9x2 scaler table 3 (comp+0x364): pass-through */
-        for (int phase = 0; phase < 9; phase++) {
-            int base = 0x364/4 + phase * 2;
-            c[base + 0] = 128;
-            c[base + 1] = 0;
-        }
+        /* Also dump 0x180 and 0x31C iBoot values */
+        vlog("  comp 0x180 iBoot: %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x180/4], (unsigned long)c[0x184/4],
+             (unsigned long)c[0x188/4], (unsigned long)c[0x18C/4]);
+        vlog("  comp 0x31C iBoot: %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x31C/4], (unsigned long)c[0x320/4],
+             (unsigned long)c[0x324/4], (unsigned long)c[0x328/4]);
+        /* v50: Do NOT overwrite scaler coefficients. iBoot initialized
+         * them for boot logo display. v49 overwrites caused a red band
+         * artifact. Leave iBoot defaults intact. */
     }
 
     /* v46: Write buffer addresses BEFORE compositor GO.
