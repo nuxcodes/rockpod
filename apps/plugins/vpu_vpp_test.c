@@ -1590,10 +1590,6 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x7C) = saved_lcd_7c;
     LCD_REG(0x74) = saved_lcd_74;
     LCD_REG(0x78) = saved_lcd_78;
-    PWRCON(0) |= (1 << 1);           /* gate LCD clock */
-    for (volatile int d2 = 0; d2 < 10000; d2++);
-    PWRCON(0) &= ~(1 << 1);          /* ungate LCD clock */
-    for (volatile int d3 = 0; d3 < 10000; d3++);
     LCD_PHTIME = 0x33;               /* re-init phase timing */
     LCD_CON = saved_lcd_con;
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
