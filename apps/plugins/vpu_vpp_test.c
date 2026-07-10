@@ -419,6 +419,10 @@ static void compositor_init(void)
     { uint32_t v = c[0x008/4]; v &= ~2; c[0x008/4] = v; }
     /* Step 12: FUN_9B6D4(0) → set bit 8 (inverted logic) */
     { uint32_t v = c[0x008/4]; v |= 0x100; c[0x008/4] = v; }
+    /* Enable Layer 5 (bit 7). ROM init disables all layers, but Apple
+     * enables Layer 5 via vtable[0x3C](ctx, 5, 1) during video start.
+     * Without bit 7, the compositor has NO active layers → no render. */
+    { uint32_t v = c[0x008/4]; v |= 0x80; c[0x008/4] = v; }
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
