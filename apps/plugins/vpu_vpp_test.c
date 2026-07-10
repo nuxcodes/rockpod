@@ -560,6 +560,12 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
         lcd_set_con(0x81100DB9);  /* restore P9 passthrough */
     }
 
+    /* Panel config (v49 had these — needed for compositor P9 pixel format) */
+    lcd_set_con(0x80000DA9);
+    lcd_cmd(0x3A); lcd_data(0x66);    /* COLMOD: DBI=18-bit for compositor pixels */
+    lcd_cmd(0x003); lcd_data(0x1230); /* Entry Mode: BGR + increment */
+    lcd_set_con(0x81100DB9);
+
     LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
     /* LCD+0x80 = 0: release bus to compositor. Without this, compositor
      * can't drive the i80 bus. Old code zeroed LCD+0x80 via bulk-zero
@@ -1701,6 +1707,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* v35g EXACT shutdown — panel commands BEFORE clock cycle, NO LCD+0x80=1 */
     lcd_set_con(0x80000DA9);
     lcd_cmd(0x003); lcd_data(0x0230);  /* Entry Mode: restore RGB for Rockbox */
+    lcd_cmd(0x3A); lcd_data(0x06);     /* COLMOD: restore Rockbox default */
     lcd_set_con(0x81100DB9);
     /* Restore LCD registers */
     LCD_REG(0x88) = saved_lcd_88;
