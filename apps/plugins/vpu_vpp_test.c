@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v53 ===");
+    vlog("=== VPU-B → VPP Integration Test v54 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -856,10 +856,17 @@ enum plugin_status plugin_start(const void *parameter)
     disp_init();
     vlog("  VPP blocks initialized");
 
-    /* v53: The compositor clock gate is UNKNOWN. PWRCON(0) bits 7+13
-     * are UARTC2 and undefined (NOT compositor). The iBoot function
-     * thunk_EXT_FUN_22000318(0x2080,0,1) is not a PWRCON gate cycle.
-     * Skip the broken clock reset — it was gating wrong peripherals. */
+    /* Compositor clock reset via PWRCON(0) bits 7+13 (0x2080).
+     * vpp_test.c uses this exact pattern and successfully showed BG_COLOR.
+     * Rockbox headers don't document these bits but they work on S5L8702. */
+    {
+        volatile uint32_t *pwrcon2 = (volatile uint32_t *)0x3C500058;
+        *pwrcon2 &= ~1;  /* PWRCON(2) bit 0 — compositor fabric clock */
+    }
+    PWRCON(0) |= 0x2080;     /* gate compositor clocks */
+    for (volatile int d = 0; d < 10000; d++);
+    PWRCON(0) &= ~0x2080;    /* ungate compositor clocks */
+    for (volatile int d = 0; d < 10000; d++);
     vlog("  Post-reset: comp000=%08lx 008=%08lx 028=%08lx 038=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x008),
          (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x038));
