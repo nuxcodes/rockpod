@@ -1105,11 +1105,21 @@ enum plugin_status plugin_start(const void *parameter)
     /* v50: Verify DRAM at the EXACT physical address the compositor reads */
     {
         uint32_t comp_y_addr = COMP_REG(0x038);
+        uint32_t comp_cb_addr = COMP_REG(0x044);
+        uint32_t comp_cr_addr = COMP_REG(0x03C);
         volatile uint8_t *dram_y = (volatile uint8_t *)(comp_y_addr | 0x40000000);
+        volatile uint8_t *dram_cb = (volatile uint8_t *)(comp_cb_addr | 0x40000000);
+        volatile uint8_t *dram_cr = (volatile uint8_t *)(comp_cr_addr | 0x40000000);
         vlog("  DRAM@comp038(0x%08lx): [0]=%d [160]=%d [mid]=%d [last]=%d",
              (unsigned long)comp_y_addr,
              dram_y[0], dram_y[160],
              dram_y[120*320 + 160], dram_y[320*240 - 1]);
+        vlog("  DRAM@comp044(Cb=0x%08lx): [0]=%d [1]=%d [2]=%d [3]=%d",
+             (unsigned long)comp_cb_addr,
+             dram_cb[0], dram_cb[1], dram_cb[2], dram_cb[3]);
+        vlog("  DRAM@comp03C(Cr=0x%08lx): [0]=%d [1]=%d [2]=%d [3]=%d",
+             (unsigned long)comp_cr_addr,
+             dram_cr[0], dram_cr[1], dram_cr[2], dram_cr[3]);
     }
 
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
