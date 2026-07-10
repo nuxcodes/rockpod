@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v51 ===");
+    vlog("=== VPU-B → VPP Integration Test v52 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -855,6 +855,18 @@ enum plugin_status plugin_start(const void *parameter)
     mixer_init();
     disp_init();
     vlog("  VPP blocks initialized");
+
+    /* v51: Reset compositor via clock gate cycle before init.
+     * Apple's FUN_0014DEEC calls thunk_EXT_FUN_22000318(0x2080,0,1)
+     * before compositor init. 0x2080 = PWRCON bits 13+7.
+     * This likely gates then ungates the compositor clock to reset it.
+     * Without this reset, compositor retains iBoot state that may
+     * conflict with our configuration. */
+    PWRCON(0) |= (1 << 7) | (1 << 13);   /* gate compositor clocks */
+    for (volatile int d = 0; d < 10000; d++);
+    PWRCON(0) &= ~((1 << 7) | (1 << 13)); /* ungate compositor clocks */
+    for (volatile int d = 0; d < 10000; d++);
+    vlog("  Compositor clock reset done (PWRCON0=0x%08lx)", (unsigned long)PWRCON(0));
 
     /* Init compositor */
     vlog("  comp pre-init: 0D4=%08lx 0D8=%08lx 0DC=%08lx 0E0=%08lx",
