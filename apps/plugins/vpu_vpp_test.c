@@ -614,7 +614,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v45 ===");
+    vlog("=== VPU-B → VPP Integration Test v46 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -870,7 +870,15 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x04C) = 0x10001000;                       /* 1:1 scale (Q16.16) */
     COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
     COMP_REG(0x054) = ((uint32_t)out_h << 16) | out_w;  /* dest size */
-    /* DO NOT write comp+0x038-0x044 (kills DMA in bypass mode — v66 proved) */
+
+    /* v46: Write buffer addresses BEFORE compositor GO.
+     * v45 wrote them in Phase 4 AFTER GO — compositor rendered
+     * iBoot's boot logo from stale addresses instead of our gradient.
+     * ROM 0x14D794: format 8 order: struct[0]→Y, struct[2]→03C, struct[1]→044. */
+    COMP_REG(0x038) = PHYS(y_out);                  /* Layer 5 Y */
+    COMP_REG(0x03C) = PHYS(cr_out);                 /* Cr (ROM: struct[2]→0x03C) */
+    COMP_REG(0x040) = 0;                            /* unused for 3-plane */
+    COMP_REG(0x044) = PHYS(cb_out);                 /* Cb (ROM: struct[1]→0x044) */
 
     vlog("  Compositor initialized + Layer 5 enabled");
     vlog("  iBoot timing: %08lx %08lx %08lx %08lx %08lx",
@@ -1020,15 +1028,12 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x004),
          (unsigned long)CLCD_REG(0x008));
 
-    /* Compositor Layer 5 buffer addresses.
-     * ROM 0x14d794: Apple writes per-frame. Compositor reads YUV from DRAM.
-     * Plane order for format 8: struct[0]→Y, struct[2]→0x03C, struct[1]→0x044.
-     * VPU-B returns: buf[0]=Y, buf[1]=Cb, buf[2]=Cr.
-     * Apple format 8: comp+0x03C=buf[2]=Cr, comp+0x044=buf[1]=Cb (swapped). */
-    COMP_REG(0x038) = PHYS(y_out);                  /* Layer 5 Y */
-    COMP_REG(0x03C) = PHYS(cr_out);                 /* Cr (ROM: struct[2]→0x03C) */
-    COMP_REG(0x040) = 0;                            /* unused for 3-plane */
-    COMP_REG(0x044) = PHYS(cb_out);                 /* Cb (ROM: struct[1]→0x044) */
+    /* Buffer addresses already set in Phase 3 (before compositor GO).
+     * Re-assert here for per-frame update (ROM writes these per-frame). */
+    COMP_REG(0x038) = PHYS(y_out);
+    COMP_REG(0x03C) = PHYS(cr_out);
+    COMP_REG(0x040) = 0;
+    COMP_REG(0x044) = PHYS(cb_out);
 
     /* Re-enable VP — all registers written with VP disabled (ROM pattern) */
     CLCD_REG(0x000) |= 1;
