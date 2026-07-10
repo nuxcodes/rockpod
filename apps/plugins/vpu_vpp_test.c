@@ -496,7 +496,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     LCD_CON = 0x81100DB9;
     LCD_REG(0x88) = 0x01000000;
     LCD_REG(0x20) = 0x33;
-    LCD_REG(0x7C) = 0x00000002;    /* try: bit 1 only (DC=1), clear bit 10 */
+    LCD_REG(0x7C) = 0x00000402;
 
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
@@ -522,7 +522,14 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     }
 
     LCD_REG(0x74) = 0x00F00140;
-    LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable (ROM FUN_0014deec) */
+    /* Set panel pixel format for compositor passthrough.
+     * Rockbox sets COLMOD=0x06 (DPI only). Apple uses 0x66 (DBI+DPI=18-bit).
+     * DBI controls how panel receives data from i80 bus.
+     * Without DBI=RGB666, panel misinterprets compositor pixel data. */
+    lcd_set_con(0x80000DA9);
+    lcd_cmd(0x3A); lcd_data(0x66);  /* COLMOD: DBI=18-bit, DPI=18-bit */
+    lcd_set_con(0x81100DB9);
+    LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
     /* LCD+0x80 = 0: release bus to compositor. Without this, compositor
      * can't drive the i80 bus. Old code zeroed LCD+0x80 via bulk-zero
      * (which targeted LCD before v34h). After v34h moved bulk-zero to DISP,
@@ -616,7 +623,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35d ===");
+    vlog("=== VPU-B → VPP Integration Test v35e ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -955,7 +962,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35d: VP must be DISABLED when writing plane addresses to bypass the
+     * v35e: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
