@@ -916,7 +916,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Clear compositor status/interrupts before GO — pending flags
      * might prevent render engine from starting */
     COMP_REG(0x010) = 0x003FEFFE;  /* write-to-clear all pending bits */
-    COMP_REG(0x200) |= 0x80;  /* step 14: accept new frame */
+    COMP_REG(0x200) |= 0x81;  /* bit 7 (accept frame) + bit 0 (SWTRGCMD) */
     COMP_REG(0x204) = 2;      /* step 15: re-assert DMA config */
     COMP_REG(0x20C) = 2;
     COMP_REG(0x208) = 0;
