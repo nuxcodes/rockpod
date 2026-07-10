@@ -285,9 +285,10 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)VPP_REG(0x010), (unsigned long)VPP_REG(0x1010));
 
     /* Compositor pre-init */
-    vlog("  COMP pre-init: 008=%08lx 028=%08lx 034=%08lx 038=%08lx",
+    vlog("  COMP pre-init: 008=%08lx 028=%08lx 034=%08lx 038=%08lx 3C4=%08lx 3C8=%08lx",
          (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x028),
-         (unsigned long)COMP_REG(0x034), (unsigned long)COMP_REG(0x038));
+         (unsigned long)COMP_REG(0x034), (unsigned long)COMP_REG(0x038),
+         (unsigned long)COMP_REG(0x3C4), (unsigned long)COMP_REG(0x3C8));
 
     /* ---- Phase 4: Compositor init ---- */
     vlog("Phase 4: Compositor init");
