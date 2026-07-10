@@ -880,6 +880,46 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x050) = 0;                                /* dest origin (0,0) */
     COMP_REG(0x054) = ((uint32_t)out_h << 16) | out_w;  /* dest size */
 
+    /* v47: Initialize scaler coefficient tables.
+     * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
+     * comp+0x180-0x1C4 (9x2=18 dwords): horizontal 2-tap
+     * comp+0x31C-0x360 (9x2=18 dwords): scaler table 2
+     * comp+0x364-0x3A8 (9x2=18 dwords): scaler table 3
+     * Apple loads these from DRAM 0x08A18700 (via FUN_0014D678).
+     * Rockbox likely overwrote that DRAM region. Without valid
+     * coefficients, YUV420 chroma upsampling produces garbage.
+     * Use identity filter: phase 0 = pass-through [0,0,256,0],
+     * all other phases = linear interpolation. */
+    {
+        volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
+        /* 9x4 vertical filter (comp+0x0F0): nearest-neighbor pass-through */
+        for (int phase = 0; phase < 9; phase++) {
+            int base = 0x0F0/4 + phase * 4;
+            c[base + 0] = 0;     /* tap 0 */
+            c[base + 1] = 0;     /* tap 1 */
+            c[base + 2] = 256;   /* tap 2 = 1.0 (center tap, pass-through) */
+            c[base + 3] = 0;     /* tap 3 */
+        }
+        /* 9x2 horizontal filter (comp+0x180): pass-through */
+        for (int phase = 0; phase < 9; phase++) {
+            int base = 0x180/4 + phase * 2;
+            c[base + 0] = 256;   /* tap 0 = 1.0 */
+            c[base + 1] = 0;     /* tap 1 */
+        }
+        /* 9x2 scaler table 2 (comp+0x31C): pass-through */
+        for (int phase = 0; phase < 9; phase++) {
+            int base = 0x31C/4 + phase * 2;
+            c[base + 0] = 256;
+            c[base + 1] = 0;
+        }
+        /* 9x2 scaler table 3 (comp+0x364): pass-through */
+        for (int phase = 0; phase < 9; phase++) {
+            int base = 0x364/4 + phase * 2;
+            c[base + 0] = 256;
+            c[base + 1] = 0;
+        }
+    }
+
     /* v46: Write buffer addresses BEFORE compositor GO.
      * v45 wrote them in Phase 4 AFTER GO — compositor rendered
      * iBoot's boot logo from stale addresses instead of our gradient.
