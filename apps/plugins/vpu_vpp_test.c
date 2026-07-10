@@ -511,10 +511,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
-        lcd_data(0x0000);
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* No dummy pixel — rely on LCD+0x7C bit 1 for passthrough DC=1 */
         lcd_set_con(0x81100DB9);
     }
 
@@ -589,10 +586,7 @@ static void lcd_push_frame(int panel_type)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
-        lcd_data(0x0000);
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* No dummy pixel — rely on LCD+0x7C bit 1 for passthrough DC=1 */
     }
     /* OOB-8: Apple polls LCD_STATUS bit 1 BEFORE restoring LCD_CON.
      * Without poll, P9 restore corrupts 0x202 still on the bus. */
@@ -1233,10 +1227,7 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
-        lcd_data(0x0000);
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* No dummy pixel — rely on LCD+0x7C bit 1 for passthrough DC=1 */
     }
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
@@ -1292,10 +1283,7 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x200); lcd_data(0);
             lcd_cmd(0x201); lcd_data(0);
             lcd_cmd(0x202);
-        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
-        lcd_data(0x0000);
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* No dummy pixel — rely on LCD+0x7C bit 1 for passthrough DC=1 */
         }
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
@@ -1333,10 +1321,7 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
-        lcd_data(0x0000);
-        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* No dummy pixel — rely on LCD+0x7C bit 1 for passthrough DC=1 */
         /* Write 320x240 = 76800 pixels of RED (RGB565: 0xF800) */
         for (int p = 0; p < 76800; p++) {
             lcd_data(0xF800);
