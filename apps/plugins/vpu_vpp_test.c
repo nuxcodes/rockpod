@@ -1448,12 +1448,12 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x80) = 1;
         {
             uint32_t spi_saved = lcd_enter_spi_cmd();
-            spi_cmd(0x2A);  /* CASET */
-            spi_data(0x00); spi_data(0x00);
-            spi_data(0x01); spi_data(0x3F);
-            spi_cmd(0x2B);  /* PASET */
+            spi_cmd(0x2A);  /* CASET: columns 0-239 (panel native) */
             spi_data(0x00); spi_data(0x00);
             spi_data(0x00); spi_data(0xEF);
+            spi_cmd(0x2B);  /* PASET: rows 0-319 (panel native) */
+            spi_data(0x00); spi_data(0x00);
+            spi_data(0x01); spi_data(0x3F);
             spi_cmd(0x2C);  /* RAMWR */
             lcd_leave_spi_cmd(spi_saved);
         }
