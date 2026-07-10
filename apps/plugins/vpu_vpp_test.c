@@ -288,7 +288,8 @@ static void disp_init(void)
     for (int i = 0; i < 28; i++)
         DISP_REG(0x200 + i * 4) = disp_regs_200[i];
 
-    DISP_REG(0x014) = 0x000777FF;     /* iBoot residual (v34q log confirmed) */
+    /* DISP+0x014: Apple NEVER writes this (zero ROM references).
+     * iBoot sets it. v42 wrote 0x777FF from log observation — removed. */
 
     DISP_REG(0x280) = 0;
     DISP_REG(0x3C0) = 0;              /* ROM 0x167E30 */
@@ -431,6 +432,9 @@ static void compositor_init(void)
      * enables Layer 5 via vtable[0x3C](ctx, 5, 1) during video start.
      * Without bit 7, the compositor has NO active layers → no render. */
     { uint32_t v = c[0x008/4]; v |= 0x80; c[0x008/4] = v; }
+    /* FUN_000D8920(1): set bit 30 during init (ROM 0x14D408).
+     * Apple sets this in compositor_init, NOT per-frame trigger. */
+    { uint32_t v = c[0x008/4]; v |= 0x40000000; c[0x008/4] = v; }
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
