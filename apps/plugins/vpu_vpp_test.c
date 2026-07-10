@@ -387,6 +387,14 @@ static void compositor_init(void)
     c[0x0E8/4] = 0x00001000;
     c[0x0EC/4] = 0;
 
+    /* Identity gamma LUT — MUST be before comp+0x008 (ROM order: step 4 before step 7).
+     * If gamma loads AFTER comp+0x008, the pipeline renders with empty gamma → 0x03FF. */
+    for (int i = 0; i < 256; i++) {
+        c[0x400/4 + i] = i * 4;
+        c[0x800/4 + i] = i * 4;
+        c[0xC00/4 + i] = i * 4;
+    }
+
     /* Mode config (without bit 30 — set last) */
     c[0x008/4] = 0x01118101;
     c[0x00C/4] = 0x000F0F0F;    /* BG_COLOR = Apple's gray (XBGR, ROM 0x14d324) */
@@ -396,13 +404,6 @@ static void compositor_init(void)
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;    /* DMA dimensions */
     c[0x214/4] = 0x00EF013F;    /* 239<<16 | 319 */
-
-    /* Identity gamma LUT (ROM FUN_00088d8c) */
-    for (int i = 0; i < 256; i++) {
-        c[0x400/4 + i] = i * 4;
-        c[0x800/4 + i] = i * 4;
-        c[0xC00/4 + i] = i * 4;
-    }
 
     /* i80 bus timing — ROM FUN_0014D240 copies 5 values from DRAM 0x0890D2DC
      * to comp+0x1EC-0x1FC (via memcpy at 0x14D254, writer at 0x0D972C).
@@ -582,7 +583,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34w ===");
+    vlog("=== VPU-B → VPP Integration Test v34x ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -902,7 +903,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v34w: VP must be DISABLED when writing plane addresses to bypass the
+     * v34x: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
