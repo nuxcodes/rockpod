@@ -511,7 +511,9 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
 
-    /* GRAM window — v35g exact pattern */
+    /* GRAM window — set address range but do NOT send GRAM write cmd (0x202)
+     * yet. Sending 0x202 puts panel in GRAM write mode, and subsequent
+     * LCD_CON mode switches would be interpreted as pixel data. */
     if (panel_type >= 2) {
         lcd_set_con(0x80000DA9);
         lcd_cmd(0x210); lcd_data(0);
@@ -520,7 +522,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
         lcd_cmd(0x213); lcd_data(239);
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
+        /* NO lcd_cmd(0x202) here — defer to just before passthrough */
         lcd_set_con(0x81100DB9);
     }
 
@@ -529,6 +531,9 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     lcd_set_con(0x80000DA9);
     lcd_cmd(0x3A); lcd_data(0x66);  /* COLMOD: RGB666 18-bit */
     lcd_cmd(0x003); lcd_data(0x1230);  /* Entry Mode: BGR */
+    /* NOW send GRAM write cmd — panel enters write mode,
+     * next data on the bus goes to GRAM at (0,0) */
+    lcd_cmd(0x202);
     lcd_set_con(0x81100DB9);
     LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
     /* LCD+0x80 = 0: release bus to compositor. Without this, compositor
