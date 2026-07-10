@@ -231,11 +231,13 @@ static void mixer_init(void)
         MIXER_REG(i) = 0;
 
     MIXER_REG(0x048) = 0x00108080;  /* YCbCr bias BT.601 */
-    MIXER_REG(0x080) = 0x08440832;  /* color matrix */
-    MIXER_REG(0x084) = 0x3B4DACE1;
-    MIXER_REG(0x088) = 0x0E1D13DC;
+    MIXER_REG(0x080) = 0x08440832;  /* color matrix coeff Y */
+    MIXER_REG(0x084) = 0x3B4DACE1;  /* color matrix coeff Cb */
+    MIXER_REG(0x088) = 0x0E1D13DC;  /* color matrix coeff Cr */
     MIXER_REG(0x800) = 1;           /* global enable */
-    MIXER_REG(0x00C) |= 0x200;  /* format 2 = YUV420 input format selector */
+    /* MIXER+0x00C: ROM init = 0. FUN_001680E8 format selector is ONLY called
+     * from graphic layer path (cases 0-3). Video layer 5 never calls it.
+     * v42 had |= 0x200 from v38 agent — ROM-disproven, removed. */
     MIXER_REG(0x000) = 6;           /* pipeline active (bits 1+2). Bit 2 = SYNC_ENABLE
                                      * (S5PC100: values applied at VSYNC when set). */
 }
@@ -270,7 +272,7 @@ static void disp_init(void)
     for (int i = 0x100; i <= 0x15C; i += 4)
         DISP_REG(i) = 0;
 
-    DISP_REG(0x180) = 0x10;  /* RMW, ROM exact */
+    DISP_REG(0x180) = (DISP_REG(0x180) & ~0x1F) | 0x10;  /* RMW, ROM exact */
     DISP_REG(0x184) = 0x800000;
     DISP_REG(0x188) = 0x800000;
     DISP_REG(0x18C) = 0x80;
@@ -299,22 +301,22 @@ static void disp_init(void)
     for (int i = 0x044; i <= 0x06C; i += 4) DISP_REG(i) = 0;
     for (int i = 0x080; i <= 0x090; i += 4) DISP_REG(i) = 0;
     for (int i = 0x0C0; i <= 0x0D0; i += 4) DISP_REG(i) = 0;
-    /* Panel type 1 gamma (v35g values — compositor push worked with these).
-     * v35h changed to type 2 (0x281) which broke compositor push. */
-    DISP_REG(0x070) = 0x25D;
+    /* Gamma: DISP+0x00C=6 → FUN_000c9fe0(2) → type 2 gamma.
+     * v42 had type 1 values (0x25D). ROM-verified type 2 from 0x0CA154. */
+    DISP_REG(0x070) = 0x281;
     DISP_REG(0x094) = 1;
     DISP_REG(0x098) = 7;
-    DISP_REG(0x09C) = 0x14;
-    DISP_REG(0x0A0) = 0x28;
-    DISP_REG(0x0A4) = 0x3F;
-    DISP_REG(0x0A8) = 0x52;
-    DISP_REG(0x0AC) = 0x5A;
-    DISP_REG(0x0D4) = 1;
-    DISP_REG(0x0D8) = 0x09;
-    DISP_REG(0x0DC) = 0x1C;
-    DISP_REG(0x0E0) = 0x39;
-    DISP_REG(0x0E4) = 0x5A;
-    DISP_REG(0x0E8) = 0x74;
+    DISP_REG(0x09C) = 0x15;
+    DISP_REG(0x0A0) = 0x2A;
+    DISP_REG(0x0A4) = 0x44;
+    DISP_REG(0x0A8) = 0x57;
+    DISP_REG(0x0AC) = 0x5F;
+    DISP_REG(0x0D4) = 2;
+    DISP_REG(0x0D8) = 0x0A;
+    DISP_REG(0x0DC) = 0x1D;
+    DISP_REG(0x0E0) = 0x3C;
+    DISP_REG(0x0E4) = 0x5F;
+    DISP_REG(0x0E8) = 0x7B;
     DISP_REG(0x0EC) = 0x86;
     DISP_REG(0x284) = 0;              /* FF2: clear before GO */
 }
@@ -1037,9 +1039,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
      * DISCARDS all video data. 0x0B = bits 0+1+3. */
-    MIXER_REG(0x004) = 0x23;   /* v43: bits 0+1+5. Bit 5 = video layer 5 enable
-                                 * (ROM 0x166D24 layer enable dispatcher, case 5).
-                                 * v42 had 0x13 (bit 4 = layer 4, WRONG layer). */
+    MIXER_REG(0x004) = 0x13;   /* ROM-verified: bits 0+1+4.
+                                 * Bit 0 = MXR_EN, bit 1 = SYNC_EN, bit 4 = video
+                                 * layer 5 enable (ROM 0x166D60: case 5 → ORR #0x10).
+                                 * NOT bit 5 — ROM jump table is layer-inverted. */
     MIXER_REG(0x008) = 0;      /* v43: Apple init sets 0, never changes. v42 had
                                  * 0x100FF from unverified 'DEEP-1' finding. */
 
