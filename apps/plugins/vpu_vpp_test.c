@@ -589,7 +589,11 @@ static void lcd_push_frame(int panel_type)
     /* OOB-7: LCD+0x80=0 STARTS autonomous push. MCU controller pushes
      * full frame (~12ms for 76800px). Apple polls 0x8C with no timeout. */
     LCD_REG(0x80) = 0;
-    while (LCD_REG(0x8C) & 3);  /* wait FULL frame transfer */
+    /* DISP trigger per frame */
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+    while (LCD_REG(0x8C) & 3);
 }
 
 /* ---- Main ---- */
@@ -1176,6 +1180,11 @@ enum plugin_status plugin_start(const void *parameter)
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
     LCD_REG(0x80) = 0;  /* compositor pushes on 1→0 transition (Apple pattern) */
+    /* DISP trigger — Apple fires this EVERY frame (ROM 0x166C34-0x166C64).
+     * Without it, DISP doesn't generate VSYNC → compositor never renders. */
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
     vlog("  LCD_8C=%08lx (nonzero=bus busy=compositor pushing)",
          (unsigned long)LCD_REG(0x8C));
     /* Wait for push to finish, then check GRAM at (0,0) */
@@ -1230,6 +1239,10 @@ enum plugin_status plugin_start(const void *parameter)
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
         LCD_REG(0x80) = 0;  /* compositor pushes on this 1→0 transition */
+        /* DISP trigger per frame (Apple ROM 0x166C34-0x166C64) */
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
@@ -1382,8 +1395,11 @@ enum plugin_status plugin_start(const void *parameter)
     } \
     while (!(LCD_STATUS & 0x2)); \
     LCD_CON = 0x81100DB9; \
-    /* Step 2: Release bus — compositor pushes on 1→0 (Apple pattern, no strobe) */ \
+    /* Step 2: Release bus + DISP trigger (Apple per-frame pattern) */ \
     LCD_REG(0x80) = 0; \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 1; } \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 2; } \
+    { uint32_t _d3c = DISP_REG(0x03C); DISP_REG(0x03C) = _d3c | 4; } \
     /* Step 3: Wait for compositor to push frame via i80 */ \
     { int _t = 100000; while ((LCD_REG(0x8C) & 3) && --_t > 0); } \
     /* Observe */ \
