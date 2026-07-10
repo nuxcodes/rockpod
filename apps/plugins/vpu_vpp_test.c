@@ -988,7 +988,7 @@ enum plugin_status plugin_start(const void *parameter)
     for (volatile int d = 0; d < 10000; d++);
     vlog("  Compositor GO + i80 re-strobe fired");
 
-    /* v52: BG_COLOR-only test — disable Layer 5 for 5s to see if
+#if 0 /* Disable BG-only test — modifies comp+0x008 and fires extra GO */
      * compositor produces clean solid color without any layer data.
      * If BG is clean → compositor output works, issue is Layer 5.
      * If BG has bands → compositor output stage is broken. */
@@ -1011,6 +1011,7 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
          (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x70),
          (unsigned long)DISP_REG(0x70));
+#endif /* BG-only test disabled */
 
     /* Diagnostics: verify register state after init */
     vlog("  DISP: 000=%08lx 008=%08lx",
@@ -1258,7 +1259,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Wait for pipeline to process */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
 
-#if 1 /* Re-enable Phase 5c to verify compositor push works */
+#if 0 /* Disable Phase 5c — LCD_CON switching corrupts compositor stream */
     /* Phase 5b: Passive observation — compositor should push automatically
      * via passthrough. No lcd_push_frame, no LCD+0x80 toggle.
      * Apple's per-frame trigger never touches LCD+0x80.
