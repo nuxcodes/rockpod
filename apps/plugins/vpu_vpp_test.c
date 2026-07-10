@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v56 ===");
+    vlog("=== VPU-B → VPP Integration Test v57 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1419,6 +1419,18 @@ enum plugin_status plugin_start(const void *parameter)
          * 6. Wait LCD bus idle
          * We substitute step 4 with compositor GO + delay. */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+        /* GRAM window setup — ILI9326 needs to know where pixels go */
+        lcd_set_con(0x80000DA9);
+        if (panel_type >= 2) {
+            lcd_cmd(0x210); lcd_data(0);
+            lcd_cmd(0x211); lcd_data(319);
+            lcd_cmd(0x212); lcd_data(0);
+            lcd_cmd(0x213); lcd_data(239);
+            lcd_cmd(0x200); lcd_data(0);
+            lcd_cmd(0x201); lcd_data(0);
+            lcd_cmd(0x202);
+        }
+        lcd_set_con(0x81100DB9);
         COMP_REG(0x200) |= 0x10080;  /* re-latch */
         COMP_REG(0x000) = 1;          /* compositor GO */
         LCD_REG(0x80) = 1;            /* take bus */
