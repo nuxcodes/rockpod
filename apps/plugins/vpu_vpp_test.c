@@ -582,7 +582,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34v ===");
+    vlog("=== VPU-B → VPP Integration Test v34w ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -863,7 +863,16 @@ enum plugin_status plugin_start(const void *parameter)
     /* Compositor GO — MUST be AFTER passthrough (LCD+0x70=1).
      * vpp_test.c v137 proved: GO before passthrough = no output.
      * GO after passthrough = BG_COLOR visible. */
-    COMP_REG(0x200) |= 0x80; COMP_REG(0x000) = 1; for (volatile int _gd = 0; _gd < 50000; _gd++);
+    /* ROM init: bit 7 at step 14, then steps 15-17, then GO at step 18.
+     * Steps 15-17 provide ~10 register writes of timing gap between bit 7 and GO.
+     * Our earlier back-to-back bit7+GO may not give HW enough time. */
+    COMP_REG(0x200) |= 0x80;  /* step 14: accept new frame */
+    COMP_REG(0x204) = 2;      /* step 15: re-assert DMA config */
+    COMP_REG(0x20C) = 2;
+    COMP_REG(0x208) = 0;
+    COMP_REG(0x008) |= 0x40000000;  /* step 16: re-assert bit 30 */
+    COMP_REG(0x024) = 0x00FFFFFF;   /* step 17: re-assert color mask */
+    COMP_REG(0x000) = 1;      /* step 18: GO! */
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
     /* Re-fire i80 strobe (from vpp_test.c v137 working pattern) */
     COMP_REG(0x200) |= 0x80;
@@ -893,7 +902,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v34v: VP must be DISABLED when writing plane addresses to bypass the
+     * v34w: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
@@ -1101,9 +1110,9 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x200) |= 0x80;  /* re-set bit 7 — output pipeline must accept new frame */
     COMP_REG(0x000) = 1;  /* GO — re-composite */
     for (volatile int d = 0; d < 50000; d++);
-    vlog("  L5 OFF, BG=GREEN. comp: 000=%08lx 0D4=%08lx 200=%08lx",
+    vlog("  L5 OFF, BG=GREEN. comp: 000=%08lx 0D4=%08lx 200=%08lx 220=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x0D4),
-         (unsigned long)COMP_REG(0x200));
+         (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x220));
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
