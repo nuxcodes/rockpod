@@ -395,9 +395,29 @@ static void compositor_init(void)
         c[0xC00/4 + i] = i * 4;
     }
 
-    /* Mode config (without bit 30 — set last) */
-    c[0x008/4] = 0x01118101;
-    c[0x00C/4] = 0x000F0F0F;    /* BG_COLOR = Apple's gray (XBGR, ROM 0x14d324) */
+    /* Mode config — ROM sets comp+0x008 in FIVE separate RMW steps.
+     * Writing all bits at once (0x01118101) may not work — HW state machine
+     * might need sequential enables. Match ROM order exactly:
+     * Step 7: FUN_BF820(0,0,0x010101,1) → bits 0,16,20,24 */
+    {
+        uint32_t v = c[0x008/4];
+        v &= ~0x20000000;  /* clear bit 29 */
+        v &= ~0x10000000;  /* clear bit 28 */
+        v &= ~0x03000000; v |= 0x01000000;  /* bits 25:24 = 01 */
+        v &= ~0x00300000; v |= 0x00100000;  /* bit 20 */
+        v &= ~0x00030000; v |= 0x00010000;  /* bits 17:16 = 01 */
+        v &= ~1; v |= 1;  /* bit 0 */
+        c[0x008/4] = v;
+    }
+    /* Step 8: BG_COLOR */
+    c[0x00C/4] = 0x000F0F0F;
+    /* Step 9: FUN_A7F98(1) → bit 15 */
+    { uint32_t v = c[0x008/4]; v |= 0x8000; c[0x008/4] = v; }
+    /* Step 10: disable all layers (bits 2-7 = 0) — already 0 from above */
+    /* Step 11: FUN_BF8B0(0) → clear bit 1 */
+    { uint32_t v = c[0x008/4]; v &= ~2; c[0x008/4] = v; }
+    /* Step 12: FUN_9B6D4(0) → set bit 8 (inverted logic) */
+    { uint32_t v = c[0x008/4]; v |= 0x100; c[0x008/4] = v; }
     c[0x200/4] |= 0x10080;      /* TRIGCON: bits 16+7 */
     c[0x204/4] = 2;
     c[0x208/4] = 0;
@@ -583,7 +603,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v34x ===");
+    vlog("=== VPU-B → VPP Integration Test v34y ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -903,7 +923,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v34x: VP must be DISABLED when writing plane addresses to bypass the
+     * v34y: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
