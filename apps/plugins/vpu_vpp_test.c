@@ -651,7 +651,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v61 ===");
+    vlog("=== VPU-B → VPP Integration Test v62 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1483,6 +1483,63 @@ enum plugin_status plugin_start(const void *parameter)
      * Disable passthrough AND take bus to completely freeze display. */
     LCD_REG(0x70) = 0;  /* passthrough OFF — no more compositor pushes */
     LCD_REG(0x80) = 1;  /* CPU takes bus */
+
+    /* Comprehensive GRAM scan — read pixels at multiple positions */
+    vlog("  GRAM scan (P18 readback):");
+    {
+        /* Switch to P18 command mode for GRAM readback */
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80000DA8;  /* Rockbox LCD_MODE_P18 */
+
+        static const struct { int x, y; } scan_pts[] = {
+            {0,0}, {160,0}, {319,0},
+            {0,60}, {160,60},
+            {0,120}, {160,120}, {319,120},
+            {0,180}, {160,180},
+            {0,239}, {160,239}, {319,239},
+        };
+
+        for (int i = 0; i < 13; i++) {
+            int x = scan_pts[i].x, y = scan_pts[i].y;
+            lcd_cmd(0x200); lcd_data(x);
+            lcd_cmd(0x201); lcd_data(y);
+            lcd_cmd(0x202);
+            while (!(LCD_STATUS & 0x2));
+            /* dummy read */
+            LCD_RDATA = 0;
+            { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
+            (void)LCD_DBUFF;
+            /* real read */
+            LCD_RDATA = 0;
+            { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
+            uint32_t g = LCD_DBUFF;
+            uint32_t gs = g >> 1;
+            vlog("    (%3d,%3d): raw=%05lx >>1: R=%2lu G=%2lu B=%2lu",
+                 x, y, (unsigned long)(g & 0x3FFFF),
+                 (unsigned long)((gs>>12)&0x3F),
+                 (unsigned long)((gs>>6)&0x3F),
+                 (unsigned long)(gs&0x3F));
+        }
+
+        /* Restore P9 passthrough mode */
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x81100DB9;
+    }
+
+    /* Also dump scaler coefficients to verify they're clean */
+    {
+        volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
+        vlog("  Scaler post-push (0x0F0): %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x0F0/4], (unsigned long)c[0x0F4/4],
+             (unsigned long)c[0x0F8/4], (unsigned long)c[0x0FC/4]);
+        vlog("  Scaler (0x100): %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x100/4], (unsigned long)c[0x104/4],
+             (unsigned long)c[0x108/4], (unsigned long)c[0x10C/4]);
+        vlog("  Scaler (0x110): %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x110/4], (unsigned long)c[0x114/4],
+             (unsigned long)c[0x118/4], (unsigned long)c[0x11C/4]);
+    }
+
     vlog("  Holding decoded frame for 10s (passthrough OFF)...");
     vlog("  comp: 028=%08lx 038=%08lx 03C=%08lx 044=%08lx",
          (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x038),
