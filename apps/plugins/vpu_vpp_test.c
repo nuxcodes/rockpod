@@ -496,7 +496,7 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     LCD_CON = 0x81100DB9;
     LCD_REG(0x88) = 0x01000000;
     LCD_REG(0x20) = 0x33;
-    LCD_REG(0x7C) = 0x00000402;
+    LCD_REG(0x7C) = 0x00000002;    /* try: bit 1 only (DC=1), clear bit 10 */
 
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
@@ -616,7 +616,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35c ===");
+    vlog("=== VPU-B → VPP Integration Test v35d ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -955,7 +955,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35c: VP must be DISABLED when writing plane addresses to bypass the
+     * v35d: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
