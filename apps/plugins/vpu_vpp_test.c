@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v52 ===");
+    vlog("=== VPU-B → VPP Integration Test v53 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -991,6 +991,26 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x200) |= 0x80;
     for (volatile int d = 0; d < 10000; d++);
     vlog("  Compositor GO + i80 re-strobe fired");
+
+    /* v52: BG_COLOR-only test — disable Layer 5 for 5s to see if
+     * compositor produces clean solid color without any layer data.
+     * If BG is clean → compositor output works, issue is Layer 5.
+     * If BG has bands → compositor output stage is broken. */
+    {
+        uint32_t saved_008 = COMP_REG(0x008);
+        COMP_REG(0x008) = saved_008 & ~0x80;  /* clear bit 7 = disable Layer 5 */
+        COMP_REG(0x00C) = 0x00FF0000;          /* BG = bright RED */
+        COMP_REG(0x200) |= 0x81; COMP_REG(0x000) = 1;
+        vlog("  BG-ONLY test: comp008=%08lx (Layer 5 OFF, BG=RED)",
+             (unsigned long)COMP_REG(0x008));
+        /* Push to LCD */
+        LCD_REG(0x80) = 0;
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+        /* Re-enable Layer 5 */
+        COMP_REG(0x008) = saved_008;
+        COMP_REG(0x00C) = 0x000F0F0F;  /* restore BG */
+        vlog("  Layer 5 re-enabled");
+    }
     vlog("  comp: 000=%08lx 010=%08lx 200=%08lx LCD70=%08lx DISP70=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
          (unsigned long)COMP_REG(0x200), (unsigned long)LCD_REG(0x70),
