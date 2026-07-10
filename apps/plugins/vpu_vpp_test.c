@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v54 ===");
+    vlog("=== VPU-B → VPP Integration Test v55 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1422,33 +1422,20 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* v54: Match vpp_test.c proven push pattern exactly.
-         * 1. Compositor GO + re-latch (NOT VPP trigger)
-         * 2. Wait for render
-         * 3. GRAM window commands (BEFORE LCD+0x80=1)
-         * 4. LCD+0x80=1, LCD_CON self-write strobe, delay, LCD+0x80=0
-         * 5. Wait bus idle */
-        COMP_REG(0x200) |= 0x10080;  /* re-latch trigger config */
-        COMP_REG(0x000) = 1;          /* compositor GO */
-        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+        /* ROM FUN_000A5080 push sequence (ROM-verified):
+         * 1. Wait LCD bus idle (FUN_000be7fc)
+         * 2. iBoot call (FUN_000bf0ec) — can't replicate
+         * 3. LCD+0x80 = 1
+         * 4. vtable[0x0C](0,0,240,320) — can't replicate
+         * 5. LCD+0x80 = 0
+         * 6. Wait LCD bus idle
+         * We substitute step 4 with compositor GO + delay. */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-        /* GRAM window commands BEFORE taking bus */
-        lcd_set_con(0x80000DA9);  /* P18 cmd mode */
-        if (panel_type >= 2) {
-            lcd_cmd(0x210); lcd_data(0);
-            lcd_cmd(0x211); lcd_data(319);
-            lcd_cmd(0x212); lcd_data(0);
-            lcd_cmd(0x213); lcd_data(239);
-            lcd_cmd(0x200); lcd_data(0);
-            lcd_cmd(0x201); lcd_data(0);
-            lcd_cmd(0x202);
-        }
-        lcd_set_con(0x81100DB9);  /* back to P9 passthrough */
-        /* WR# strobe push (vpp_test.c proven pattern) */
-        LCD_REG(0x80) = 1;
-        { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write = WR# strobe */
-        for (volatile int d = 0; d < 50000; d++);
-        LCD_REG(0x80) = 0;
+        COMP_REG(0x200) |= 0x10080;  /* re-latch */
+        COMP_REG(0x000) = 1;          /* compositor GO */
+        LCD_REG(0x80) = 1;            /* take bus */
+        for (volatile int d = 0; d < 50000; d++);  /* render time */
+        LCD_REG(0x80) = 0;            /* release → push */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
