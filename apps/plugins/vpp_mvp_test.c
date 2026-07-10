@@ -171,8 +171,9 @@ static void compositor_init(void)
 
 enum plugin_status plugin_start(const void *parameter)
 {
-    const char *test_path = (const char *)parameter;
-    if (!test_path || !*test_path) return PLUGIN_ERROR;
+    const char *test_path = parameter ? (const char *)parameter
+                                      : "/test_iframe.264";
+    if (!*test_path) return PLUGIN_ERROR;
 
     rb->cpu_boost(true);
     rb->audio_stop();
