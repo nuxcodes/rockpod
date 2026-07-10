@@ -1414,27 +1414,13 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* v49 push pattern (produced consistent output): */
-        CLCD_REG(0x000) |= 1;
-        MIXER_REG(0x000) = 7;
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
-        for (volatile int d = 0; d < 10000; d++);
+        /* v58: Minimal push — match Apple ROM FUN_000A5080.
+         * Apple does: bus_idle → LCD+0x80=1 → vtable → LCD+0x80=0 → bus_idle
+         * No GRAM window commands, no LCD_CON switching, no VPP triggers.
+         * GRAM window was set in lcd_passthrough_init. */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
-        LCD_CON = 0x80000DA9;
-        if (panel_type >= 2) {
-            lcd_cmd(0x210); lcd_data(0);
-            lcd_cmd(0x211); lcd_data(319);
-            lcd_cmd(0x212); lcd_data(0);
-            lcd_cmd(0x213); lcd_data(239);
-            lcd_cmd(0x200); lcd_data(0);
-            lcd_cmd(0x201); lcd_data(0);
-            lcd_cmd(0x202);
-        }
-        while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        for (volatile int d = 0; d < 50000; d++);
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
