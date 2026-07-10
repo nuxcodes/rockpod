@@ -547,12 +547,12 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
         uint32_t spi_saved = lcd_enter_spi_cmd();
         spi_cmd(0x3A); spi_data(0x66);         /* COLMOD: RGB666 18-bit */
         spi_cmd(0x36); spi_data(0x00);          /* MADCTL: normal orientation */
-        spi_cmd(0x2A);                           /* CASET: column 0-319 */
-        spi_data(0x00); spi_data(0x00);
-        spi_data(0x01); spi_data(0x3F);
-        spi_cmd(0x2B);                           /* PASET: row 0-239 */
+        spi_cmd(0x2A);                           /* CASET: column 0-239 (panel native) */
         spi_data(0x00); spi_data(0x00);
         spi_data(0x00); spi_data(0xEF);
+        spi_cmd(0x2B);                           /* PASET: row 0-319 (panel native) */
+        spi_data(0x00); spi_data(0x00);
+        spi_data(0x01); spi_data(0x3F);
         spi_cmd(0x2C);                           /* RAMWR: start memory write */
         lcd_leave_spi_cmd(spi_saved);
     }
