@@ -1314,17 +1314,24 @@ enum plugin_status plugin_start(const void *parameter)
         /* Readback at (160,120) — disable passthrough for CPU GRAM access */
         LCD_REG(0x70) = 0;
         LCD_REG(0x80) = 1;
-        /* Read mode: bit 0=0 for read direction, keep bit 24 for 18-bit bus */
-        LCD_CON = 0x80000DA8;  /* P18 read mode (Rockbox LCD_MODE_P18) */
+        /* Switch to P18 command mode with proper status wait */
+        while (!(LCD_STATUS & 0x2));
+        for (volatile int _d = 0; _d < 100; _d++);
+        LCD_CON = 0x80000DA8;  /* P18 mode (Rockbox LCD_MODE_P18) */
+        while (!(LCD_STATUS & 0x2));
         lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202);
-        { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
-        /* ILI9326 18-bit read: 1 dummy cycle, then pixel data in 18 bits */
+        while (!(LCD_STATUS & 0x2));
+        /* ILI9326 18-bit read: 1 dummy cycle, then pixel data */
         LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
         LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
         uint32_t g = LCD_DBUFF;
+        uint32_t g_shifted = g >> 1;
         uint32_t r6 = (g>>12)&0x3F, g6 = (g>>6)&0x3F, b6 = g&0x3F;
-        vlog("  BG=%s: GRAM=%08lx R=%lu G=%lu B=%lu",
-             ctests[ci].name, (unsigned long)g, (unsigned long)r6, (unsigned long)g6, (unsigned long)b6);
+        uint32_t r6s = (g_shifted>>12)&0x3F, g6s = (g_shifted>>6)&0x3F, b6s = g_shifted&0x3F;
+        vlog("  BG=%s: GRAM=%08lx R=%lu G=%lu B=%lu (>>1: R=%lu G=%lu B=%lu)",
+             ctests[ci].name, (unsigned long)g,
+             (unsigned long)r6, (unsigned long)g6, (unsigned long)b6,
+             (unsigned long)r6s, (unsigned long)g6s, (unsigned long)b6s);
         LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0;
         LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281;
     }
