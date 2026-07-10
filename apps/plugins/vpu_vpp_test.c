@@ -894,6 +894,19 @@ enum plugin_status plugin_start(const void *parameter)
     disp_go();
     vlog("  DISP GO fired");
 
+    /* Wait for DISP to generate at least one internal frame cycle.
+     * At 30fps, one frame = 33ms. Wait 100ms to be safe.
+     * Without this, compositor GO might fire before DISP VSYNC is ready. */
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
+    /* Fire initial per-frame trigger to get DISP/MIXER/VP into active state */
+    CLCD_REG(0x000) |= 1;
+    MIXER_REG(0x000) = 7;
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+
     /* Compositor GO — MUST be AFTER passthrough (LCD+0x70=1).
      * vpp_test.c v137 proved: GO before passthrough = no output.
      * GO after passthrough = BG_COLOR visible. */
