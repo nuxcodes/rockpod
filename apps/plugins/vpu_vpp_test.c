@@ -106,6 +106,35 @@ static void lcd_data(uint16_t data)
     LCD_WDATA = data;
 }
 
+/* SPI mode (MIPI DCS) command/data — 8-bit values */
+static void spi_cmd(uint8_t cmd)
+{
+    while (LCD_STATUS & 0x10);
+    LCD_WCMD = cmd;
+}
+
+static void spi_data(uint8_t data)
+{
+    while (LCD_STATUS & 0x10);
+    LCD_WDATA = data;
+}
+
+/* Switch LCD_CON to SPI command mode (ROM FUN_000d16a8 pattern) */
+static uint32_t lcd_enter_spi_cmd(void)
+{
+    while (!(LCD_STATUS & 0x2));
+    uint32_t saved = LCD_CON;
+    LCD_CON = (saved & 0x80000007) | 0x01000C20;
+    return saved;
+}
+
+/* Restore LCD_CON (ROM FUN_000d16e8 pattern) */
+static void lcd_leave_spi_cmd(uint32_t saved)
+{
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = saved;
+}
+
 /* ---- Annex B NALU parser ---- */
 
 static int find_start_code(const uint8_t *buf, int len, int *sc_len)
@@ -508,30 +537,26 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
     /* Passthrough setup (ROM FUN_0014deec) */
     LCD_REG(0x78) = 0x000A000A;
 
-    /* GRAM window — set address range but do NOT send GRAM write cmd (0x202)
-     * yet. Sending 0x202 puts panel in GRAM write mode, and subsequent
-     * LCD_CON mode switches would be interpreted as pixel data. */
-    if (panel_type >= 2) {
-        lcd_set_con(0x80000DA9);
-        lcd_cmd(0x210); lcd_data(0);
-        lcd_cmd(0x211); lcd_data(319);
-        lcd_cmd(0x212); lcd_data(0);
-        lcd_cmd(0x213); lcd_data(239);
-        lcd_cmd(0x200); lcd_data(0);
-        lcd_cmd(0x201); lcd_data(0);
-        /* NO lcd_cmd(0x202) here — defer to just before passthrough */
-        lcd_set_con(0x81100DB9);
+    LCD_REG(0x74) = 0x00F00140;
+
+    /* Panel config + GRAM window via MIPI DCS (ROM FUN_000d70d0 pattern).
+     * ROM uses SPI mode (0x81000C21) for 8-bit MIPI DCS commands,
+     * NOT P18 mode (0x80000DA9) with ILI9326 16-bit registers.
+     * Agent-verified: 0x80000DA9 does NOT exist in ROM. */
+    {
+        uint32_t spi_saved = lcd_enter_spi_cmd();
+        spi_cmd(0x3A); spi_data(0x66);         /* COLMOD: RGB666 18-bit */
+        spi_cmd(0x36); spi_data(0x00);          /* MADCTL: normal orientation */
+        spi_cmd(0x2A);                           /* CASET: column 0-319 */
+        spi_data(0x00); spi_data(0x00);
+        spi_data(0x01); spi_data(0x3F);
+        spi_cmd(0x2B);                           /* PASET: row 0-239 */
+        spi_data(0x00); spi_data(0x00);
+        spi_data(0x00); spi_data(0xEF);
+        spi_cmd(0x2C);                           /* RAMWR: start memory write */
+        lcd_leave_spi_cmd(spi_saved);
     }
 
-    LCD_REG(0x74) = 0x00F00140;
-    /* Panel config — v35g exact pattern */
-    lcd_set_con(0x80000DA9);
-    lcd_cmd(0x3A); lcd_data(0x66);  /* COLMOD: RGB666 18-bit */
-    lcd_cmd(0x003); lcd_data(0x1230);  /* Entry Mode: BGR */
-    /* NOW send GRAM write cmd — panel enters write mode,
-     * next data on the bus goes to GRAM at (0,0) */
-    lcd_cmd(0x202);
-    lcd_set_con(0x81100DB9);
     LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
     /* LCD+0x80 = 0: release bus to compositor. Without this, compositor
      * can't drive the i80 bus. Old code zeroed LCD+0x80 via bulk-zero
@@ -617,7 +642,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v59 ===");
+    vlog("=== VPU-B → VPP Integration Test v60 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1407,27 +1432,26 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* v49 push pattern restored */
-        CLCD_REG(0x000) |= 1;
-        MIXER_REG(0x000) = 7;
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
-        for (volatile int d = 0; d < 10000; d++);
+        /* ROM FUN_00086754 push pattern (agent-verified):
+         * 1. Wait DMA idle (LCD+0x8C & 3 == 0)
+         * 2. LCD+0x80 = 1 (hold DMA)
+         * 3. Switch LCD_CON to SPI mode, send MIPI DCS window cmds
+         * 4. Restore LCD_CON
+         * 5. LCD+0x80 = 0 (release → compositor pushes)
+         * 6. Wait DMA idle */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
-        LCD_CON = 0x80000DA9;
-        if (panel_type >= 2) {
-            lcd_cmd(0x210); lcd_data(0);
-            lcd_cmd(0x211); lcd_data(319);
-            lcd_cmd(0x212); lcd_data(0);
-            lcd_cmd(0x213); lcd_data(239);
-            lcd_cmd(0x200); lcd_data(0);
-            lcd_cmd(0x201); lcd_data(0);
-            lcd_cmd(0x202);
+        {
+            uint32_t spi_saved = lcd_enter_spi_cmd();
+            spi_cmd(0x2A);  /* CASET */
+            spi_data(0x00); spi_data(0x00);
+            spi_data(0x01); spi_data(0x3F);
+            spi_cmd(0x2B);  /* PASET */
+            spi_data(0x00); spi_data(0x00);
+            spi_data(0x00); spi_data(0xEF);
+            spi_cmd(0x2C);  /* RAMWR */
+            lcd_leave_spi_cmd(spi_saved);
         }
-        while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
