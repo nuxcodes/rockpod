@@ -934,11 +934,14 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)DISP_REG(0x70));
 
     /* Diagnostics: verify register state after init */
-    vlog("  DISP_MODE=%08lx MIXER_004=%08lx",
-         (unsigned long)DISP_REG(0x008), (unsigned long)MIXER_REG(0x004));
-    vlog("  comp+0x008=%08lx comp+0x00C=%08lx comp+0x220=%08lx",
-         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C),
-         (unsigned long)COMP_REG(0x220));
+    vlog("  DISP: 000=%08lx 008=%08lx",
+         (unsigned long)DISP_REG(0x000), (unsigned long)DISP_REG(0x008));
+    vlog("  MXR_004=%08lx comp008=%08lx comp00C=%08lx",
+         (unsigned long)MIXER_REG(0x004),
+         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x00C));
+    vlog("  comp: 014=%08lx 018=%08lx 01C=%08lx 020=%08lx",
+         (unsigned long)COMP_REG(0x014), (unsigned long)COMP_REG(0x018),
+         (unsigned long)COMP_REG(0x01C), (unsigned long)COMP_REG(0x020));
     vlog("  LCD_CON=%08lx LCD70=%08lx DISP70=%08lx +0x7C=%08lx +0x88=%08lx",
          (unsigned long)LCD_CON, (unsigned long)LCD_REG(0x70),
          (unsigned long)DISP_REG(0x70),
