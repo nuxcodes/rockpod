@@ -1128,9 +1128,17 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable Layer 5 to test BG_COLOR only (no VP data) */
     COMP_REG(0x028) = 0;  /* Layer 5 OFF */
     COMP_REG(0x00C) = 0x0000FF00;  /* BG_COLOR = bright GREEN */
+    COMP_REG(0x220) = 0x0000FF00;  /* also write output readback register */
     vlog("  BEFORE GO: 008=%08lx 010=%08lx 200=%08lx 00C=%08lx",
          (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x010),
          (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x00C));
+    /* Verify gamma LUT loaded correctly */
+    {
+        volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
+        vlog("  gamma[0]=%08lx [15]=%08lx [128]=%08lx [255]=%08lx",
+             (unsigned long)c[0x400/4], (unsigned long)c[0x400/4 + 15],
+             (unsigned long)c[0x400/4 + 128], (unsigned long)c[0x400/4 + 255]);
+    }
     COMP_REG(0x200) |= 0x80;  /* re-set bit 7 — output pipeline must accept new frame */
     COMP_REG(0x000) = 1;  /* GO — re-composite */
     /* Check status immediately after GO */
