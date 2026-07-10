@@ -651,7 +651,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v62 ===");
+    vlog("=== VPU-B → VPP Integration Test v63 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -844,6 +844,38 @@ enum plugin_status plugin_start(const void *parameter)
     /* Pre-init register dump: see what iBoot/HW defaults are BEFORE we touch anything.
      * Clocks just ungated — registers retain state from last power cycle. */
     vlog("Phase 3a: Pre-init CLCD dump (iBoot defaults)");
+
+    /* CSC block at 0x39A00000 — agent-discovered, never initialized by us */
+    {
+        volatile uint32_t *csc = (volatile uint32_t *)0x39A00000;
+        vlog("  CSC(0x39A00000) pre-init:");
+        vlog("    +080: %08lx %08lx %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)csc[0x080/4], (unsigned long)csc[0x084/4],
+             (unsigned long)csc[0x088/4], (unsigned long)csc[0x08C/4],
+             (unsigned long)csc[0x090/4], (unsigned long)csc[0x094/4],
+             (unsigned long)csc[0x098/4]);
+        vlog("    +0A0: %08lx %08lx %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)csc[0x0A0/4], (unsigned long)csc[0x0A4/4],
+             (unsigned long)csc[0x0A8/4], (unsigned long)csc[0x0AC/4],
+             (unsigned long)csc[0x0B0/4], (unsigned long)csc[0x0B4/4],
+             (unsigned long)csc[0x0B8/4]);
+        vlog("    +0C0: %08lx %08lx %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)csc[0x0C0/4], (unsigned long)csc[0x0C4/4],
+             (unsigned long)csc[0x0C8/4], (unsigned long)csc[0x0CC/4],
+             (unsigned long)csc[0x0D0/4], (unsigned long)csc[0x0D4/4],
+             (unsigned long)csc[0x0D8/4]);
+        vlog("    +0E0: %08lx %08lx %08lx %08lx %08lx %08lx %08lx",
+             (unsigned long)csc[0x0E0/4], (unsigned long)csc[0x0E4/4],
+             (unsigned long)csc[0x0E8/4], (unsigned long)csc[0x0EC/4],
+             (unsigned long)csc[0x0F0/4], (unsigned long)csc[0x0F4/4],
+             (unsigned long)csc[0x0F8/4]);
+        /* VPP block at 0x38E00000 */
+        volatile uint32_t *vpp = (volatile uint32_t *)0x38E00000;
+        vlog("  VPP(0x38E00000) pre-init:");
+        vlog("    +010=%08lx +1010=%08lx +100=%08lx +104=%08lx",
+             (unsigned long)vpp[0x010/4], (unsigned long)vpp[0x1010/4],
+             (unsigned long)vpp[0x100/4], (unsigned long)vpp[0x104/4]);
+    }
     {
         volatile uint32_t *c = (volatile uint32_t *)0x39100000;
         vlog("  000=%08lx 004=%08lx 008=%08lx 00C=%08lx 010=%08lx",
