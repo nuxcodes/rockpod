@@ -1422,18 +1422,18 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 10; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* Apple per-frame trigger FIRST, THEN LCD push */
-        CLCD_REG(0x000) |= 1;
-        MIXER_REG(0x000) = 7;
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
-        /* Wait for render */
-        for (volatile int d = 0; d < 10000; d++);
-        /* THEN LCD push — switch LCD_CON for GRAM commands */
+        /* v54: Match vpp_test.c proven push pattern exactly.
+         * 1. Compositor GO + re-latch (NOT VPP trigger)
+         * 2. Wait for render
+         * 3. GRAM window commands (BEFORE LCD+0x80=1)
+         * 4. LCD+0x80=1, LCD_CON self-write strobe, delay, LCD+0x80=0
+         * 5. Wait bus idle */
+        COMP_REG(0x200) |= 0x10080;  /* re-latch trigger config */
+        COMP_REG(0x000) = 1;          /* compositor GO */
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
-        LCD_REG(0x80) = 1;
-        LCD_CON = 0x80000DA9;  /* Apple ROM cmd mode (bit 20 clear) */
+        /* GRAM window commands BEFORE taking bus */
+        lcd_set_con(0x80000DA9);  /* P18 cmd mode */
         if (panel_type >= 2) {
             lcd_cmd(0x210); lcd_data(0);
             lcd_cmd(0x211); lcd_data(319);
@@ -1443,8 +1443,11 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x201); lcd_data(0);
             lcd_cmd(0x202);
         }
-        while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;  /* restore for compositor data push */
+        lcd_set_con(0x81100DB9);  /* back to P9 passthrough */
+        /* WR# strobe push (vpp_test.c proven pattern) */
+        LCD_REG(0x80) = 1;
+        { uint32_t v = LCD_CON; LCD_CON = v; }  /* self-write = WR# strobe */
+        for (volatile int d = 0; d < 50000; d++);
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
