@@ -1435,6 +1435,23 @@ enum plugin_status plugin_start(const void *parameter)
 
 #undef GRAM_TEST
 
+    /* ---- Phase 7b: SOFTWARE render (bypass VPP entirely) ---- */
+    vlog("Phase 7b: Software YUV→RGB render (5s)");
+    /* Disable passthrough — return LCD to CPU control */
+    LCD_REG(0x70) = 0;
+    LCD_REG(0x80) = 0;
+    for (volatile int d = 0; d < 10000; d++);
+    {
+        /* Use Rockbox's built-in lcd_blit_yuv (ARM asm YUV→RGB565) */
+        unsigned char *yuv_src[3];
+        yuv_src[0] = (unsigned char *)y_out;
+        yuv_src[1] = (unsigned char *)cb_out;
+        yuv_src[2] = (unsigned char *)cr_out;
+        rb->lcd_blit_yuv(yuv_src, 0, 0, frame_w, 0, 0, frame_w, frame_h);
+    }
+    vlog("  If screen shows decoded frame → VPU-B output is valid");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
     /* ---- Phase 8: Shutdown ---- */
 
     vlog("Phase 8: Shutdown");
