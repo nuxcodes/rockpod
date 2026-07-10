@@ -511,12 +511,10 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* CRITICAL: After 0x202, DC/RS pin is LOW (command mode).
-         * Must write at least one DATA word via LCD_WDATA to set DC=1
-         * BEFORE releasing bus to compositor. Otherwise compositor data
-         * arrives with DC=0 → panel treats as commands → GRAM not updated.
-         * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
-         * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
+        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
+        lcd_data(0x0000);
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
         lcd_set_con(0x81100DB9);
     }
 
@@ -591,12 +589,10 @@ static void lcd_push_frame(int panel_type)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* CRITICAL: After 0x202, DC/RS pin is LOW (command mode).
-         * Must write at least one DATA word via LCD_WDATA to set DC=1
-         * BEFORE releasing bus to compositor. Otherwise compositor data
-         * arrives with DC=0 → panel treats as commands → GRAM not updated.
-         * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
-         * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
+        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
+        lcd_data(0x0000);
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
     }
     /* OOB-8: Apple polls LCD_STATUS bit 1 BEFORE restoring LCD_CON.
      * Without poll, P9 restore corrupts 0x202 still on the bus. */
@@ -1237,12 +1233,10 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* CRITICAL: After 0x202, DC/RS pin is LOW (command mode).
-         * Must write at least one DATA word via LCD_WDATA to set DC=1
-         * BEFORE releasing bus to compositor. Otherwise compositor data
-         * arrives with DC=0 → panel treats as commands → GRAM not updated.
-         * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
-         * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
+        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
+        lcd_data(0x0000);
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
     }
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
@@ -1298,12 +1292,10 @@ enum plugin_status plugin_start(const void *parameter)
             lcd_cmd(0x200); lcd_data(0);
             lcd_cmd(0x201); lcd_data(0);
             lcd_cmd(0x202);
-        /* CRITICAL: After 0x202, DC/RS pin is LOW (command mode).
-         * Must write at least one DATA word via LCD_WDATA to set DC=1
-         * BEFORE releasing bus to compositor. Otherwise compositor data
-         * arrives with DC=0 → panel treats as commands → GRAM not updated.
-         * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
-         * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
+        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
+        lcd_data(0x0000);
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
         }
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
@@ -1341,12 +1333,10 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        /* CRITICAL: After 0x202, DC/RS pin is LOW (command mode).
-         * Must write at least one DATA word via LCD_WDATA to set DC=1
-         * BEFORE releasing bus to compositor. Otherwise compositor data
-         * arrives with DC=0 → panel treats as commands → GRAM not updated.
-         * Rockbox's DMA writes to LCD_WDATA which sets DC=1 automatically.
-         * Passthrough bypasses LCD_WDATA so DC stays stuck at 0. */
+        /* DC fix: dummy sets DC=1, re-address resets GRAM to (0,0) */
+        lcd_data(0x0000);
+        lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
         /* Write 320x240 = 76800 pixels of RED (RGB565: 0xF800) */
         for (int p = 0; p < 76800; p++) {
             lcd_data(0xF800);
