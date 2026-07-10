@@ -867,6 +867,9 @@ enum plugin_status plugin_start(const void *parameter)
     PWRCON(0) &= ~((1 << 7) | (1 << 13)); /* ungate compositor clocks */
     for (volatile int d = 0; d < 10000; d++);
     vlog("  Compositor clock reset done (PWRCON0=0x%08lx)", (unsigned long)PWRCON(0));
+    vlog("  Post-reset: comp000=%08lx 008=%08lx 028=%08lx 038=%08lx",
+         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x008),
+         (unsigned long)COMP_REG(0x028), (unsigned long)COMP_REG(0x038));
 
     /* Init compositor */
     vlog("  comp pre-init: 0D4=%08lx 0D8=%08lx 0DC=%08lx 0E0=%08lx",
