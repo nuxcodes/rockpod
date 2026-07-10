@@ -154,8 +154,8 @@ static void clcd_init(int src_w, int src_h, int out_w, int out_h)
 
     CLCD_REG(0x008) = 0;
     CLCD_REG(0x00C) = 0;
-    /* VP+0x010 (VP_MODE): Apple NEVER writes this. POR value 0x200 preserved.
-     * Was cleared to 0 in v34c but Apple expects POR defaults for unwritten regs. */
+    /* VP+0x010: POR=0x200. User sees interlacing. Clear bit 9 for progressive. */
+    CLCD_REG(0x010) = 0;
 
     /* VP_IMG_SIZE: DMA buffer geometry. Apple never writes these because iBoot
      * pre-sets them for the boot logo. Rockbox bootloader doesn't use VPP,
@@ -625,7 +625,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35f ===");
+    vlog("=== VPU-B → VPP Integration Test v35g ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -964,7 +964,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35f: VP must be DISABLED when writing plane addresses to bypass the
+     * v35g: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
