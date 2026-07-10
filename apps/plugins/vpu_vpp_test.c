@@ -1163,6 +1163,12 @@ enum plugin_status plugin_start(const void *parameter)
         const uint8_t *crb = (const uint8_t *)cr_out;
         vlog("Phase 4c: Buffer verify Y[0]=%d Y[120*%d]=%d Y[last]=%d Cb[0]=%d Cr[0]=%d",
              yb[0], frame_w, yb[120*frame_w], yb[(frame_h-1)*frame_w], cbb[0], crb[0]);
+        /* Also verify via uncached alias to confirm DRAM content */
+        const uint8_t *yu = (const uint8_t *)((uintptr_t)y_out | 0x40000000);
+        vlog("  Uncached: Y[0]=%d Y[mid]=%d Y[last]=%d",
+             yu[0], yu[120*frame_w], yu[(frame_h-1)*frame_w]);
+        vlog("Phase 4c: Buffer verify Y[0]=%d Y[120*%d]=%d Y[last]=%d Cb[0]=%d Cr[0]=%d",
+             yb[0], frame_w, yb[120*frame_w], yb[(frame_h-1)*frame_w], cbb[0], crb[0]);
         vlog("  Y phys=%08lx Cb phys=%08lx Cr phys=%08lx",
              (unsigned long)PHYS(y_out), (unsigned long)PHYS(cb_out),
              (unsigned long)PHYS(cr_out));
