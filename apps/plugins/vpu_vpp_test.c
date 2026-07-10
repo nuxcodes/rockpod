@@ -1497,12 +1497,15 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* ---- Phase 7b: SOFTWARE render (bypass VPP entirely) ---- */
     vlog("Phase 7b: Software YUV→RGB render (5s)");
-    /* Disable passthrough — return LCD to CPU control */
-    LCD_REG(0x70) = 0;
-    LCD_REG(0x80) = 0;
+    /* Restore LCD to Rockbox state for sw render */
+    LCD_REG(0x70) = 0;               /* passthrough OFF */
+    LCD_REG(0x80) = 0;               /* release bus */
+    LCD_REG(0x88) = saved_lcd_88;    /* restore for DMA */
+    LCD_REG(0x20) = saved_lcd_20;
+    LCD_REG(0x7C) = saved_lcd_7c;
+    LCD_CON = saved_lcd_con;
     for (volatile int d = 0; d < 10000; d++);
     {
-        /* Use Rockbox's built-in lcd_blit_yuv (ARM asm YUV→RGB565) */
         unsigned char *yuv_src[3];
         yuv_src[0] = (unsigned char *)y_out;
         yuv_src[1] = (unsigned char *)cb_out;
