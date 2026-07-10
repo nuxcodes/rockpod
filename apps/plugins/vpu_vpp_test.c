@@ -614,7 +614,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v43 ===");
+    vlog("=== VPU-B → VPP Integration Test v44 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1020,14 +1020,17 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x004),
          (unsigned long)CLCD_REG(0x008));
 
-    /* v34: Compositor Layer 5 buffer addresses (MISSING in ALL prior versions).
-     * ROM 0x14d794: Apple writes these per-frame. Without them, compositor
-     * Layer 5 has no source data. Base 0x38900000 verified at literal 0x14d800.
-     * Plane order matches VP: struct[0]→Y, struct[2]→0x03C, struct[1]→0x044. */
-    COMP_REG(0x038) = PHYS(y_out);                  /* Layer 5 Y */
-    COMP_REG(0x03C) = PHYS(cb_out);                 /* Cb (standard) */
-    COMP_REG(0x040) = 0;                            /* unused for 3-plane */
-    COMP_REG(0x044) = PHYS(cr_out);                 /* Cr (standard) */
+    /* v44: Do NOT write comp+0x038-0x044 buffer addresses.
+     * Theory: writing these makes compositor DMA-read raw YUV from DRAM,
+     * bypassing VP→MIXER(CSC)→DISP pipeline. Without these, compositor
+     * should receive post-CSC RGB from the DISP internal bus.
+     * v34 added these thinking they were "MISSING" but they may OVERRIDE
+     * the DISP→compositor connection with a direct DRAM read (no CSC).
+     * Evidence: GRAM=Y*40 (Y mapped to green only = raw Y, no CSC). */
+    vlog("  v44: comp+0x038-0x044 NOT written (let DISP feed compositor)");
+    vlog("  comp+0x038=%08lx 03C=%08lx 044=%08lx (iBoot residuals)",
+         (unsigned long)COMP_REG(0x038), (unsigned long)COMP_REG(0x03C),
+         (unsigned long)COMP_REG(0x044));
 
     /* Re-enable VP — all registers written with VP disabled (ROM pattern) */
     CLCD_REG(0x000) |= 1;
