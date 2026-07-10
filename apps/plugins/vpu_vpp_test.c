@@ -482,7 +482,9 @@ static void compositor_init(void)
     c[0x024/4] = 0x00FFFFFF;    /* Fix 2: color mask — ROM 0x14D410 MVN r1,#0xFF000000 */
     /* DO NOT fire GO here — must wait until LCD passthrough is active.
      * vpp_test.c v137 fires GO in Phase 6 AFTER passthrough, and that works. */
-    c[0x3AC/4] = 0x04004003;    /* pipeline config */
+    /* comp+0x3AC: Apple init does NOT write this. FUN_0014CC90 writes
+     * 0x04004003 only for formats 2-5 (rotation), NOT format 8.
+     * Leave at iBoot/POR default for YUV420. */
 }
 
 /* ---- LCD Passthrough Init ---- */
@@ -614,7 +616,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v48 ===");
+    vlog("=== VPU-B → VPP Integration Test v49 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
