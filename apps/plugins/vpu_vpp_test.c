@@ -616,7 +616,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35a ===");
+    vlog("=== VPU-B → VPP Integration Test v35b ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -955,7 +955,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35a: VP must be DISABLED when writing plane addresses to bypass the
+     * v35b: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
@@ -1156,12 +1156,11 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Phase 5c: Layer 0 RGB test — fill buffer with GREEN RGB565,
      * use compositor Layer 0 (single-buffer RGB) instead of Layer 5 (YUV) */
-    vlog("Phase 5c: Color channel test (R/G/B isolation)");
-    /* Disable ALL layers — pure BG_COLOR only */
-    { uint32_t v = COMP_REG(0x008); v &= ~0xFC; COMP_REG(0x008) = v; } /* clear bits 2-7 */
-    COMP_REG(0x028) = 0;  /* Layer 5 format off */
+    vlog("Phase 5c: Color channel test (layers ON, varying BG)");
+    /* Keep Layer 5 (bit 7) enabled — compositor needs active layer to render.
+     * BG_COLOR only fills gaps; with no layers, output = default 0x03FF. */
+    COMP_REG(0x028) = 0x100;  /* Layer 5 format 8 (3-plane) */
 
-    /* Test 3 pure colors to map channels */
     static const struct { uint32_t bg; const char *name; } ctests[] = {
         {0x000000FF, "R=0xFF"},
         {0x0000FF00, "G=0xFF"},
