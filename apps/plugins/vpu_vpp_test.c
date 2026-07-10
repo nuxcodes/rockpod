@@ -1160,6 +1160,15 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("  500ms later: 000=%08lx 010=%08lx 200=%08lx 220=%08lx",
          (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
          (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x220));
+    /* Apple per-frame trigger FIRST (ROM order: trigger → push) */
+    CLCD_REG(0x000) |= 1;
+    MIXER_REG(0x000) = 7;
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+    /* Wait for compositor to render after trigger */
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 100000); }
+    /* THEN LCD push */
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     LCD_REG(0x80) = 1;
     LCD_CON = 0x80000DA9;
@@ -1182,12 +1191,6 @@ enum plugin_status plugin_start(const void *parameter)
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81100DB9;
     LCD_REG(0x80) = 0;  /* compositor pushes on 1→0 transition */
-    /* Full Apple per-frame trigger (ROM 0x166C28-0x166C64) */
-    CLCD_REG(0x000) |= 1;   /* VP enable */
-    MIXER_REG(0x000) = 7;   /* MIXER run + standby wake + sync enable */
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-    { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
     vlog("  LCD_8C=%08lx (nonzero=bus busy=compositor pushing)",
          (unsigned long)LCD_REG(0x8C));
     /* Wait for push to finish, then check GRAM at (0,0) */
@@ -1219,7 +1222,15 @@ enum plugin_status plugin_start(const void *parameter)
 
     for (int push = 0; push < 5; push++) {
         uint32_t t0 = USEC_TIMER;
-        /* Apple FUN_000A5080 pattern: bus idle → LCD+0x80=1 → GRAM → LCD+0x80=0 → bus idle */
+        /* Apple per-frame trigger FIRST, THEN LCD push */
+        CLCD_REG(0x000) |= 1;
+        MIXER_REG(0x000) = 7;
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+        /* Wait for render */
+        for (volatile int d = 0; d < 10000; d++);
+        /* THEN LCD push */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
@@ -1242,12 +1253,6 @@ enum plugin_status plugin_start(const void *parameter)
         while (!(LCD_STATUS & 0x2));
         LCD_CON = 0x81100DB9;
         LCD_REG(0x80) = 0;
-        /* Full Apple per-frame trigger */
-        CLCD_REG(0x000) |= 1;
-        MIXER_REG(0x000) = 7;
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
-        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         uint32_t dt = USEC_TIMER - t0;
         if (push == 0) {
