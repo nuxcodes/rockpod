@@ -1497,6 +1497,14 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* ---- Phase 7b: SOFTWARE render (bypass VPP entirely) ---- */
     vlog("Phase 7b: Software YUV→RGB render (5s)");
+    /* Restore white test pattern (Phase 5c overwrote Y with RGB565) */
+    {
+        uint8_t *y_buf = (uint8_t *)y_out;
+        for (int i = 0; i < frame_w * frame_h; i++) y_buf[i] = 0xFF;
+        rb->memset((uint8_t *)cb_out, 128, (frame_w/2)*(frame_h/2));
+        rb->memset((uint8_t *)cr_out, 128, (frame_w/2)*(frame_h/2));
+        rb->commit_discard_dcache();
+    }
     /* Restore LCD to Rockbox state for sw render */
     LCD_REG(0x70) = 0;               /* passthrough OFF */
     LCD_REG(0x80) = 0;               /* release bus */
