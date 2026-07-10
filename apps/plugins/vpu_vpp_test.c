@@ -614,7 +614,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v44 ===");
+    vlog("=== VPU-B → VPP Integration Test v45 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1020,17 +1020,15 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x000), (unsigned long)CLCD_REG(0x004),
          (unsigned long)CLCD_REG(0x008));
 
-    /* v44: Do NOT write comp+0x038-0x044 buffer addresses.
-     * Theory: writing these makes compositor DMA-read raw YUV from DRAM,
-     * bypassing VP→MIXER(CSC)→DISP pipeline. Without these, compositor
-     * should receive post-CSC RGB from the DISP internal bus.
-     * v34 added these thinking they were "MISSING" but they may OVERRIDE
-     * the DISP→compositor connection with a direct DRAM read (no CSC).
-     * Evidence: GRAM=Y*40 (Y mapped to green only = raw Y, no CSC). */
-    vlog("  v44: comp+0x038-0x044 NOT written (let DISP feed compositor)");
-    vlog("  comp+0x038=%08lx 03C=%08lx 044=%08lx (iBoot residuals)",
-         (unsigned long)COMP_REG(0x038), (unsigned long)COMP_REG(0x03C),
-         (unsigned long)COMP_REG(0x044));
+    /* Compositor Layer 5 buffer addresses.
+     * ROM 0x14d794: Apple writes per-frame. Compositor reads YUV from DRAM.
+     * Plane order for format 8: struct[0]→Y, struct[2]→0x03C, struct[1]→0x044.
+     * VPU-B returns: buf[0]=Y, buf[1]=Cb, buf[2]=Cr.
+     * Apple format 8: comp+0x03C=buf[2]=Cr, comp+0x044=buf[1]=Cb (swapped). */
+    COMP_REG(0x038) = PHYS(y_out);                  /* Layer 5 Y */
+    COMP_REG(0x03C) = PHYS(cr_out);                 /* Cr (ROM: struct[2]→0x03C) */
+    COMP_REG(0x040) = 0;                            /* unused for 3-plane */
+    COMP_REG(0x044) = PHYS(cb_out);                 /* Cb (ROM: struct[1]→0x044) */
 
     /* Re-enable VP — all registers written with VP disabled (ROM pattern) */
     CLCD_REG(0x000) |= 1;
@@ -1250,7 +1248,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x70) = 0;
         LCD_REG(0x80) = 1;
         /* Read mode: bit 0=0 for read direction, keep bit 24 for 18-bit bus */
-        LCD_CON = 0x81000DB8;
+        LCD_CON = 0x80000DA8;  /* P18 read mode (Rockbox LCD_MODE_P18) */
         lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202);
         { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
         /* ILI9326 18-bit read: 1 dummy cycle, then pixel data in 18 bits */
@@ -1294,7 +1292,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* Quick GRAM spot check: read pixel at (0,0) */
     LCD_REG(0x70) = 0;  /* passthrough off for read */
     LCD_REG(0x80) = 1;
-    LCD_CON = 0x81000DB8;  /* read mode: bit 0=0 for read direction */
+    LCD_CON = 0x80000DA8;  /* P18 read mode (Rockbox LCD_MODE_P18) */  /* read mode: bit 0=0 for read direction */
     lcd_cmd(0x200); lcd_data(0);
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
@@ -1403,7 +1401,7 @@ enum plugin_status plugin_start(const void *parameter)
      * Try both 1-dummy and 2-dummy, log raw + shifted values. */
     {
         LCD_REG(0x80) = 1;  /* CPU must own bus for GRAM read commands */
-        LCD_CON = 0x81000DB8;  /* P18 read mode (bit 0=0 = read direction) */
+        LCD_CON = 0x80000DA8;  /* P18 read mode (Rockbox LCD_MODE_P18) */  /* P18 read mode (bit 0=0 = read direction) */
         lcd_cmd(0x200); lcd_data(160);
         lcd_cmd(0x201); lcd_data(120);
         lcd_cmd(0x202);
@@ -1461,7 +1459,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x70) = 0;
         for (volatile int d = 0; d < 10000; d++);
         LCD_REG(0x80) = 1;
-        lcd_set_con(0x81000DB8);  /* read mode: bit 0=0 */
+        lcd_set_con(0x80000DA8);  /* P18 read mode */
         for (int ti = 0; ti < 5; ti++) {
             lcd_cmd(0x200); lcd_data(test_x[ti]);
             lcd_cmd(0x201); lcd_data(120);
@@ -1514,7 +1512,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 0; \
     for (volatile int _d = 0; _d < 10000; _d++); \
     LCD_REG(0x80) = 1; \
-    LCD_CON = 0x81000DB8; \
+    LCD_CON = 0x80000DA8;  /* P18 read mode (Rockbox LCD_MODE_P18) */ \
     lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202); \
     { int _w = 100000; while (!(LCD_STATUS & 0x2) && --_w > 0); } \
     LCD_RDATA = 0; { int _w = 100000; while (!(LCD_STATUS & 1) && --_w > 0); } (void)LCD_DBUFF; \
