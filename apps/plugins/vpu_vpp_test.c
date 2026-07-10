@@ -892,30 +892,43 @@ enum plugin_status plugin_start(const void *parameter)
      * all other phases = linear interpolation. */
     {
         volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
-        /* 9x4 vertical filter (comp+0x0F0): nearest-neighbor pass-through */
+        /* Dump current scaler coefficients BEFORE overwriting */
+        vlog("  comp scaler pre-init (0x0F0-0x10C, first 8):");
+        vlog("    %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x0F0/4], (unsigned long)c[0x0F4/4],
+             (unsigned long)c[0x0F8/4], (unsigned long)c[0x0FC/4]);
+        vlog("    %08lx %08lx %08lx %08lx",
+             (unsigned long)c[0x100/4], (unsigned long)c[0x104/4],
+             (unsigned long)c[0x108/4], (unsigned long)c[0x10C/4]);
+        /* Dump DRAM source that Apple would use */
+        volatile uint32_t *dram_src = (volatile uint32_t *)0x08A18700;
+        vlog("  DRAM 0x08A18700 (Apple scaler src): %08lx %08lx %08lx %08lx",
+             (unsigned long)dram_src[0], (unsigned long)dram_src[1],
+             (unsigned long)dram_src[2], (unsigned long)dram_src[3]);
+        /* 9x4 vertical filter (comp+0x0F0): pass-through center tap */
         for (int phase = 0; phase < 9; phase++) {
             int base = 0x0F0/4 + phase * 4;
             c[base + 0] = 0;     /* tap 0 */
             c[base + 1] = 0;     /* tap 1 */
-            c[base + 2] = 256;   /* tap 2 = 1.0 (center tap, pass-through) */
+            c[base + 2] = 128;    /* tap 2 = center (safe for 8/9-bit signed) */
             c[base + 3] = 0;     /* tap 3 */
         }
         /* 9x2 horizontal filter (comp+0x180): pass-through */
         for (int phase = 0; phase < 9; phase++) {
             int base = 0x180/4 + phase * 2;
-            c[base + 0] = 256;   /* tap 0 = 1.0 */
+            c[base + 0] = 128;   /* tap 0 = pass-through */
             c[base + 1] = 0;     /* tap 1 */
         }
         /* 9x2 scaler table 2 (comp+0x31C): pass-through */
         for (int phase = 0; phase < 9; phase++) {
             int base = 0x31C/4 + phase * 2;
-            c[base + 0] = 256;
+            c[base + 0] = 128;
             c[base + 1] = 0;
         }
         /* 9x2 scaler table 3 (comp+0x364): pass-through */
         for (int phase = 0; phase < 9; phase++) {
             int base = 0x364/4 + phase * 2;
-            c[base + 0] = 256;
+            c[base + 0] = 128;
             c[base + 1] = 0;
         }
     }
