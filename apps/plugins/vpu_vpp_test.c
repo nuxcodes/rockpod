@@ -1102,6 +1102,16 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)CLCD_REG(0x008), (unsigned long)CLCD_REG(0x010),
          (unsigned long)CLCD_REG(0x3C0));
 
+    /* v50: Verify DRAM at the EXACT physical address the compositor reads */
+    {
+        uint32_t comp_y_addr = COMP_REG(0x038);
+        volatile uint8_t *dram_y = (volatile uint8_t *)(comp_y_addr | 0x40000000);
+        vlog("  DRAM@comp038(0x%08lx): [0]=%d [160]=%d [mid]=%d [last]=%d",
+             (unsigned long)comp_y_addr,
+             dram_y[0], dram_y[160],
+             dram_y[120*320 + 160], dram_y[320*240 - 1]);
+    }
+
     /* MIXER+0x004: D7 trace gives 0x03 (bits 0+1). DS1 found bit 3 = REG_VIDEO_EN
      * (ROM 0x166d24 layer enable dispatcher, S5PC100 p.1461). Without bit 3, mixer
      * DISCARDS all video data. 0x0B = bits 0+1+3. */
