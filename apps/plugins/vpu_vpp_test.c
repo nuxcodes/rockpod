@@ -404,9 +404,9 @@ static void compositor_init(void)
         uint32_t v = c[0x008/4];
         v &= ~0x20000000;  /* clear bit 29 */
         v &= ~0x10000000;  /* clear bit 28 */
-        v &= ~0x03000000;  /* bits 25:24 = 00 → try RGB565 output */
-        v &= ~0x00300000;  /* bit 20 = 0 */
-        v &= ~0x00030000;  /* bits 17:16 = 00 */
+        v &= ~0x03000000; v |= 0x01000000;  /* bits 25:24 = 01 (ROM-only value) */
+        v &= ~0x00300000; v |= 0x00100000;  /* bit 20 = 1 (ROM-only value) */
+        v &= ~0x00030000; v |= 0x00010000;  /* bits 17:16 = 01 (ROM-only value) */
         v &= ~1; v |= 1;  /* bit 0 */
         c[0x008/4] = v;
     }
