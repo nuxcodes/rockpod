@@ -404,9 +404,9 @@ static void compositor_init(void)
         uint32_t v = c[0x008/4];
         v &= ~0x20000000;  /* clear bit 29 */
         v &= ~0x10000000;  /* clear bit 28 */
-        v &= ~0x03000000; v |= 0x01000000;  /* bits 25:24 = 01 (ROM value) */
-        v &= ~0x00300000; v |= 0x00100000;  /* bit 20 = 1 (ROM value) */
-        v &= ~0x00030000; v |= 0x00010000;  /* bits 17:16 = 01 (ROM value) */
+        v &= ~0x03000000;  /* bits 25:24 = 00 → try RGB565 output */
+        v &= ~0x00300000;  /* bit 20 = 0 */
+        v &= ~0x00030000;  /* bits 17:16 = 00 */
         v &= ~1; v |= 1;  /* bit 0 */
         c[0x008/4] = v;
     }
@@ -616,7 +616,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v35b ===");
+    vlog("=== VPU-B → VPP Integration Test v35c ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -955,7 +955,7 @@ enum plugin_status plugin_start(const void *parameter)
      * v31 had format 9 (2-plane) which was wrong — format 8 is Apple's H.264 format.
      * Compositor only enables Layer 5 when format==8 (ROM 0x14ce5c).
      *
-     * v35b: VP must be DISABLED when writing plane addresses to bypass the
+     * v35c: VP must be DISABLED when writing plane addresses to bypass the
      * shadow register mechanism. On i80 panels, VSYNC never occurs so
      * VP+0x008 shadow commit never triggers. With VP disabled, register
      * writes go directly to active registers (no shadow). */
