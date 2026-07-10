@@ -542,24 +542,21 @@ static void lcd_passthrough_init(int panel_type, uint32_t *saved_con)
 
     LCD_REG(0x74) = 0x00F00140;
 
-    /* Panel config + GRAM window via MIPI DCS (ROM FUN_000d70d0 pattern).
-     * ROM uses SPI mode (0x81000C21) for 8-bit MIPI DCS commands,
-     * NOT P18 mode (0x80000DA9) with ILI9326 16-bit registers.
-     * Agent-verified: 0x80000DA9 does NOT exist in ROM. */
-    {
-        uint32_t spi_saved = lcd_enter_spi_cmd();
-        /* Apple FUN_000d70d0 sends: MADCTL, CASET, PASET, RAMWR.
-         * Does NOT send COLMOD — panel keeps iBoot's pixel format.
-         * Rockbox lcd-6g.c also never sets COLMOD. */
-        spi_cmd(0x36); spi_data(0x00);          /* MADCTL: normal orientation */
-        spi_cmd(0x2A);                           /* CASET: column 0-239 (panel native) */
-        spi_data(0x00); spi_data(0x00);
-        spi_data(0x00); spi_data(0xEF);
-        spi_cmd(0x2B);                           /* PASET: row 0-319 (panel native) */
-        spi_data(0x00); spi_data(0x00);
-        spi_data(0x01); spi_data(0x3F);
-        spi_cmd(0x2C);                           /* RAMWR: start memory write */
-        lcd_leave_spi_cmd(spi_saved);
+    /* GRAM window via ILI9326 16-bit registers through P18 mode.
+     * Apple ROM uses MIPI DCS via P8/SPI mode, but that requires Apple's
+     * panel init (PixoOS). Rockbox initialized the panel in P18/ILI9326
+     * mode — panel only responds to P18 commands from this state.
+     * v60 proved: P8/MIPI DCS produces NO output on Rockbox-init'd panel. */
+    if (panel_type >= 2) {
+        lcd_set_con(0x80000DA9);  /* P18 command mode (Rockbox LCD_MODE_P18+1) */
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        lcd_set_con(0x81100DB9);  /* restore P9 passthrough */
     }
 
     LCD_REG(0x70) = 1;          /* LCD MCU passthrough enable */
@@ -647,7 +644,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v60 ===");
+    vlog("=== VPU-B → VPP Integration Test v61 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -1447,15 +1444,19 @@ enum plugin_status plugin_start(const void *parameter)
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
         LCD_REG(0x80) = 1;
         {
-            uint32_t spi_saved = lcd_enter_spi_cmd();
-            spi_cmd(0x2A);  /* CASET: columns 0-239 (panel native) */
-            spi_data(0x00); spi_data(0x00);
-            spi_data(0x00); spi_data(0xEF);
-            spi_cmd(0x2B);  /* PASET: rows 0-319 (panel native) */
-            spi_data(0x00); spi_data(0x00);
-            spi_data(0x01); spi_data(0x3F);
-            spi_cmd(0x2C);  /* RAMWR */
-            lcd_leave_spi_cmd(spi_saved);
+            /* ILI9326 GRAM window via P18 mode (panel is in P18/ILI9326 state) */
+            LCD_CON = 0x80000DA9;
+            if (panel_type >= 2) {
+                lcd_cmd(0x210); lcd_data(0);
+                lcd_cmd(0x211); lcd_data(319);
+                lcd_cmd(0x212); lcd_data(0);
+                lcd_cmd(0x213); lcd_data(239);
+                lcd_cmd(0x200); lcd_data(0);
+                lcd_cmd(0x201); lcd_data(0);
+                lcd_cmd(0x202);
+            }
+            while (!(LCD_STATUS & 0x2));
+            LCD_CON = 0x81100DB9;
         }
         LCD_REG(0x80) = 0;
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
