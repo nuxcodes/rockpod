@@ -1156,48 +1156,59 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Phase 5c: Layer 0 RGB test — fill buffer with GREEN RGB565,
      * use compositor Layer 0 (single-buffer RGB) instead of Layer 5 (YUV) */
-    vlog("Phase 5c: RGB DMA test (3s)");
-    {
-        /* Fill buffer with GREEN RGB565 (0x07E0) */
-        uint16_t *rgb_buf = (uint16_t *)y_out;
-        for (int p = 0; p < frame_w * frame_h; p++)
-            rgb_buf[p] = 0x07E0;
-        rb->commit_discard_dcache();
+    vlog("Phase 5c: Color channel test (R/G/B isolation)");
+    /* Disable ALL layers — pure BG_COLOR only */
+    { uint32_t v = COMP_REG(0x008); v &= ~0xFC; COMP_REG(0x008) = v; } /* clear bits 2-7 */
+    COMP_REG(0x028) = 0;  /* Layer 5 format off */
 
-        /* Try MULTIPLE approaches to get compositor to read from DRAM:
-         * A. Layer 0 buffer at comp+0x060
-         * B. comp+0x208 as DMA source address
-         * C. Layer 5 Y buffer at comp+0x038 */
-        COMP_REG(0x060) = PHYS(y_out);  /* Layer 0 */
-        COMP_REG(0x208) = PHYS(y_out);  /* DMA source? */
-        COMP_REG(0x038) = PHYS(y_out);  /* Layer 5 Y */
-        /* Enable Layer 0 (bit 6), keep Layer 5 (bit 7) */
-        { uint32_t v = COMP_REG(0x008); v |= 0xC0; COMP_REG(0x008) = v; }
-        COMP_REG(0x028) = 0;  /* Layer 5 format off (use Layer 0 only) */
-        COMP_REG(0x00C) = 0x0000FF00;  /* BG_COLOR = GREEN */
-        COMP_REG(0x220) = 0x0000FF00;  /* try output register */
+    /* Test 3 pure colors to map channels */
+    static const struct { uint32_t bg; const char *name; } ctests[] = {
+        {0x000000FF, "R=0xFF"},
+        {0x0000FF00, "G=0xFF"},
+        {0x00FF0000, "B=0xFF"},
+        {0x00FFFFFF, "WHITE"},
+    };
+    for (int ci = 0; ci < 4; ci++) {
+        COMP_REG(0x00C) = ctests[ci].bg;
+        /* Full trigger → render → push → readback */
+        CLCD_REG(0x000) |= 1; MIXER_REG(0x000) = 7;
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
+        { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
+        COMP_REG(0x200) |= 0x81;
+        COMP_REG(0x000) = 1;
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+        /* Push */
+        { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        if (panel_type >= 2) {
+            lcd_cmd(0x210); lcd_data(0); lcd_cmd(0x211); lcd_data(319);
+            lcd_cmd(0x212); lcd_data(0); lcd_cmd(0x213); lcd_data(239);
+            lcd_cmd(0x200); lcd_data(0); lcd_cmd(0x201); lcd_data(0);
+            lcd_cmd(0x202); lcd_data(0x0000);
+        }
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x81100DB9;
+        LCD_REG(0x80) = 0;
+        { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+        /* Readback at (160,120) */
+        LCD_REG(0x70) = 0;
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA8;
+        lcd_cmd(0x200); lcd_data(160); lcd_cmd(0x201); lcd_data(120); lcd_cmd(0x202);
+        { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); } (void)LCD_DBUFF;
+        LCD_RDATA = 0; { int t = 100000; while (!(LCD_STATUS & 1) && --t > 0); }
+        uint32_t g = LCD_DBUFF;
+        uint32_t r6 = (g>>12)&0x3F, g6 = (g>>6)&0x3F, b6 = g&0x3F;
+        vlog("  BG=%s: GRAM=%08lx R=%lu G=%lu B=%lu",
+             ctests[ci].name, (unsigned long)g, (unsigned long)r6, (unsigned long)g6, (unsigned long)b6);
+        LCD_CON = 0x81100DB9; LCD_REG(0x80) = 0;
+        LCD_REG(0x70) = 1; DISP_REG(0x70) = 0x281;
     }
-    COMP_REG(0x220) = 0x0000FF00;  /* also write output readback register */
-    vlog("  BEFORE GO: 008=%08lx 010=%08lx 200=%08lx 00C=%08lx",
-         (unsigned long)COMP_REG(0x008), (unsigned long)COMP_REG(0x010),
-         (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x00C));
-    /* Verify gamma LUT loaded correctly */
-    {
-        volatile uint32_t *c = (volatile uint32_t *)COMP_BASE;
-        vlog("  gamma[0]=%08lx [15]=%08lx [128]=%08lx [255]=%08lx",
-             (unsigned long)c[0x400/4], (unsigned long)c[0x400/4 + 15],
-             (unsigned long)c[0x400/4 + 128], (unsigned long)c[0x400/4 + 255]);
-    }
-    COMP_REG(0x200) |= 0x80;  /* re-set bit 7 — output pipeline must accept new frame */
-    COMP_REG(0x000) = 1;  /* GO — re-composite */
-    /* Check status immediately after GO */
-    vlog("  AFTER GO: 000=%08lx 010=%08lx 200=%08lx",
-         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
-         (unsigned long)COMP_REG(0x200));
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }  /* 500ms to render */
-    vlog("  500ms later: 000=%08lx 010=%08lx 200=%08lx 220=%08lx",
-         (unsigned long)COMP_REG(0x000), (unsigned long)COMP_REG(0x010),
-         (unsigned long)COMP_REG(0x200), (unsigned long)COMP_REG(0x220));
+
     /* Apple per-frame trigger FIRST (ROM order: trigger → push) */
     CLCD_REG(0x000) |= 1;
     MIXER_REG(0x000) = 7;
