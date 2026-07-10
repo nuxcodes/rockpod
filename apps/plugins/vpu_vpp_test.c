@@ -614,7 +614,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v46 ===");
+    vlog("=== VPU-B → VPP Integration Test v47 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -716,15 +716,24 @@ enum plugin_status plugin_start(const void *parameter)
 #if 1 /* Gradient test pattern for visual verification */
     vlog("Phase 2b: GRADIENT test pattern (Y=row, Cb=Cr=128)");
     {
-        uint8_t *y_buf = (uint8_t *)y_out;
-        uint8_t *cb_buf = (uint8_t *)cb_out;
-        uint8_t *cr_buf = (uint8_t *)cr_out;
+        /* v47: Write through UNCACHED alias to guarantee DRAM visibility.
+         * Previous versions wrote through cached memory + dcache flush,
+         * but the compositor still showed the decoded frame. The VPU-B
+         * decoder writes via DMA (uncached), so the gradient must also
+         * bypass cache to be visible to the compositor's DMA engine. */
+        uint8_t *y_unc = (uint8_t *)((uintptr_t)y_out | 0x40000000);
+        uint8_t *cb_unc = (uint8_t *)((uintptr_t)cb_out | 0x40000000);
+        uint8_t *cr_unc = (uint8_t *)((uintptr_t)cr_out | 0x40000000);
         for (int row = 0; row < frame_h; row++)
             for (int col = 0; col < frame_w; col++)
-                y_buf[row * frame_w + col] = (row * 255) / (frame_h - 1);
-        rb->memset(cb_buf, 128, (frame_w/2)*(frame_h/2));
-        rb->memset(cr_buf, 128, (frame_w/2)*(frame_h/2));
+                y_unc[row * frame_w + col] = (row * 255) / (frame_h - 1);
+        for (int i = 0; i < (frame_w/2)*(frame_h/2); i++) {
+            cb_unc[i] = 128;
+            cr_unc[i] = 128;
+        }
+        /* Also invalidate dcache so CPU reads see the uncached writes */
         rb->commit_discard_dcache();
+        uint8_t *y_buf = (uint8_t *)y_out;
         vlog("  Y[0,0]=%d Y[120,0]=%d Y[239,0]=%d", y_buf[0], y_buf[120*frame_w], y_buf[239*frame_w]);
     }
 #else
