@@ -615,7 +615,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPU-B → VPP Integration Test v57 ===");
+    vlog("=== VPU-B → VPP Integration Test v58 ===");
     vlog("File: %s", test_path);
 
     /* Detect panel type via GPIO (B6-1: matches lcd-6g.c:265) */
@@ -973,7 +973,9 @@ enum plugin_status plugin_start(const void *parameter)
     /* Clear compositor status/interrupts before GO — pending flags
      * might prevent render engine from starting */
     COMP_REG(0x010) = 0x003FEFFE;  /* write-to-clear all pending bits */
-    COMP_REG(0x200) |= 0x81;  /* bit 7 (accept frame) + bit 0 (SWTRGCMD) */
+    COMP_REG(0x200) |= 0x80;   /* bit 7 only — do NOT set bit 0 (SWTRGCMD).
+                                 * Apple clears SWTRGCMD for continuous rendering.
+                                 * Setting bit 0 puts compositor in single-shot mode. */
     COMP_REG(0x204) = 2;      /* step 15: re-assert DMA config */
     COMP_REG(0x20C) = 2;
     COMP_REG(0x208) = 0;
@@ -994,7 +996,7 @@ enum plugin_status plugin_start(const void *parameter)
         uint32_t saved_008 = COMP_REG(0x008);
         COMP_REG(0x008) = saved_008 & ~0x80;  /* clear bit 7 = disable Layer 5 */
         COMP_REG(0x00C) = 0x00FF0000;          /* BG = bright RED */
-        COMP_REG(0x200) |= 0x81; COMP_REG(0x000) = 1;
+        COMP_REG(0x200) |= 0x80; /* no SWTRGCMD — compositor is free-running */
         vlog("  BG-ONLY test: comp008=%08lx (Layer 5 OFF, BG=RED)",
              (unsigned long)COMP_REG(0x008));
         /* Push to LCD */
@@ -1318,8 +1320,7 @@ enum plugin_status plugin_start(const void *parameter)
         { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 1; }
         { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 2; }
         { uint32_t t = DISP_REG(0x03C); DISP_REG(0x03C) = t | 4; }
-        COMP_REG(0x200) |= 0x81;
-        COMP_REG(0x000) = 1;
+        /* compositor is free-running — no per-frame GO needed */
         { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
         /* Push — clear bit 20 during GRAM commands (with STATUS poll) */
         { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
