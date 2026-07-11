@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v129m ===");
+    vlog("=== VPP MVP Test v131m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -821,165 +821,32 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 1;
     LCD_REG(0x80) = 0;
 
-    /* ---- TEST 0: H.264 frame with rotation ON (current config) ---- */
-    vlog("TEST0: H.264 frame, rotation ON, AM=0");
+    /* ---- TEST 0: OPTION A — rotation OFF, 320/scan (THE FIX) ---- */
+    /* iPod Classic is landscape. No rotation needed. Compositor reads
+     * source row-major (320 per row), LCD DMA sends 320 per scan,
+     * ILI9326 GRAM AM=0 fills 320 per row. All aligned. */
+    vlog("TEST0: rotation OFF + LCD_REG(0x74)=0x014000F0 (320/scan)");
     rb->commit_discard_dcache();
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0-rotON");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* ---- TEST 0r: ROTATION OFF — compositor sends 320/row (landscape) ---- */
-    /* With rotation OFF, the compositor reads row-major (320 per row) and
-     * outputs directly without transposition. The LCD DMA should send 320
-     * per scan, matching AM=0 GRAM (320 wide). If this shows clean image
-     * (no shearing), the bug is in how rotation interacts with LCD DMA. */
-    vlog("TEST0r: H.264 frame, rotation OFF, AM=0");
     COMP_REG(0x3AC) = 0;  /* rotation OFF */
-    COMP_REG(0x054) = ((uint32_t)frame_h << 16) | frame_w;  /* output = source dims */
+    LCD_REG(0x74) = 0x014000F0;  /* (320<<16)|240 = 320/scan, 240 scans */
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0r-norot");
+    gram_scan("T0-fixA");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* ---- TEST 0b: Same but rotation ON for comparison ---- */
+    vlog("TEST0b: rotation ON + LCD(0x74)=0x014000F0 (320/scan, OPTION C)");
+    COMP_REG(0x3AC) = 0x04004003;  /* rotation ON */
+    COMP_REG(0x054) = ((uint32_t)320 << 16) | 240;  /* swap output dims */
+    compositor_retrigger();
+    for (int i = 0; i < 10; i++) push_one_frame();
+    gram_scan("T0b-optC");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-    /* Restore rotation */
-    COMP_REG(0x3AC) = 0x04004003;
+
+    /* Restore for remaining tests */
+    COMP_REG(0x3AC) = 0;  /* keep rotation OFF (the working config) */
     COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
-
-    /* ---- TEST 0a: Rotation ON, AM=1 ---- */
-    vlog("TEST0a: H.264 frame, rotation ON, AM=1");
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame_am1();
-    gram_scan("T0a-am1");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* ---- TEST 0s: Rotation ON, LCD+0x74 swapped ---- */
-    /* If LCD+0x74 = (scan_length<<16)|num_scans, swapping to (320<<16)|240
-     * would tell the DMA to send 240 per scan. OR if it's (width<<16)|height,
-     * swapping tells DMA the frame is 320 wide → 320 per scan. */
-    vlog("TEST0s: rotation ON, LCD+0x74=0x014000F0 (swapped)");
     LCD_REG(0x74) = 0x014000F0;
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0s-swap74");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-    LCD_REG(0x74) = 0x00F00140;  /* restore */
-
-    /* ---- TEST 0b: Same frame, CSC BYPASSED, AM=0 ---- */
-    vlog("TEST0b: H.264 frame, CSC bypassed (bit8=1)");
-    { uint32_t v = COMP_REG(0x008); v |= 0x100; COMP_REG(0x008) = v; }
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0b-bypass");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-    /* Re-enable CSC for remaining tests */
-    { uint32_t v = COMP_REG(0x008); v &= ~0x100; COMP_REG(0x008) = v; }
-
-    /* ---- TEST 0c: COLMOD=0x05 + P9 (SIMPLEST FIX FOR B=0) ---- */
-    /* ROOT CAUSE: iBoot sets COLMOD=0x06 (18-bit RGB666). In P9 18-bit mode,
-     * the panel expects 3 transfers per pixel (R6, G6, B6). But LCD+0x7C=0x402
-     * configures the LCD controller for 2 transfers. The 3rd transfer (B) is
-     * NEVER SENT → B=0! Fix: set COLMOD=0x05 (16-bit RGB565) so the panel
-     * expects only 2 transfers per pixel, matching the LCD controller. */
-    vlog("TEST0c: COLMOD=0x05 (16-bit) + P9 — B=0 FIX");
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame_colmod();
-    gram_scan("T0c-colmod");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-    /* Restore COLMOD=0x06 (18-bit) for remaining tests */
-    {
-        LCD_REG(0x80) = 1;
-        lcd_wait();
-        LCD_CON = 0x81000C21;
-        lcd_cmd(0x3A); lcd_data(0x06);
-        lcd_wait();
-        lcd_set_con(0x81100DB9);
-        LCD_REG(0x80) = 0;
-    }
-
-    /* ---- TEST 0c3: P16 passthrough ---- */
-    /* Rockbox uses P16 (0x80100DB0) for ILI9326 panels. */
-    vlog("TEST0c3: H.264 frame, P16 mode CSC active");
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame_p16();
-    gram_scan("T0c3-p16");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* ---- TEST 0c2: P16 free-run + LCD+0x7C=0x401 ---- */
-    /* P16 passthrough with no per-frame push and LCD+0x7C set for
-     * 1-transfer-per-pixel (0x401 vs 0x402 for 2-transfer P9). */
-    vlog("TEST0c2: P16 free-run (LCD_CON=P16, 7C=0x401, no push)");
-    {
-        LCD_REG(0x70) = 0;
-        LCD_REG(0x80) = 1;
-        lcd_set_con(0x80000DA9);
-        lcd_cmd(0x003); lcd_data(0x1238);
-        lcd_cmd(0x210); lcd_data(0);
-        lcd_cmd(0x211); lcd_data(319);
-        lcd_cmd(0x212); lcd_data(0);
-        lcd_cmd(0x213); lcd_data(239);
-        lcd_cmd(0x200); lcd_data(0);
-        lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
-        lcd_set_con(0x80100DB0);
-        LCD_REG(0x7C) = 0x00000401;
-        LCD_REG(0x70) = 1;
-        LCD_REG(0x80) = 0;
-    }
-    compositor_retrigger();
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }
-    gram_scan("T0c2-p16fr");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-    /* Restore P9 + LCD+0x7C for remaining tests */
-    {
-        LCD_REG(0x7C) = 0x00000402;
-        LCD_REG(0x70) = 0;
-        LCD_REG(0x80) = 1;
-        lcd_set_con(0x80000DA9);
-        lcd_cmd(0x003); lcd_data(0x1238);
-        lcd_cmd(0x210); lcd_data(0);
-        lcd_cmd(0x211); lcd_data(319);
-        lcd_cmd(0x212); lcd_data(0);
-        lcd_cmd(0x213); lcd_data(239);
-        lcd_cmd(0x200); lcd_data(0);
-        lcd_cmd(0x201); lcd_data(0);
-        lcd_cmd(0x202);
-        lcd_set_con(0x81100DB9);
-        LCD_REG(0x70) = 1;
-        LCD_REG(0x80) = 0;
-    }
-
-    /* ---- TEST 0d: No per-frame push — compositor free-run ---- */
-    /* Tests whether the B=0 bug comes from the P18→P9 LCD_CON transition. */
-    vlog("TEST0d: Free-run (no per-frame push)");
-    compositor_retrigger();
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }
-    gram_scan("T0d-freerun");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* ---- TEST 0f: comp+0x008 bits[21:20]=00 (output format experiment) ---- */
-    /* Samsung FIMD VIDCON0 bits[22:20] control output data width.
-     * bits[21:20]=01 might mean 18BPP. Try 00 for 16BPP. */
-    vlog("TEST0f: comp+0x008 bits[21:20]=00 (16BPP output?)");
-    {
-        uint32_t v = COMP_REG(0x008);
-        uint32_t saved = v;
-        v &= ~0x00300000;  /* clear bits[21:20] from 01 to 00 */
-        COMP_REG(0x008) = v;
-        vlog("  comp+0x008: %08lx → %08lx", (unsigned long)saved, (unsigned long)v);
-        compositor_retrigger();
-        for (int i = 0; i < 10; i++) push_one_frame();
-        gram_scan("T0f-16bpp");
-        COMP_REG(0x008) = saved;  /* restore */
-    }
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* ---- TEST 0e: DCS push (Apple's exact P8 sequence) ---- */
-    /* If the panel accepts DCS from Rockbox state, this should produce
-     * correct colors since P8→P9 is a clean 9-bit bus transition. */
-    vlog("TEST0e: H.264 frame, DCS push (P8→P9)");
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame_dcs();
-    gram_scan("T0e-dcs");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
     /* ---- TEST 1: Y=128 gray ---- */
