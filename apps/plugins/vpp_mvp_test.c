@@ -154,7 +154,7 @@ static void lcd_passthrough_start(void)
     LCD_CON = LCD_MODE_P16;
     LCD_REG(0x88) = 0x01000000;
     LCD_REG(0x20) = 0x33;
-    LCD_REG(0x7C) = 0x00000401;
+    LCD_REG(0x7C) = 0x00000402;
     LCD_REG(0x78) = 0x000A000A;
     LCD_REG(0x74) = 0x00F00140;
 
@@ -267,6 +267,9 @@ enum plugin_status plugin_start(const void *parameter)
     compositor_init();
     compositor_configure_layer5(y_out, cb_out, cr_out, frame_w, frame_h);
     rb->commit_discard_dcache();
+
+    /* Rockbox lcd_update resets LCD controller state — needed before passthrough */
+    rb->lcd_update();
 
     lcd_passthrough_start();
 
