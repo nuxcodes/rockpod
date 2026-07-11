@@ -1,6 +1,6 @@
-/* VPP Minimal — bare-bones landscape compositor display
- * NO diagnostic tests. NO GRAM scans. NO TEST_SW.
- * Just: decode → landscape config → passthrough → display.
+/* VPP Pure DCS Portrait — Apple's exact approach on ILI9326
+ * ALL compositor registers at Apple defaults.
+ * ONLY DCS commands (no ILI9326 register commands).
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -57,7 +57,7 @@ enum plugin_status plugin_start(const void *parameter)
     PWRCON(0)&=~0x2080;
     for(volatile int d=0;d<10000;d++);
 
-    /* Compositor init */
+    /* === COMPOSITOR INIT — ALL APPLE DEFAULTS === */
     volatile uint32_t*c=(volatile uint32_t*)COMP;
     c[0x200/4]&=~1; c[0x004/4]=1; c[0x020/4]=1;
     for(int i=0;i<256;i++){c[0x400/4+i]=i*4;c[0x800/4+i]=i*4;c[0xC00/4+i]=i*4;}
@@ -77,47 +77,64 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080; c[0x204/4]=2; c[0x208/4]=0; c[0x20C/4]=2;
     c[0x210/4]=0x00010110;
-    c[0x214/4]=0x013F00EF;  /* LANDSCAPE */
+    c[0x214/4]=0x00EF013F;  /* APPLE DEFAULT portrait viewport */
     c[0x024/4]=0x00FFFFFF;
 
-    /* Layer 5 */
+    /* === LAYER 5 — APPLE DEFAULTS (rotation ON) === */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100; CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
-    CR(0x04C)=0x10001000; CR(0x054)=0x014000F0;
+    CR(0x04C)=0x10001000;
+    CR(0x054)=0x00F00140;  /* APPLE DEFAULT portrait output */
     CR(0x038)=PH(yo); CR(0x03C)=PH(cro); CR(0x040)=0; CR(0x044)=PH(cbo);
-    CR(0x3AC)=0; CR(0x0D4)=1;
+    CR(0x3AC)=0x04004003;  /* APPLE DEFAULT rotation ON */
+    CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
 
-    /* LCD passthrough */
-    LCD_CON=0x80100DB0;
+    /* === LCD PASSTHROUGH — APPLE DEFAULTS === */
+    LCD_CON=0x80100DB0;  /* P16 for ILI9326 (only change from Apple) */
     LR(0x88)=0x01000000; LR(0x20)=0x33; LR(0x7C)=0x00000402;
-    LR(0x78)=0x000A000A; LR(0x74)=0x014000F0;
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    lc(0x003);ld(0x1030); lc(0x210);ld(0); lc(0x211);ld(319);
-    lc(0x212);ld(0); lc(0x213);ld(239); lc(0x200);ld(0); lc(0x201);ld(0); lc(0x202);
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
-    LR(0x70)=1; LR(0x80)=0;
+    LR(0x78)=0x000A000A;
+    LR(0x74)=0x00F00140;  /* APPLE DEFAULT 240/scan portrait */
 
-    /* Start */
-    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
-    for(int i=0;i<10;i++){
-        {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-        LR(0x80)=1; LCD_CON=0x80000DA9;
-        lc(0x200);ld(0);lc(0x201);ld(0);lc(0x202);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
-        LR(0x80)=0;{int t=500000;while((LR(0x8C)&3)&&--t>0);}
+    /* === DCS PORTRAIT WINDOW — the only panel config === */
+    /* Send CASET/PASET via P8 mode (0x81000C21 with bit 24). */
+    /* NO ILI9326 register commands. Only DCS. */
+    {
+        while(!(LCD_STATUS&0x2));
+        LCD_CON=0x81000C21;  /* P8 with bit 24 for D[17:10] routing */
+
+        lc(0x36); ld(0x00);  /* MADCTL = 0x00 (no rotation, RGB) */
+
+        lc(0x2A);  /* CASET = 0 to 239 (240 columns) */
+        ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
+
+        lc(0x2B);  /* PASET = 0 to 319 (320 pages) */
+        ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
+
+        lc(0x2C);  /* RAMWR — start memory write */
+
+        while(!(LCD_STATUS&0x2));
+        LCD_CON=0x80100DB0;  /* P16 for pixel data */
     }
 
+    /* Enable passthrough — compositor pushes portrait data into DCS portrait panel */
+    LR(0x70)=1;
+    LR(0x80)=0;
+
+    /* Start compositor */
+    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
+    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<500000);}
+
+    /* Wait for keypress — display should show correct video */
     while(rb->button_get(true)==BUTTON_NONE) rb->backlight_on();
 
     /* Shutdown */
     LR(0x70)=0; LR(0x80)=0; CR(0x000)=0;
     while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    lc(0x003);ld(0x0230);
+    lc(0x003);ld(0x0230);  /* restore Rockbox Entry Mode */
     while(!(LCD_STATUS&0x2)); LCD_CON=sc;
     LR(0x88)=s8;LR(0x20)=s2;LR(0x7C)=s7;LR(0x74)=s4;LR(0x78)=s5;
     LCD_PHTIME=0x33;
