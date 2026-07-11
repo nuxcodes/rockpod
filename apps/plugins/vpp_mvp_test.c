@@ -786,11 +786,15 @@ enum plugin_status plugin_start(const void *parameter)
                 int R = (298*C + 409*E + 128) >> 8;
                 int G = (298*C - 100*D - 208*E + 128) >> 8;
                 int B = (298*C + 516*D + 128) >> 8;
-                if (R < 0) R = 0; if (R > 255) R = 255;
-                if (G < 0) G = 0; if (G > 255) G = 255;
-                if (B < 0) B = 0; if (B > 255) B = 255;
+                if (R < 0) R = 0;
+                if (R > 255) R = 255;
+                if (G < 0) G = 0;
+                if (G > 255) G = 255;
+                if (B < 0) B = 0;
+                if (B > 255) B = 255;
                 unsigned short rgb565 = ((R >> 3) << 11) | ((G >> 2) << 5) | (B >> 3);
-                rb->lcd_framebuffer[sy * LCD_WIDTH + sx] = rgb565;
+                rb->lcd_set_foreground(rgb565);
+                rb->lcd_drawpixel(sx, sy);
             }
         }
         rb->lcd_update();
