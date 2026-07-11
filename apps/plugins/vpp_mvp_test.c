@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v114m — GO bit fix + dual AM test
+ * S5L8702 VPP MVP Test v115m — GO bit fix + dual AM + SW display bypass
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -445,7 +445,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v114m ===");
+    vlog("=== VPP MVP Test v115m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -684,7 +684,61 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_CON = 0x81100DB9;
     }
 
-    /* No GRAM re-send needed — push_one_frame does DCS per frame */
+    /* ---- TEST SW: Software YCbCr→RGB display via Rockbox lcd_update ---- */
+    /* Bypasses compositor entirely. Shows what the decoded frame SHOULD look like. */
+    vlog("TEST_SW: Software YCbCr→RGB via Rockbox lcd_update");
+    {
+        /* Disable passthrough for CPU painting */
+        LCD_REG(0x70) = 0;
+        LCD_REG(0x80) = 0;
+
+        /* Restore Rockbox LCD mode for CPU painting */
+        lcd_set_con(saved_lcd_con);
+        LCD_PHTIME = 0x33;
+
+        for (int sy = 0; sy < frame_h && sy < LCD_HEIGHT; sy++) {
+            for (int sx = 0; sx < frame_w && sx < LCD_WIDTH; sx++) {
+                const uint8_t *y_unc = (const uint8_t *)((uintptr_t)y_out | 0x40000000);
+                const uint8_t *cb_unc = (const uint8_t *)((uintptr_t)cb_out | 0x40000000);
+                const uint8_t *cr_unc = (const uint8_t *)((uintptr_t)cr_out | 0x40000000);
+                int Y = y_unc[sy * frame_w + sx];
+                int Cb = cb_unc[(sy/2) * (frame_w/2) + (sx/2)];
+                int Cr = cr_unc[(sy/2) * (frame_w/2) + (sx/2)];
+                int C = Y - 16;
+                int D = Cb - 128;
+                int E = Cr - 128;
+                int R = (298*C + 409*E + 128) >> 8;
+                int G = (298*C - 100*D - 208*E + 128) >> 8;
+                int B = (298*C + 516*D + 128) >> 8;
+                if (R < 0) R = 0; if (R > 255) R = 255;
+                if (G < 0) G = 0; if (G > 255) G = 255;
+                if (B < 0) B = 0; if (B > 255) B = 255;
+                unsigned short rgb565 = ((R >> 3) << 11) | ((G >> 2) << 5) | (B >> 3);
+                rb->lcd_framebuffer[sy * LCD_WIDTH + sx] = rgb565;
+            }
+        }
+        rb->lcd_update();
+        vlog("  SW display done (%dx%d)", frame_w, frame_h);
+        { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+        /* Re-setup LCD for compositor passthrough */
+        LCD_CON = 0x81100DB9;
+        LCD_REG(0x88) = 0x01000000;
+        LCD_REG(0x20) = 0x33;
+        LCD_REG(0x7C) = 0x00000402;
+        LCD_REG(0x78) = 0x000A000A;
+        LCD_REG(0x74) = 0x00F00140;
+        lcd_set_con(0x80000DA9);
+        lcd_cmd(0x003); lcd_data(0x1230);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        lcd_set_con(0x81100DB9);
+    }
 
     /* Enable passthrough + release bus */
     LCD_REG(0x70) = 1;
