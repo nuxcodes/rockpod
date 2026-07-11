@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v116m — P16 passthrough test + GO fix + dual AM + SW bypass
+ * S5L8702 VPP MVP Test v117m — bus transition test + P16 + free-run + DCS
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -468,7 +468,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v116m ===");
+    vlog("=== VPP MVP Test v117m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -793,13 +793,31 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t v = COMP_REG(0x008); v &= ~0x100; COMP_REG(0x008) = v; }
 
     /* ---- TEST 0c: P16 mode instead of P9 ---- */
-    /* P9 mode loses the B channel. P16 (0x80100DB0) is Rockbox's native
-     * pixel format: 16-bit parallel D[17:10,8:1], RGB565 in one transfer.
-     * If the compositor outputs RGB565 internally, P16 might carry all bits. */
     vlog("TEST0c: H.264 frame, P16 mode CSC active");
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame_p16();
     gram_scan("T0c-p16");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+
+    /* ---- TEST 0d: No per-frame push — compositor free-run ---- */
+    /* The P18→P9 LCD_CON transition in push_one_frame may cause P9 bus
+     * misalignment, corrupting the B channel. Apple uses P8→P9 (both 9-bit,
+     * clean transition). This test skips per-frame push entirely — the GRAM
+     * was set up during init, so the compositor should continuously push
+     * without needing re-triggering. If B appears, the transition is the bug. */
+    vlog("TEST0d: Free-run (no per-frame push, no P18→P9 transition)");
+    compositor_retrigger();
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }
+    gram_scan("T0d-freerun");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+
+    /* ---- TEST 0e: DCS push (Apple's exact P8 sequence) ---- */
+    /* If the panel accepts DCS from Rockbox state, this should produce
+     * correct colors since P8→P9 is a clean 9-bit bus transition. */
+    vlog("TEST0e: H.264 frame, DCS push (P8→P9)");
+    compositor_retrigger();
+    for (int i = 0; i < 10; i++) push_one_frame_dcs();
+    gram_scan("T0e-dcs");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
     /* ---- TEST 1: Y=128 gray ---- */
