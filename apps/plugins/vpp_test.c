@@ -139,7 +139,18 @@ enum plugin_status plugin_start(const void *parameter)
     rb->commit_discard_dcache();
 
     /* === SWITCH PANEL TO DCS MODE === */
-    vlog("Sending DCS init via P8 (0x81000C21)...");
+    vlog("Hardware reset + DCS init...");
+
+    /* Hardware reset — forces panel back to default (DCS-receptive) state */
+    LCD_DRV_RST = 1;  /* assert reset */
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<50000);}  /* 50ms */
+    LCD_DRV_RST = 0;  /* release reset */
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<150000);}  /* 150ms recovery */
+    vlog("Panel reset done");
+
+    /* DCS Software Reset (extra safety) */
+    {uint8_t d[]={};dcs_cmd(0x01,0,d);}
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<120000);}
 
     /* DCS Sleep Out */
     {uint8_t d[]={};dcs_cmd(0x11,0,d);}
