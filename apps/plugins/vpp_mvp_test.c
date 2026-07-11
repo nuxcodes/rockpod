@@ -160,7 +160,7 @@ static void lcd_passthrough_start(void)
 
     while (!(LCD_STATUS & 0x2));
     LCD_CON = LCD_MODE_P18;
-    lcd_cmd(0x003); lcd_data(0x1230);
+    lcd_cmd(0x003); lcd_data(0x1238);
     lcd_cmd(0x210); lcd_data(0);
     lcd_cmd(0x211); lcd_data(319);
     lcd_cmd(0x212); lcd_data(0);
@@ -181,7 +181,7 @@ static void lcd_push_frame(void)
     LCD_REG(0x80) = 1;
 
     LCD_CON = LCD_MODE_P18;
-    lcd_cmd(0x003); lcd_data(0x1230);
+    lcd_cmd(0x003); lcd_data(0x1238);
     lcd_cmd(0x210); lcd_data(0);
     lcd_cmd(0x211); lcd_data(319);
     lcd_cmd(0x212); lcd_data(0);
