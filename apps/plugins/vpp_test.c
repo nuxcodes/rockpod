@@ -52,12 +52,16 @@ static int fsc(const uint8_t*b,int l,int*s){
 
 static void dcs_cmd(uint8_t cmd, int ndata, const uint8_t *data)
 {
-    while(!(LCD_STATUS&0x2));
+    int t;
+    t=100000; while(!(LCD_STATUS&0x2)&&--t>0);
+    if(t<=0){vlog("  DCS HANG at pre-wait cmd=0x%02x",cmd);return;}
     LCD_CON = P8_DCS;
     lc(cmd);
     for (int i = 0; i < ndata; i++)
         ld(data[i]);
-    while(!(LCD_STATUS&0x2));
+    t=100000; while(!(LCD_STATUS&0x2)&&--t>0);
+    if(t<=0){vlog("  DCS HANG at post-wait cmd=0x%02x",cmd);return;}
+    vlog("  DCS cmd 0x%02x OK (%d data)", cmd, ndata);
 }
 
 static void comp_init(void) {
@@ -147,7 +151,7 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<50000);}  /* 50ms */
     LCD_DRV_RST = 1;  /* release reset */
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<150000);}  /* 150ms recovery */
-    vlog("Panel reset done");
+    vlog("Panel reset done. LCD_STATUS=0x%08lx", (unsigned long)LCD_STATUS);
 
     /* DCS Software Reset (extra safety) */
     {uint8_t d[]={};dcs_cmd(0x01,0,d);}
