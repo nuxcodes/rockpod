@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v117m — bus transition test + P16 + free-run + DCS
+ * S5L8702 VPP MVP Test v118m — P16 free-run test + comprehensive bus format diagnosis
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -205,6 +205,8 @@ static void push_one_frame_p16(void)
 
     { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
+
+static void gram_scan(const char *label)
 {
     LCD_REG(0x70) = 0;
     LCD_REG(0x80) = 1;
@@ -468,7 +470,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v117m ===");
+    vlog("=== VPP MVP Test v118m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -792,12 +794,58 @@ enum plugin_status plugin_start(const void *parameter)
     /* Re-enable CSC for remaining tests */
     { uint32_t v = COMP_REG(0x008); v &= ~0x100; COMP_REG(0x008) = v; }
 
-    /* ---- TEST 0c: P16 mode instead of P9 ---- */
+    /* ---- TEST 0c: P16 passthrough (MOST LIKELY FIX) ---- */
+    /* Rockbox uses P16 (0x80100DB0) for ILI9326 panels, NOT P9!
+     * P9 is for PAR9 panels only. P16 = 16-bit parallel D[17:10,8:1]. */
     vlog("TEST0c: H.264 frame, P16 mode CSC active");
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame_p16();
     gram_scan("T0c-p16");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+
+    /* ---- TEST 0c2: P16 free-run + LCD+0x7C=0x401 ---- */
+    /* P16 passthrough with no per-frame push and LCD+0x7C set for
+     * 1-transfer-per-pixel (0x401 vs 0x402 for 2-transfer P9). */
+    vlog("TEST0c2: P16 free-run (LCD_CON=P16, 7C=0x401, no push)");
+    {
+        LCD_REG(0x70) = 0;
+        LCD_REG(0x80) = 1;
+        lcd_set_con(0x80000DA9);
+        lcd_cmd(0x003); lcd_data(0x1230);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        lcd_set_con(0x80100DB0);
+        LCD_REG(0x7C) = 0x00000401;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    compositor_retrigger();
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }
+    gram_scan("T0c2-p16fr");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    /* Restore P9 + LCD+0x7C for remaining tests */
+    {
+        LCD_REG(0x7C) = 0x00000402;
+        LCD_REG(0x70) = 0;
+        LCD_REG(0x80) = 1;
+        lcd_set_con(0x80000DA9);
+        lcd_cmd(0x003); lcd_data(0x1230);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        lcd_set_con(0x81100DB9);
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
 
     /* ---- TEST 0d: No per-frame push — compositor free-run ---- */
     /* The P18→P9 LCD_CON transition in push_one_frame may cause P9 bus
