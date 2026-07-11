@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v144m ===");
+    vlog("=== VPP MVP Test v145m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -871,6 +871,78 @@ enum plugin_status plugin_start(const void *parameter)
     for (int i = 0; i < 10; i++) push_one_frame();
     gram_scan("T00-THE-FIX");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* ---- TEST 01: LCD+0x74 HALVED (pixel doubling hypothesis) ---- */
+    /* If LCD+0x7C bit 1 = "2 transfers per pixel", LCD+0x74 might count
+     * PIXEL PAIRS: 160 pairs × 2 = 320 actual pixels per scan. */
+    vlog("TEST01: LCD+0x74=(160<<16)|120 (halved, pixel doubling?)");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0;  /* rotation OFF */
+    COMP_REG(0x054) = 0x014000F0;
+    COMP_REG(0x214) = 0x013F00EF;
+    LCD_REG(0x74) = 0x00A00078;  /* (160<<16)|120 = half of 320×240 */
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
+    for (int i = 0; i < 10; i++) push_one_frame();
+    gram_scan("T01-halved");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* ---- TEST 02: DCS portrait + rotation ON (Apple's exact approach) ---- */
+    /* Send DCS CASET/PASET via P8 to set portrait window on the ILI9326,
+     * then use compositor with rotation ON. The panel may accept DCS commands
+     * even from Rockbox state — we just need the WINDOW config, not pixel data. */
+    vlog("TEST02: DCS portrait (CASET=0-239 PASET=0-319) + rotation ON");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0x04004003;  /* rotation ON */
+    COMP_REG(0x054) = 0x00F00140;  /* portrait output */
+    COMP_REG(0x214) = 0x00EF013F;  /* portrait viewport */
+    LCD_REG(0x74) = 0x00F00140;    /* portrait per-scan=240 */
+    {
+        LCD_REG(0x80) = 1;
+        /* Send DCS commands via P8 to set portrait window */
+        lcd_wait();
+        LCD_CON = 0x81000C21;
+        lcd_cmd(0x36); lcd_data(0x00);  /* MADCTL = 0x00 */
+        lcd_cmd(0x2A);  /* CASET = 0-239 */
+        lcd_data(0x00); lcd_data(0x00); lcd_data(0x00); lcd_data(0xEF);
+        lcd_cmd(0x2B);  /* PASET = 0-319 */
+        lcd_data(0x00); lcd_data(0x00); lcd_data(0x01); lcd_data(0x3F);
+        lcd_cmd(0x2C);  /* RAMWR */
+        lcd_wait();
+        LCD_CON = 0x80100DB0;
+        /* Do NOT send ILI9326 landscape commands — keep DCS portrait */
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
+    /* Push WITHOUT ILI9326 commands — let compositor free-run with DCS window */
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 500000); }
+    gram_scan("T02-dcs-portrait");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
     /* Restore for next tests */
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
