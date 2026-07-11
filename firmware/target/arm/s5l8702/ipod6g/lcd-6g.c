@@ -232,30 +232,30 @@ static struct lcd_info_rec lcd_info_list[] =
     [2] = {
         .lcd_type   = 2,
         .mpuiface   = LCD_MPUIFACE_PAR18,
-        .cmdset     = LCD_CMDSET_16BIT,
+        .cmdset     = LCD_CMDSET_8BIT,  /* DCS mode — panel supports both DCS and ILI9326 */
     #if defined(HAVE_LCD_SLEEP) || defined(HAVE_LCD_SHUTDOWN)
-        .seq_sleep  = (void*) lcd_deepstandby_seq_23,
+        .seq_sleep  = (void*) lcd_sleep_seq_01,  /* DCS sleep */
     #endif
     #ifdef HAVE_LCD_SLEEP
-        .seq_awake  = (void*) lcd_init_seq_23,
+        .seq_awake  = (void*) lcd_awake_seq_01,  /* DCS wake — iBoot left panel in DCS state */
     #endif
     #ifdef BOOTLOADER
-        .seq_init   = (void*) lcd_init_seq_23,
+        .seq_init   = (void*) lcd_init_seq_0,    /* DCS init (same as type 0) */
     #endif
     },
 
     [3] = {
         .lcd_type   = 3,
         .mpuiface   = LCD_MPUIFACE_PAR18,
-        .cmdset     = LCD_CMDSET_16BIT,
+        .cmdset     = LCD_CMDSET_8BIT,  /* DCS mode */
     #if defined(HAVE_LCD_SLEEP) || defined(HAVE_LCD_SHUTDOWN)
-        .seq_sleep  = (void*) lcd_deepstandby_seq_23,
+        .seq_sleep  = (void*) lcd_sleep_seq_01,
     #endif
     #ifdef HAVE_LCD_SLEEP
-        .seq_awake  = (void*) lcd_init_seq_23,
+        .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
     #ifdef BOOTLOADER
-        .seq_init   = (void*) lcd_init_seq_23,
+        .seq_init   = (void*) lcd_init_seq_0,
     #endif
     },
 };

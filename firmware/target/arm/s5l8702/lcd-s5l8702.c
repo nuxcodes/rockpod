@@ -589,6 +589,8 @@ void lcd_init_device(void)
     {
         if (lcd_info->mpuiface == LCD_MPUIFACE_SERIAL)
             lcd_cmd_mode = LCD_MODE_S8;
+        else if (lcd_info->mpuiface == LCD_MPUIFACE_PAR18)
+            lcd_cmd_mode = 0x81000C21;  /* P8 with bit 24 — routes to D[17:10] for PAR18 panels */
         else
             lcd_cmd_mode = LCD_MODE_P8;
         lcd_run_seq = s5l_lcd_run_seq8;

@@ -1,8 +1,17 @@
-/* v146 — MINIMAL FIX from v131m findings
- * Rotation OFF (v131m proved correct orientation)
- * LCD+0x74 = 320/scan (v144m proved writable)
- * Proper LCD+0x70 cycling (latching fix)
- * ALL compositor regs at Apple defaults (v144m proved changing them breaks it)
+/* v147 — DCS DRIVER POC
+ * Tests switching ILI9326 panel to DCS mode at runtime.
+ * SAFETY: saves all LCD state, restores on exit.
+ * If display goes blank, just wait — it auto-restores on exit.
+ *
+ * Approach:
+ * 1. Save current Rockbox LCD state
+ * 2. Switch LCD controller to P8 with bit 24 (Apple's DCS mode)
+ * 3. Send DCS init: Sleep Out, COLMOD, MADCTL, Normal Mode, Display On
+ * 4. Send DCS CASET/PASET for portrait window (240×320)
+ * 5. Enable compositor passthrough (Apple defaults, rotation ON)
+ * 6. Compositor pushes 240/scan portrait → DCS portrait panel
+ * 7. On exit: restore ILI9326 state via Rockbox lcd_update
+ *
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -20,6 +29,10 @@
 #define LR(o) (*(volatile uint32_t*)(LCD_BASE+(o)))
 #define PH(x) ((uint32_t)((uintptr_t)(x)&0x7FFFFFFF))
 
+#define P8_DCS  0x81000C21  /* P8 with bit 24 — Apple's DCS command mode */
+#define P16     0x80100DB0  /* P16 — pixel data mode for PAR18 panels */
+#define P18     0x80000DA9  /* P18 — ILI9326 register command mode */
+
 static int log_fd = -1;
 static void vlog(const char *fmt, ...) {
     if (log_fd < 0) return;
@@ -36,6 +49,16 @@ static int fsc(const uint8_t*b,int l,int*s){
     for(int i=0;i<l-3;i++){if(b[i]==0&&b[i+1]==0){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
+
+static void dcs_cmd(uint8_t cmd, int ndata, const uint8_t *data)
+{
+    while(!(LCD_STATUS&0x2));
+    LCD_CON = P8_DCS;
+    lc(cmd);
+    for (int i = 0; i < ndata; i++)
+        ld(data[i]);
+    while(!(LCD_STATUS&0x2));
+}
 
 static void comp_init(void) {
     volatile uint32_t*c=(volatile uint32_t*)COMP;
@@ -57,7 +80,7 @@ static void comp_init(void) {
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080; c[0x204/4]=2; c[0x208/4]=0; c[0x20C/4]=2;
     c[0x210/4]=0x00010110;
-    c[0x214/4]=0x00EF013F;  /* APPLE DEFAULT — do NOT change */
+    c[0x214/4]=0x00EF013F;  /* Apple default portrait viewport */
     c[0x024/4]=0x00FFFFFF;
 }
 
@@ -68,7 +91,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true); rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP v146 ===");
+    vlog("=== VPP v147 — DCS DRIVER POC ===");
 
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
@@ -92,80 +115,93 @@ enum plugin_status plugin_start(const void *parameter)
     if(!yo){vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
     vlog("Decoded %dx%d", fw, fh);
 
+    /* === SAVE ALL LCD STATE === */
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
+    vlog("Saved LCD state: CON=%08lx", (unsigned long)sc);
 
     PWRCON(0)&=~0x2080;
     for(volatile int d=0;d<10000;d++);
 
+    /* === COMPOSITOR INIT (ALL APPLE DEFAULTS) === */
     comp_init();
 
-    /* Layer 5 — Apple defaults EXCEPT rotation OFF */
+    /* Layer 5 — Apple defaults with rotation ON */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100; CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
     CR(0x04C)=0x10001000;
-    CR(0x054)=0x00F00140;  /* APPLE DEFAULT — do NOT change */
+    CR(0x054)=0x00F00140;  /* Apple default portrait output */
     CR(0x038)=PH(yo); CR(0x03C)=PH(cro); CR(0x040)=0; CR(0x044)=PH(cbo);
-    CR(0x3AC)=0;  /* rotation OFF — v131m proved correct orientation */
+    CR(0x3AC)=0x04004003;  /* Apple default rotation ON */
     CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}  /* CSC enable */
     rb->commit_discard_dcache();
 
-    /* LCD passthrough — Apple defaults for everything */
-    LCD_CON=0x80100DB0;  /* P16 for ILI9326 */
+    /* === SWITCH PANEL TO DCS MODE === */
+    vlog("Sending DCS init via P8 (0x81000C21)...");
+
+    /* DCS Sleep Out */
+    {uint8_t d[]={};dcs_cmd(0x11,0,d);}
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<120000);}  /* 120ms delay */
+
+    /* DCS Pixel Format = RGB565 (16-bit) */
+    {uint8_t d[]={0x05};dcs_cmd(0x3A,1,d);}
+
+    /* DCS MADCTL = 0x00 (normal scan, RGB order) */
+    {uint8_t d[]={0x00};dcs_cmd(0x36,1,d);}
+
+    /* DCS Normal Mode On */
+    {uint8_t d[]={};dcs_cmd(0x13,0,d);}
+
+    /* DCS Display On */
+    {uint8_t d[]={};dcs_cmd(0x29,0,d);}
+
+    vlog("DCS init sent");
+
+    /* === LCD PASSTHROUGH SETUP (APPLE DEFAULTS) === */
+    LCD_CON=P16;
     LR(0x88)=0x01000000; LR(0x20)=0x33; LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;
-    LR(0x74)=0x014000F0;  /* THE FIX: 320/scan (v144m proved writable) */
+    LR(0x74)=0x00F00140;  /* Apple default: 240/scan portrait */
 
-    /* ILI9326 GRAM setup */
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    lc(0x003);ld(0x1030);
-    lc(0x210);ld(0); lc(0x211);ld(319);
-    lc(0x212);ld(0); lc(0x213);ld(239);
-    lc(0x200);ld(0); lc(0x201);ld(0); lc(0x202);
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    /* DCS GRAM window setup via P8 */
+    {uint8_t caset[]={0x00,0x00,0x00,0xEF};dcs_cmd(0x2A,4,caset);}  /* CASET=0-239 */
+    {uint8_t paset[]={0x00,0x00,0x01,0x3F};dcs_cmd(0x2B,4,paset);}  /* PASET=0-319 */
+    {uint8_t d[]={};dcs_cmd(0x2C,0,d);}  /* RAMWR */
 
-    /* Enable passthrough — latches LCD+0x74 = 320/scan */
-    LR(0x70)=1;
+    /* Switch to P16 for pixel data, enable passthrough */
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=P16;
+    LR(0x70)=1;  /* Enable passthrough */
     LR(0x80)=0;
 
-    /* Verify */
-    vlog("LCD74=%08lx c054=%08lx c214=%08lx c3AC=%08lx",
-         (unsigned long)LR(0x74), (unsigned long)CR(0x054),
-         (unsigned long)CR(0x214), (unsigned long)CR(0x3AC));
+    vlog("Passthrough enabled");
 
-    /* Start compositor */
+    /* === START COMPOSITOR === */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<300000);}
+    CR(0x000)=1;
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<500000);}
 
-    /* Push frames */
-    for(int i=0;i<10;i++){
-        {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-        LR(0x80)=1; LCD_CON=0x80000DA9;
-        lc(0x003);ld(0x1030);
-        lc(0x210);ld(0); lc(0x211);ld(319);
-        lc(0x212);ld(0); lc(0x213);ld(239);
-        lc(0x200);ld(0); lc(0x201);ld(0); lc(0x202);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
-        LR(0x80)=0;
-        {int t=500000;while((LR(0x8C)&3)&&--t>0);}
-    }
+    vlog("Compositor running — waiting for keypress");
 
-    vlog("Display active");
+    /* Wait for keypress */
     while(rb->button_get(true)==BUTTON_NONE) rb->backlight_on();
 
-    /* Shutdown */
+    /* === SAFE SHUTDOWN — RESTORE ILI9326 STATE === */
+    vlog("Shutting down...");
     LR(0x70)=0; LR(0x80)=0; CR(0x000)=0;
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    lc(0x003);ld(0x0230);
-    while(!(LCD_STATUS&0x2)); LCD_CON=sc;
-    LR(0x88)=s8;LR(0x20)=s2;LR(0x7C)=s7;LR(0x74)=s4;LR(0x78)=s5;
+
+    /* Restore all saved LCD registers */
+    LCD_CON=sc;
+    LR(0x88)=s8; LR(0x20)=s2; LR(0x7C)=s7; LR(0x74)=s4; LR(0x78)=s5;
     LCD_PHTIME=0x33;
+
+    /* Force ILI9326 re-init by doing Rockbox lcd_update */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     rb->lcd_update();
 
-    vlog("Done");
+    vlog("Restored. Done.");
     rb->close(log_fd);
     vpu_h264_close(dec); rb->cpu_boost(false);
     return PLUGIN_OK;
