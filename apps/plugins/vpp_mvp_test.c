@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v119m — output format experiment + comprehensive bus tests
+ * S5L8702 VPP MVP Test v120m — COLMOD fix for B=0 (18→16 bit pixel format)
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -200,6 +200,33 @@ static void push_one_frame_p16(void)
     lcd_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x80100DB0;  /* P16 mode — Rockbox's native pixel format */
+
+    LCD_REG(0x80) = 0;
+
+    { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+}
+
+/* KEY FIX: Set COLMOD=0x05 (16-bit RGB565) so panel expects 2 P9 transfers.
+ * iBoot sets COLMOD=0x06 (18-bit RGB666) which needs 3 P9 transfers per pixel.
+ * With 2 transfers + 18-bit mode, the B channel transfer is NEVER SENT → B=0! */
+static void push_one_frame_colmod(void)
+{
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+
+    LCD_REG(0x80) = 1;
+
+    LCD_CON = 0x80000DA9;
+    lcd_cmd(0x03A); lcd_data(0x05);   /* COLMOD = RGB565 (16-bit) */
+    lcd_cmd(0x003); lcd_data(0x1230);
+    lcd_cmd(0x210); lcd_data(0);
+    lcd_cmd(0x211); lcd_data(319);
+    lcd_cmd(0x212); lcd_data(0);
+    lcd_cmd(0x213); lcd_data(239);
+    lcd_cmd(0x200); lcd_data(0);
+    lcd_cmd(0x201); lcd_data(0);
+    lcd_cmd(0x202);
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81100DB9;  /* P9 mode */
 
     LCD_REG(0x80) = 0;
 
@@ -470,7 +497,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v119m ===");
+    vlog("=== VPP MVP Test v120m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -794,13 +821,32 @@ enum plugin_status plugin_start(const void *parameter)
     /* Re-enable CSC for remaining tests */
     { uint32_t v = COMP_REG(0x008); v &= ~0x100; COMP_REG(0x008) = v; }
 
-    /* ---- TEST 0c: P16 passthrough (MOST LIKELY FIX) ---- */
-    /* Rockbox uses P16 (0x80100DB0) for ILI9326 panels, NOT P9!
-     * P9 is for PAR9 panels only. P16 = 16-bit parallel D[17:10,8:1]. */
-    vlog("TEST0c: H.264 frame, P16 mode CSC active");
+    /* ---- TEST 0c: COLMOD=0x05 + P9 (SIMPLEST FIX FOR B=0) ---- */
+    /* ROOT CAUSE: iBoot sets COLMOD=0x06 (18-bit RGB666). In P9 18-bit mode,
+     * the panel expects 3 transfers per pixel (R6, G6, B6). But LCD+0x7C=0x402
+     * configures the LCD controller for 2 transfers. The 3rd transfer (B) is
+     * NEVER SENT → B=0! Fix: set COLMOD=0x05 (16-bit RGB565) so the panel
+     * expects only 2 transfers per pixel, matching the LCD controller. */
+    vlog("TEST0c: COLMOD=0x05 (16-bit) + P9 — B=0 FIX");
+    compositor_retrigger();
+    for (int i = 0; i < 10; i++) push_one_frame_colmod();
+    gram_scan("T0c-colmod");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    /* Restore COLMOD=0x06 for remaining tests */
+    {
+        LCD_REG(0x80) = 1;
+        lcd_set_con(0x80000DA9);
+        lcd_cmd(0x03A); lcd_data(0x06);
+        lcd_set_con(0x81100DB9);
+        LCD_REG(0x80) = 0;
+    }
+
+    /* ---- TEST 0c3: P16 passthrough ---- */
+    /* Rockbox uses P16 (0x80100DB0) for ILI9326 panels. */
+    vlog("TEST0c3: H.264 frame, P16 mode CSC active");
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame_p16();
-    gram_scan("T0c-p16");
+    gram_scan("T0c3-p16");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
     /* ---- TEST 0c2: P16 free-run + LCD+0x7C=0x401 ---- */
