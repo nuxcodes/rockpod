@@ -254,7 +254,7 @@ static void gram_scan(const char *label)
     LCD_CON = 0x80000DA8;
 
     static const struct { int x, y; } pts[] = {
-        {160, 0}, {160, 60}, {160, 120}, {160, 180}, {160, 239}
+        {120, 0}, {120, 80}, {120, 160}, {120, 240}, {120, 319}
     };
     vlog("  GRAM[%s]:", label);
     for (int i = 0; i < 5; i++) {
@@ -284,8 +284,8 @@ static void gram_scan(const char *label)
  * This reveals the compositor-to-GRAM coordinate mapping. */
 static void gram_scan_2d(const char *label)
 {
-    static const int xs[] = {0, 80, 160, 240, 319};
-    static const int ys[] = {0, 60, 120, 180, 239};
+    static const int xs[] = {0, 60, 120, 180, 239};
+    static const int ys[] = {0, 80, 160, 240, 319};
 
     LCD_REG(0x70) = 0;
     LCD_REG(0x80) = 1;
@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v132m ===");
+    vlog("=== VPP MVP Test v133m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
