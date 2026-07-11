@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v135m ===");
+    vlog("=== VPP MVP Test v136m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -886,13 +886,51 @@ enum plugin_status plugin_start(const void *parameter)
     gram_scan("T0b-054swap");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
+    /* ---- TEST 0c: SCALER FIX — scale 240→320 per scan ---- */
+    /* The compositor always sends 240/scan with rotation ON. The scaler
+     * can upscale 240→320 per scan (step 0x0C00 = 0.75 = 240/320).
+     * AND downscale 320→240 scans (step 0x1555 = 1.33 = 320/240).
+     * Result: 320/scan × 240 scans = matches 320×240 GRAM perfectly!
+     * This is EXACTLY Apple's UI scaler value (0x0C001555). */
+    vlog("TEST0c: SCALER 0x0C001555 + rotation ON + 054=0x014000F0");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0x04004003;  /* rotation ON */
+    COMP_REG(0x04C) = 0x0C001555;  /* scale 240→320 per scan, 320→240 scans */
+    COMP_REG(0x054) = 0x014000F0;  /* output: fast=240(per-scan), slow=320 → BUT scaler makes output 320×240 */
+    LCD_REG(0x74) = 0x014000F0;
+    LCD_REG(0x78) = 0x000A000A;    /* restore porch */
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
+    for (int i = 0; i < 10; i++) push_one_frame();
+    gram_scan("T0c-scaler");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
     /* Restore all defaults for remaining tests */
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0x04004003;
+    COMP_REG(0x04C) = 0x10001000;
     COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
     LCD_REG(0x78) = 0x000A000A;
-    LCD_REG(0x74) = 0x00F00140;
     LCD_REG(0x74) = 0x00F00140;
 
     /* ---- TEST 0c: rotation ON + original settings (baseline) ---- */
