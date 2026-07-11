@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v139m ===");
+    vlog("=== VPP MVP Test v140m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -804,7 +804,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x20) = 0x33;
         LCD_REG(0x7C) = 0x00000402;
         LCD_REG(0x78) = 0x000A000A;
-        LCD_REG(0x74) = 0x00F00140;
+        LCD_REG(0x74) = 0x014000F0;
         lcd_set_con(0x80000DA9);
         lcd_cmd(0x003); lcd_data(0x1238);
         lcd_cmd(0x210); lcd_data(0);
@@ -858,7 +858,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0x04004003;
-    LCD_REG(0x74) = 0x00F00140;
+    LCD_REG(0x74) = 0x014000F0;
     {
         LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
@@ -979,15 +979,15 @@ enum plugin_status plugin_start(const void *parameter)
     gram_scan("T0c-scaler");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
-    /* Restore all defaults for remaining tests */
+    /* Restore landscape defaults for remaining tests */
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
-    COMP_REG(0x3AC) = 0x04004003;
+    COMP_REG(0x3AC) = 0;  /* rotation OFF */
     COMP_REG(0x04C) = 0x10001000;
     COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
-    COMP_REG(0x214) = 0x00EF013F;  /* restore viewport */
+    COMP_REG(0x214) = 0x013F00EF;  /* landscape viewport */
     LCD_REG(0x78) = 0x000A000A;
-    LCD_REG(0x74) = 0x00F00140;
+    LCD_REG(0x74) = 0x014000F0;  /* landscape per-scan */
 
     /* ---- TEST 0d: SWAP comp+0x214 (the SIMPLEST fix) ---- */
     /* comp+0x214 = 0x00EF013F = (239<<16)|319. Upper+1=240=per-scan!
@@ -1022,7 +1022,7 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* Restore */
-    COMP_REG(0x214) = 0x00EF013F;
+    COMP_REG(0x214) = 0x013F00EF;
     COMP_REG(0x3AC) = 0x04004003;
 
     /* ---- TEST 0e: rotation ON + 0x214 swapped (rotated landscape) ---- */
@@ -1054,7 +1054,7 @@ enum plugin_status plugin_start(const void *parameter)
     for (int i = 0; i < 10; i++) push_one_frame();
     gram_scan("T0e-rot214");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
-    COMP_REG(0x214) = 0x00EF013F;
+    COMP_REG(0x214) = 0x013F00EF;
 
     /* ---- TEST 0f: baseline (known shearing) ---- */
     vlog("TEST0f: rotation ON, original (baseline shearing)");
