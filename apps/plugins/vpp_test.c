@@ -175,20 +175,27 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("DCS init sent");
 
-    /* === LCD PASSTHROUGH SETUP (APPLE DEFAULTS) === */
-    LCD_CON=P16;
+    /* === LCD PASSTHROUGH SETUP — TRY P9 (Apple's DCS pixel mode) === */
+    /* After DCS init, the panel is in DCS mode. Apple uses P9 for pixel data.
+     * P9 with COLMOD=0x05 (16-bit) = 2 × 9-bit transfers per RGB565 pixel.
+     * Try BOTH P9 and COLMOD=0x06 (18-bit, Apple's default). */
+    LCD_CON=0x81100DB9;  /* P9 mode — Apple's exact passthrough mode */
     LR(0x88)=0x01000000; LR(0x20)=0x33; LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;
     LR(0x74)=0x00F00140;  /* Apple default: 240/scan portrait */
+
+    /* Set COLMOD to 18-bit (Apple's default for DCS panels) */
+    {uint8_t d[]={0x06};dcs_cmd(0x3A,1,d);}
+    vlog("Set COLMOD=0x06 (18-bit) for P9 mode");
 
     /* DCS GRAM window setup via P8 */
     {uint8_t caset[]={0x00,0x00,0x00,0xEF};dcs_cmd(0x2A,4,caset);}  /* CASET=0-239 */
     {uint8_t paset[]={0x00,0x00,0x01,0x3F};dcs_cmd(0x2B,4,paset);}  /* PASET=0-319 */
     {uint8_t d[]={};dcs_cmd(0x2C,0,d);}  /* RAMWR */
 
-    /* Switch to P16 for pixel data, enable passthrough */
+    /* Switch to P9 for pixel data, enable passthrough */
     while(!(LCD_STATUS&0x2));
-    LCD_CON=P16;
+    LCD_CON=0x81100DB9;  /* P9 — Apple's exact passthrough mode */
     LR(0x70)=1;  /* Enable passthrough */
     LR(0x80)=0;
 
