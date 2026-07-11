@@ -76,7 +76,11 @@
 #define USB_MAX_CURRENT 500
 #endif
 
+#if defined(USB_ENABLE_AUDIO) || defined(USB_ENABLE_IAP_HID)
 #define NUM_CONFIGS 2
+#else
+#define NUM_CONFIGS 1
+#endif
 
 /*-------------------------------------------------------------------------*/
 /* USB protocol descriptors: */

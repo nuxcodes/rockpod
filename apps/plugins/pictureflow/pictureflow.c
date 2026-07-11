@@ -559,7 +559,7 @@ static struct configdata config[] =
       NULL },
     { TYPE_INT, 0, MAX_SLIDES_COUNT, { .int_p = &pf_cfg.num_slides }, "slides count",
       NULL },
-    { TYPE_INT, 0, 300, { .int_p = &pf_cfg.zoom }, "zoom", NULL },
+    { TYPE_INT, 10, 300, { .int_p = &pf_cfg.zoom }, "zoom", NULL },
     { TYPE_BOOL, 0, 1, { .bool_p = &pf_cfg.show_fps }, "show fps", NULL },
     { TYPE_BOOL, 0, 1, { .bool_p = &pf_cfg.resize }, "resize", NULL },
     { TYPE_INT, 0, 100, { .int_p = &pf_cfg.cache_version }, "cache version", NULL },
@@ -3229,6 +3229,8 @@ static void render_slide(struct slide_data *slide, const int alpha)
     const int p_start_lower = (sh - display_offs) * PFREAL_ONE;
     const int plim2_max = MIN(sh + reflect_height, sh * 2) * PFREAL_ONE;
     for (x = xi; x < w; x++) {
+        if (xs < slide_left)
+            xs = slide_left;
         int column = (unsigned)(xs - slide_left) >> PFREAL_SHIFT;
         if (column >= sw)
             break;
@@ -4210,6 +4212,11 @@ void reset_track_list(void)
 static void draw_album_text(void);
 static void show_track_list_loading(void)
 {
+#ifdef HAVE_LCD_COLOR
+    mylcd_set_background(pf_bg_color);
+#else
+    mylcd_set_background(G_BRIGHT(0));
+#endif
     int x = (LCD_WIDTH - mylcd_getstringsize(rb->str(LANG_WAIT), NULL, NULL)) / 2;
 #ifdef HAVE_LCD_COLOR
     mylcd_set_foreground(pf_fg_color);
@@ -4230,6 +4237,11 @@ static void show_track_list_loading(void)
  */
 static bool show_track_list(void)
 {
+#ifdef HAVE_LCD_COLOR
+    mylcd_set_background(pf_bg_color);
+#else
+    mylcd_set_background(G_BRIGHT(0));
+#endif
     pf_clear_display();
     if ( center_slide.slide_index != pf_tracks.cur_idx ) {
         if (rb->global_settings->storage_mode != 2
