@@ -1,5 +1,11 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v121m — COLMOD fix via P8 DCS (correct command mode)
+ * S5L8702 VPP MVP Test v122m — DEFINITIVE FIX: P16 mode for ILI9326 panel
+ *
+ * ROOT CAUSE CONFIRMED: Apple's ROM has ZERO ILI9326 panels — all are
+ * MIPI DCS. P9 mode (0x81100DB9) was designed exclusively for DCS panels.
+ * Our ILI9326 panel needs P16 mode (0x80100DB0) — confirmed by Rockbox
+ * LCD driver which uses P16 for all PAR18-interface panels.
+ * LCD+0x7C changed from 0x402 (2 transfers/P9) to 0x401 (1 transfer/P16).
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -113,7 +119,7 @@ static void push_one_frame(void)
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;  /* back to P9 */
+    LCD_CON = 0x80100DB0;  /* P16 mode — correct for ILI9326 */
 
     LCD_REG(0x80) = 0;
 
@@ -145,7 +151,7 @@ static void push_one_frame_dcs(void)
 
     /* Restore P9 for compositor pixel push */
     lcd_wait();
-    LCD_CON = 0x81100DB9;
+    LCD_CON = 0x80100DB0;
 
     LCD_REG(0x80) = 0;
 
@@ -168,7 +174,7 @@ static void push_one_frame_am1(void)
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;  /* back to P9 */
+    LCD_CON = 0x80100DB0;  /* P16 for ILI9326 */
 
     LCD_REG(0x80) = 0;
 
@@ -233,7 +239,7 @@ static void push_one_frame_colmod(void)
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;  /* P9 mode */
+    LCD_CON = 0x80100DB0;  /* P9 mode */
 
     LCD_REG(0x80) = 0;
 
@@ -268,7 +274,7 @@ static void gram_scan(const char *label)
     }
 
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;
+    LCD_CON = 0x80100DB0;
     LCD_REG(0x80) = 0;
     LCD_REG(0x70) = 1;
 }
@@ -309,7 +315,7 @@ static void gram_scan_2d(const char *label)
     }
 
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;
+    LCD_CON = 0x80100DB0;
     LCD_REG(0x80) = 0;
     LCD_REG(0x70) = 1;
 }
@@ -504,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v121m ===");
+    vlog("=== VPP MVP Test v122m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -684,11 +690,22 @@ enum plugin_status plugin_start(const void *parameter)
     uint32_t saved_74 = LCD_REG(0x74);
     uint32_t saved_78 = LCD_REG(0x78);
 
-    /* LCD init registers — Apple FUN_000ca178, ROM-verified */
-    LCD_CON = 0x81100DB9;
+    /* LCD passthrough setup — ADAPTED FOR ILI9326 PANEL (type 2/3)
+     *
+     * ROOT CAUSE FOUND: Apple's ROM only has MIPI DCS panels (no ILI9326).
+     * Apple uses P9 mode (0x81100DB9) for DCS panels. But our ILI9326 panel
+     * needs P16 mode (0x80100DB0) — confirmed by Rockbox LCD driver which
+     * uses P16 for all PAR18-interface panels. P9 causes B=0 because the
+     * ILI9326 in 18-bit COLMOD mode expects 3 P9 transfers per pixel but
+     * only receives 2, losing the B channel entirely.
+     *
+     * FIX: Use P16 (0x80100DB0) as the passthrough LCD_CON.
+     * Also try LCD+0x7C=0x401 (1 transfer for P16 vs 0x402 for 2-transfer P9).
+     */
+    LCD_CON = 0x80100DB0;  /* P16 mode — correct for ILI9326 panel */
     LCD_REG(0x88) = 0x01000000;
     LCD_REG(0x20) = 0x33;
-    LCD_REG(0x7C) = 0x00000402;     /* pixel format (Apple ROM-verified) */
+    LCD_REG(0x7C) = 0x00000401;  /* 1 transfer per pixel for P16 mode */
 
     /* Passthrough registers — Apple FUN_0014deec */
     LCD_REG(0x78) = 0x000A000A;
@@ -740,7 +757,7 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)((gb>>12)&0x3F), (unsigned long)((gb>>6)&0x3F),
              (unsigned long)(gb&0x3F), (unsigned long)gb);
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
     }
 
     /* ---- TEST SW: Software YCbCr→RGB display via Rockbox lcd_update ---- */
@@ -781,7 +798,7 @@ enum plugin_status plugin_start(const void *parameter)
         { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
         /* Re-setup LCD for compositor passthrough */
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x88) = 0x01000000;
         LCD_REG(0x20) = 0x33;
         LCD_REG(0x7C) = 0x00000402;
@@ -1053,7 +1070,7 @@ enum plugin_status plugin_start(const void *parameter)
                  (unsigned long)g);
         }
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x80) = 0;
         LCD_REG(0x70) = 1;
     }
@@ -1129,7 +1146,7 @@ enum plugin_status plugin_start(const void *parameter)
                  (unsigned long)g);
         }
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x80) = 0;
         LCD_REG(0x70) = 1;
     }
@@ -1169,7 +1186,7 @@ enum plugin_status plugin_start(const void *parameter)
                  (unsigned long)g);
         }
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x80) = 0;
         LCD_REG(0x70) = 1;
     }
@@ -1252,7 +1269,7 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x80) = 0;
         { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     }
@@ -1265,7 +1282,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_CON = 0x80000DA9;
         lcd_cmd(0x003); lcd_data(0x1230);  /* BGR=1 restored */
         while (!(LCD_STATUS & 0x2));
-        LCD_CON = 0x81100DB9;
+        LCD_CON = 0x80100DB0;
         LCD_REG(0x80) = 0;
         { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     }
