@@ -1,5 +1,5 @@
 /***************************************************************************
- * S5L8702 VPP MVP Test v115m — GO bit fix + dual AM + SW display bypass
+ * S5L8702 VPP MVP Test v116m — P16 passthrough test + GO fix + dual AM + SW bypass
  *
  * KEY FIXES from v113m investigation:
  * 1. GO bit cycling: COMP_REG(0x000) = 0 then 1 between tests
@@ -181,6 +181,29 @@ static void compositor_retrigger(void)
     { volatile int d = 0; while (d++ < 50000); }
     COMP_REG(0x000) = 1;
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+}
+
+static void push_one_frame_p16(void)
+{
+    { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
+
+    LCD_REG(0x80) = 1;
+
+    LCD_CON = 0x80000DA9;
+    lcd_cmd(0x003); lcd_data(0x1230);
+    lcd_cmd(0x210); lcd_data(0);
+    lcd_cmd(0x211); lcd_data(319);
+    lcd_cmd(0x212); lcd_data(0);
+    lcd_cmd(0x213); lcd_data(239);
+    lcd_cmd(0x200); lcd_data(0);
+    lcd_cmd(0x201); lcd_data(0);
+    lcd_cmd(0x202);
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80100DB0;  /* P16 mode — Rockbox's native pixel format */
+
+    LCD_REG(0x80) = 0;
+
+    { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
 {
     LCD_REG(0x70) = 0;
@@ -445,7 +468,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v115m ===");
+    vlog("=== VPP MVP Test v116m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -629,7 +652,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_CON = 0x81100DB9;
     LCD_REG(0x88) = 0x01000000;
     LCD_REG(0x20) = 0x33;
-    LCD_REG(0x7C) = 0x00000402;     /* RGB565, 2 P9 transfers (Apple ROM-verified) */
+    LCD_REG(0x7C) = 0x00000402;     /* pixel format (Apple ROM-verified) */
 
     /* Passthrough registers — Apple FUN_0014deec */
     LCD_REG(0x78) = 0x000A000A;
@@ -768,6 +791,16 @@ enum plugin_status plugin_start(const void *parameter)
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
     /* Re-enable CSC for remaining tests */
     { uint32_t v = COMP_REG(0x008); v &= ~0x100; COMP_REG(0x008) = v; }
+
+    /* ---- TEST 0c: P16 mode instead of P9 ---- */
+    /* P9 mode loses the B channel. P16 (0x80100DB0) is Rockbox's native
+     * pixel format: 16-bit parallel D[17:10,8:1], RGB565 in one transfer.
+     * If the compositor outputs RGB565 internally, P16 might carry all bits. */
+    vlog("TEST0c: H.264 frame, P16 mode CSC active");
+    compositor_retrigger();
+    for (int i = 0; i < 10; i++) push_one_frame_p16();
+    gram_scan("T0c-p16");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
 
     /* ---- TEST 1: Y=128 gray ---- */
     vlog("TEST1: Y=128 Cb=128 Cr=128");
