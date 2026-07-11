@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v140m ===");
+    vlog("=== VPP MVP Test v141m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -821,11 +821,18 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 1;
     LCD_REG(0x80) = 0;
 
-    /* ---- TEST 00: THE FIX — just swap LCD+0x74 with passthrough cycle ---- */
-    /* LCD+0x74 upper = per-scan, latched at LCD+0x70=1.
-     * Swap to 0x014000F0 = per_scan=320. Keep default porch. */
-    vlog("TEST00: LCD+0x74=0x014000F0 + rotation OFF + passthrough cycle");
+    /* ---- TEST 00: KITCHEN SINK — swap ALL dimension registers ---- */
+    /* Swap LCD+0x74 (per-scan), comp+0x214 (viewport), AND comp+0x054 (output)
+     * to landscape. If per-scan comes from ANY of these, this will work. */
+    vlog("TEST00: ALL dims landscape + rotation OFF (kitchen sink)");
     rb->commit_discard_dcache();
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    LCD_REG(0x80) = 0;
+    COMP_REG(0x3AC) = 0;
+    COMP_REG(0x214) = 0x013F00EF;
+    COMP_REG(0x054) = 0x014000F0;  /* ALSO swap output dims */
+    LCD_REG(0x74) = 0x014000F0;
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     LCD_REG(0x80) = 0;
