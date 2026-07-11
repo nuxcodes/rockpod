@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v134m ===");
+    vlog("=== VPP MVP Test v135m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -821,31 +821,78 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 1;
     LCD_REG(0x80) = 0;
 
-    /* ---- TEST 0a: rotation OFF + porch=0 (continuous stream) ---- */
-    /* THEORY: the 240/scan boundary comes from LCD_REG(0x78) porch timing
-     * which inserts gaps after 240 pixels. With porch=0, the LCD DMA streams
-     * continuously and the ILI9326 fills 320/row with AM=0 naturally. */
-    vlog("TEST0a: rotation OFF + porch=0 (continuous stream)");
+    /* ---- TEST 0a: rotation OFF + porch=0 + re-enable passthrough ---- */
+    vlog("TEST0a: rotation OFF + porch=0 + passthrough re-enable");
     rb->commit_discard_dcache();
-    COMP_REG(0x3AC) = 0;  /* rotation OFF */
-    LCD_REG(0x78) = 0;     /* NO porch gaps */
-    LCD_REG(0x74) = 0x014000F0;  /* 320 per scan */
-    compositor_retrigger();
+    COMP_REG(0x000) = 0;       /* stop compositor */
+    LCD_REG(0x70) = 0;         /* disable passthrough */
+    LCD_REG(0x80) = 0;
+    COMP_REG(0x3AC) = 0;       /* rotation OFF */
+    LCD_REG(0x78) = 0;          /* NO porch gaps */
+    LCD_REG(0x74) = 0x014000F0; /* (320<<16)|240 = 320/scan */
+    /* Re-setup GRAM and re-enable */
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;     /* re-enable passthrough with new settings */
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
     for (int i = 0; i < 10; i++) push_one_frame();
     gram_scan("T0a-noporch");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
-    LCD_REG(0x78) = 0x000A000A;  /* restore porch */
-    LCD_REG(0x74) = 0x00F00140;
 
-    /* ---- TEST 0b: rotation OFF + LCD_REG(0x74)=0 (let compositor decide) ---- */
-    vlog("TEST0b: rotation OFF + LCD(0x74)=0");
-    LCD_REG(0x74) = 0;
+    /* ---- TEST 0b: same but with comp+0x054 swapped too ---- */
+    vlog("TEST0b: rotation OFF + porch=0 + comp054=0x014000F0");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x054) = 0x014000F0;  /* swap: fast=240, slow=320 */
+    LCD_REG(0x74) = 0x014000F0;
     LCD_REG(0x78) = 0;
-    compositor_retrigger();
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
     for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0b-lcd74zero");
+    gram_scan("T0b-054swap");
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* Restore all defaults for remaining tests */
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0x04004003;
+    COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
     LCD_REG(0x78) = 0x000A000A;
+    LCD_REG(0x74) = 0x00F00140;
     LCD_REG(0x74) = 0x00F00140;
 
     /* ---- TEST 0c: rotation ON + original settings (baseline) ---- */
