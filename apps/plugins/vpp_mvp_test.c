@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v136m ===");
+    vlog("=== VPP MVP Test v137m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -930,11 +930,79 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x3AC) = 0x04004003;
     COMP_REG(0x04C) = 0x10001000;
     COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
+    COMP_REG(0x214) = 0x00EF013F;  /* restore viewport */
     LCD_REG(0x78) = 0x000A000A;
     LCD_REG(0x74) = 0x00F00140;
 
-    /* ---- TEST 0c: rotation ON + original settings (baseline) ---- */
-    vlog("TEST0c: rotation ON, original (baseline shearing)");
+    /* ---- TEST 0d: SWAP comp+0x214 (the SIMPLEST fix) ---- */
+    /* comp+0x214 = 0x00EF013F = (239<<16)|319. Upper+1=240=per-scan!
+     * Swap to (319<<16)|239 = 0x013F00EF → per-scan=320. */
+    vlog("TEST0d: comp+0x214=0x013F00EF (swap viewport → 320/scan)");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0;  /* rotation OFF for landscape */
+    COMP_REG(0x214) = 0x013F00EF;  /* SWAP: per-scan=320, scans=240 */
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
+    for (int i = 0; i < 10; i++) push_one_frame();
+    gram_scan("T0d-214swap");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+
+    /* Restore */
+    COMP_REG(0x214) = 0x00EF013F;
+    COMP_REG(0x3AC) = 0x04004003;
+
+    /* ---- TEST 0e: rotation ON + 0x214 swapped (rotated landscape) ---- */
+    vlog("TEST0e: rotation ON + 0x214=0x013F00EF");
+    COMP_REG(0x000) = 0;
+    LCD_REG(0x70) = 0;
+    COMP_REG(0x3AC) = 0x04004003;
+    COMP_REG(0x214) = 0x013F00EF;
+    {
+        LCD_REG(0x80) = 1;
+        LCD_CON = 0x80000DA9;
+        lcd_cmd(0x003); lcd_data(0x1030);
+        lcd_cmd(0x210); lcd_data(0);
+        lcd_cmd(0x211); lcd_data(319);
+        lcd_cmd(0x212); lcd_data(0);
+        lcd_cmd(0x213); lcd_data(239);
+        lcd_cmd(0x200); lcd_data(0);
+        lcd_cmd(0x201); lcd_data(0);
+        lcd_cmd(0x202);
+        while (!(LCD_STATUS & 0x2));
+        LCD_CON = 0x80100DB0;
+        LCD_REG(0x70) = 1;
+        LCD_REG(0x80) = 0;
+    }
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
+    COMP_REG(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 300000); }
+    for (int i = 0; i < 10; i++) push_one_frame();
+    gram_scan("T0e-rot214");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
+    COMP_REG(0x214) = 0x00EF013F;
+
+    /* ---- TEST 0f: baseline (known shearing) ---- */
+    vlog("TEST0f: rotation ON, original (baseline shearing)");
     COMP_REG(0x3AC) = 0x04004003;
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame();
