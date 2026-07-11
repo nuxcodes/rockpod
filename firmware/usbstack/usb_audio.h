@@ -274,6 +274,8 @@ bool usb_audio_source_streaming(void);
 
 unsigned long usb_audio_get_source_sampling_frequency(void);
 
+void usb_audio_set_source_sampling_frequency(unsigned long f);
+
 int usb_audio_get_source_ring_available(void);
 
 int usb_audio_get_source_underflow_count(void);

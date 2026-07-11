@@ -45,6 +45,7 @@
 #include "usb.h"
 #ifdef USB_ENABLE_AUDIO
 #include "../usbstack/usb_audio.h"
+#include "pcm_mixer.h"
 #endif
 
 #include "tuner.h"
@@ -92,6 +93,10 @@ static bool iap_setupflag = false, iap_running = false;
  */
 static bool iap_shutdown = false;
 static struct timeout iap_task_tmo;
+#ifdef USB_ENABLE_AUDIO
+static unsigned long iap_audio_reported_frequency;
+static unsigned long iap_audio_pending_frequency;
+#endif
 
 unsigned long iap_remotebtn = 0;
 /* Used to make sure a button press is delivered to the processing
@@ -357,6 +362,10 @@ void iap_reset_device(struct device_t* device)
     device->capabilities = 0;
     device->capabilities_queried = 0;
     device->audio_init_pending = false;
+#ifdef USB_ENABLE_AUDIO
+    iap_audio_reported_frequency = 0;
+    iap_audio_pending_frequency = 0;
+#endif
 }
 
 static int iap_task(struct timeout *tmo)
@@ -453,10 +462,33 @@ static void iap_thread(void)
 }
 
 /* called by playback when the next track starts */
-static void iap_track_changed(unsigned short id, void *ignored)
+static void iap_track_changed(unsigned short id, void *param)
 {
     (void)id;
-    (void)ignored;
+
+#ifdef USB_ENABLE_AUDIO
+    struct track_event *te = param;
+    unsigned long frequency = mixer_get_frequency();
+
+    if (global_settings.play_frequency)
+        frequency = global_settings.play_frequency;
+    else if (te && te->id3 && te->id3->frequency)
+        frequency = (te->id3->frequency % 4000) ? SAMPR_44 : SAMPR_48;
+
+    if (DEVICE_LINGO_SUPPORTED(0x0A)
+        && iap_audio_reported_frequency != frequency)
+    {
+        iap_audio_pending_frequency = frequency;
+        if (!device.audio_init_pending)
+        {
+            device.audio_init_pending = true;
+            queue_post(&iap_queue, IAP_EV_TICK, 0);
+        }
+    }
+#else
+    (void)param;
+#endif
+
     if ((interface_state == IST_EXTENDED) && device.do_notify) {
         long playlist_pos = playlist_next(0);
         playlist_pos -= playlist_get_first_index(NULL);
@@ -1379,13 +1411,25 @@ static void iap_handlepkt_mode10(const unsigned int len, const unsigned char *bu
         /* RetAccSampleRateCaps (0x03) — respond with TrackNewAudioAttributes */
         case 0x03:
         {
+#ifdef USB_ENABLE_AUDIO
+            unsigned long frequency;
+#endif
             (void)off;
             IAP_TX_INIT(0x0A, 0x04);
             if (device.auth.idps) {
                 IAP_TX_PUT(tid_hi);
                 IAP_TX_PUT(tid_lo);
             }
+#ifdef USB_ENABLE_AUDIO
+            frequency = iap_audio_pending_frequency ?
+                        iap_audio_pending_frequency : mixer_get_frequency();
+            usb_audio_set_source_sampling_frequency(frequency);
+            IAP_TX_PUT_U32(frequency);  /* sample rate */
+            iap_audio_reported_frequency = frequency;
+            iap_audio_pending_frequency = 0;
+#else
             IAP_TX_PUT_U32(44100);  /* sample rate */
+#endif
             IAP_TX_PUT_U32(0);      /* sound check value */
             IAP_TX_PUT_U32(0);      /* volume adjustment */
             iap_send_tx();
