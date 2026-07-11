@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Copyright (C) 2025
+ * Copyright (C) 2025 Nux Li
  *
  * Videos menu screen - replicates stock iPod "Videos" menu by parsing
  * the iTunesDB to show Movies, Music Videos, and TV Shows.

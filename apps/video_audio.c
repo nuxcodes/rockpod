@@ -9,7 +9,9 @@
  * - Audio thread decodes AAC frames, converts Q17.14 to int16, writes PCM
  * - DMA callback in video_pcm pulls from ring buffer (ISR context)
  * - Audio clock in video_pcm is the master for A/V sync
- ****************************************************************************/
+ ********************************************************************* * Copyright (C) 2025 Nux Li
+ *
+ *******/
 #include "config.h"
 
 #ifdef IPOD_6G

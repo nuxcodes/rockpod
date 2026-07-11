@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Copyright (C) 2025
+ * Copyright (C) 2025 Nux Li
  *
  * MP4 video demuxer - extracts H.264 video track data from MP4/M4V files.
  * Forked from libm4a/demux.c, adapted for fd-based I/O and video tracks.

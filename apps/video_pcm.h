@@ -3,7 +3,9 @@
  *
  * Simplified version of mpegplayer's pcm_output.c.
  * Audio-master clock: DMA callback advances clock_samples monotonically.
- ****************************************************************************/
+ ********************************************************************* * Copyright (C) 2025 Nux Li
+ *
+ *******/
 #ifndef VIDEO_PCM_H
 #define VIDEO_PCM_H
 

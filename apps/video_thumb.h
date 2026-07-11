@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Copyright (C) 2025
+ * Copyright (C) 2025 Nux Li
  *
  * Video thumbnail extraction from MP4 cover art.
  *

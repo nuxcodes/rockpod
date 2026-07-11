@@ -7,7 +7,9 @@
  *
  * CRITICAL: get_more() runs in DMA ISR context — no yield, no sleep,
  * no mutex, no file I/O. Only reads from pre-filled ring buffer.
- ****************************************************************************/
+ ********************************************************************* * Copyright (C) 2025 Nux Li
+ *
+ *******/
 #include "config.h"
 
 #ifdef IPOD_6G

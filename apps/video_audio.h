@@ -3,7 +3,9 @@
  *
  * Decodes AAC audio via libfaad on a dedicated thread, feeds PCM ring buffer.
  * Uses audio-master clock from video_pcm for A/V sync.
- ****************************************************************************/
+ ********************************************************************* * Copyright (C) 2025 Nux Li
+ *
+ *******/
 #ifndef VIDEO_AUDIO_H
 #define VIDEO_AUDIO_H
 

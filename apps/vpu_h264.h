@@ -23,7 +23,9 @@
  * This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
  * KIND, either express or implied.
  *
- ****************************************************************************/
+ ********************************************************************* * Copyright (C) 2025 Nux Li
+ *
+ *******/
 
 #ifndef VPU_H264_H
 #define VPU_H264_H

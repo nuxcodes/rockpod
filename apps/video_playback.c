@@ -6,7 +6,7 @@
  *   Firmware   |____|_  /\____/ \___  >__|_ \|___  /\____/__/\_ \
  *                     \/            \/     \/    \/            \/
  *
- * Copyright (C) 2025
+ * Copyright (C) 2025 Nux Li
  *
  * Full-screen video player with H.264 hardware decode via VPU-B.
  * Replicates stock iPod video playback experience:
