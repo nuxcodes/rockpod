@@ -110,11 +110,11 @@ static void push_one_frame(void)
     LCD_REG(0x80) = 1;  /* CPU takes bus */
 
     LCD_CON = 0x80000DA9;  /* P18 for ILI9326 commands */
-    lcd_cmd(0x003); lcd_data(0x1238);  /* AM=1 for 240-per-scan compositor output */
+    lcd_cmd(0x003); lcd_data(0x1030);  /* AM=0, I/D=11→portrait, BGR=1, HWM=1 */
     lcd_cmd(0x210); lcd_data(0);
-    lcd_cmd(0x211); lcd_data(319);    /* HE=319: full horizontal */
+    lcd_cmd(0x211); lcd_data(239);    /* HE=239: portrait width */
     lcd_cmd(0x212); lcd_data(0);
-    lcd_cmd(0x213); lcd_data(239);    /* VE=239: full vertical */
+    lcd_cmd(0x213); lcd_data(319);    /* VE=319: portrait height */
     lcd_cmd(0x200); lcd_data(0);
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v131m ===");
+    vlog("=== VPP MVP Test v132m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -715,11 +715,11 @@ enum plugin_status plugin_start(const void *parameter)
      * to enable the DCS command decoder alongside ILI9326 registers.
      * Then send initial DCS GRAM setup via P8 to verify DCS works. */
     lcd_set_con(0x80000DA9);
-    lcd_cmd(0x003); lcd_data(0x1238);  /* AM=1: vertical auto-increment (240/col matches 240/scan) */
+    lcd_cmd(0x003); lcd_data(0x1030);  /* AM=0, portrait GRAM (240w×320h) */
     lcd_cmd(0x210); lcd_data(0);
-    lcd_cmd(0x211); lcd_data(319);    /* HE=319: full horizontal */
+    lcd_cmd(0x211); lcd_data(239);    /* HE=239: portrait width */
     lcd_cmd(0x212); lcd_data(0);
-    lcd_cmd(0x213); lcd_data(239);    /* VE=239: full vertical */
+    lcd_cmd(0x213); lcd_data(319);    /* VE=319: portrait height */
     lcd_cmd(0x200); lcd_data(0);
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
@@ -821,33 +821,20 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 1;
     LCD_REG(0x80) = 0;
 
-    /* ---- TEST 0: OPTION A — rotation OFF, 320/scan (THE FIX) ---- */
-    /* iPod Classic is landscape. No rotation needed. Compositor reads
-     * source row-major (320 per row), LCD DMA sends 320 per scan,
-     * ILI9326 GRAM AM=0 fills 320 per row. All aligned. */
-    vlog("TEST0: rotation OFF + LCD_REG(0x74)=0x014000F0 (320/scan)");
+    /* ---- TEST 0: Portrait GRAM + rotation ON (THE FIX) ---- */
+    /* LCD DMA ALWAYS sends 240/scan regardless of LCD_REG(0x74).
+     * AM bit is IGNORED by compositor passthrough.
+     * Fix: portrait GRAM (HE=239, VE=319) → 240/row matches 240/scan.
+     * Rotation ON → compositor transposes landscape→portrait. */
+    vlog("TEST0: portrait GRAM (240x320) + rotation ON");
     rb->commit_discard_dcache();
-    COMP_REG(0x3AC) = 0;  /* rotation OFF */
-    LCD_REG(0x74) = 0x014000F0;  /* (320<<16)|240 = 320/scan, 240 scans */
-    compositor_retrigger();
-    for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0-fixA");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
-
-    /* ---- TEST 0b: Same but rotation ON for comparison ---- */
-    vlog("TEST0b: rotation ON + LCD(0x74)=0x014000F0 (320/scan, OPTION C)");
     COMP_REG(0x3AC) = 0x04004003;  /* rotation ON */
-    COMP_REG(0x054) = ((uint32_t)320 << 16) | 240;  /* swap output dims */
+    COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
+    LCD_REG(0x74) = 0x00F00140;  /* restore original */
     compositor_retrigger();
     for (int i = 0; i < 10; i++) push_one_frame();
-    gram_scan("T0b-optC");
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
-
-    /* Restore for remaining tests */
-    COMP_REG(0x3AC) = 0;  /* keep rotation OFF (the working config) */
-    COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
-    LCD_REG(0x74) = 0x014000F0;
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 3000000) rb->backlight_on(); }
+    gram_scan("T0-portrait");
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 5000000) rb->backlight_on(); }
 
     /* ---- TEST 1: Y=128 gray ---- */
     vlog("TEST1: Y=128 Cb=128 Cr=128");
