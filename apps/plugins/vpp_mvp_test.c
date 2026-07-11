@@ -196,20 +196,6 @@ static void lcd_push_frame(void)
     { int t = 500000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
 }
 
-static void lcd_passthrough_stop(uint32_t saved_con)
-{
-    LCD_REG(0x70) = 0;
-    LCD_REG(0x80) = 0;
-    COMP_REG(0x000) = 0;
-
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = LCD_MODE_P18;
-    lcd_cmd(0x003); lcd_data(0x0230);
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = saved_con;
-    LCD_PHTIME = 0x33;
-}
-
 enum plugin_status plugin_start(const void *parameter)
 {
     const char *test_path = parameter ? (const char *)parameter
@@ -284,20 +270,32 @@ enum plugin_status plugin_start(const void *parameter)
 
     lcd_passthrough_start();
 
+    COMP_REG(0x000) = 0;
+    { volatile int d = 0; while (d++ < 50000); }
     COMP_REG(0x000) = 1;
     { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
-    for (int i = 0; i < 5; i++) lcd_push_frame();
+    for (int i = 0; i < 10; i++) lcd_push_frame();
 
     vlog("  Display active — waiting for keypress");
     while (rb->button_get(true) == BUTTON_NONE)
         rb->backlight_on();
 
-    lcd_passthrough_stop(saved_lcd_con);
+    LCD_REG(0x70) = 0;
+    LCD_REG(0x80) = 0;
+    COMP_REG(0x000) = 0;
+
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = LCD_MODE_P18;
+    lcd_cmd(0x003); lcd_data(0x0230);
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = saved_lcd_con;
+
     LCD_REG(0x88) = saved_88;
     LCD_REG(0x20) = saved_20;
     LCD_REG(0x7C) = saved_7c;
     LCD_REG(0x74) = saved_74;
     LCD_REG(0x78) = saved_78;
+    LCD_PHTIME = 0x33;
 
     { int t = 100000; while ((LCD_REG(0x8C) & 3) && --t > 0); }
     rb->lcd_update();
