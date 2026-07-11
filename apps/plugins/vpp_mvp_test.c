@@ -496,7 +496,7 @@ static void compositor_init(void)
     c[0x208/4] = 0;
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;
-    c[0x214/4] = 0x00EF013F;
+    c[0x214/4] = 0x013F00EF;  /* LANDSCAPE: (319<<16)|239 = 320/scan, 240 scans */
     c[0x024/4] = 0x00FFFFFF;
 }
 
@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v138m ===");
+    vlog("=== VPP MVP Test v139m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -635,7 +635,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x03C) = PHYS(cr_out);
     COMP_REG(0x040) = 0;
     COMP_REG(0x044) = PHYS(cb_out);
-    COMP_REG(0x3AC) = 0x04004003;  /* rotation ON — converts portrait→landscape */
+    COMP_REG(0x3AC) = 0;  /* rotation OFF — landscape source → landscape display */
     COMP_REG(0x0D4) = 1;           /* ROM-verified: vtable[0x6c](obj,1,0) → 1|(0<<8)=1 */
 
     /* CRITICAL: Clear bit 8 to activate BT.601 CSC for video mode.
@@ -707,9 +707,9 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x20) = 0x33;
     LCD_REG(0x7C) = 0x00000401;  /* 1 transfer per pixel for P16 mode */
 
-    /* Passthrough registers — Apple FUN_0014deec */
+    /* Passthrough registers — LANDSCAPE for ILI9326 */
     LCD_REG(0x78) = 0x000A000A;
-    LCD_REG(0x74) = 0x00F00140;
+    LCD_REG(0x74) = 0x014000F0;  /* per_scan=320, num_scans=240 */
 
     /* Prime panel for DCS mode: send ILI9326 "interface control" via P18
      * to enable the DCS command decoder alongside ILI9326 registers.
