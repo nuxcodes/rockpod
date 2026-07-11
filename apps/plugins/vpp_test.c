@@ -142,9 +142,10 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Hardware reset + DCS init...");
 
     /* Hardware reset — forces panel back to default (DCS-receptive) state */
-    LCD_DRV_RST = 1;  /* assert reset */
+    LCD_RST_TIME = 0x7FFF;  /* set reset pulse duration */
+    LCD_DRV_RST = 0;  /* assert reset (active LOW) */
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<50000);}  /* 50ms */
-    LCD_DRV_RST = 0;  /* release reset */
+    LCD_DRV_RST = 1;  /* release reset */
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<150000);}  /* 150ms recovery */
     vlog("Panel reset done");
 
