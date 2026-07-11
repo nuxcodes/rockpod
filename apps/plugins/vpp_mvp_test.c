@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v141m ===");
+    vlog("=== VPP MVP Test v142m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -629,7 +629,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16);
     COMP_REG(0x04C) = 0x10001000;  /* Scaler step 1.0/1.0 — CSC-enabled path uses hardcoded 320,240 */
     COMP_REG(0x050) = 0;
-    COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
+    COMP_REG(0x054) = 0x014000F0;  /* landscape: (320<<16)|240 */
 
     COMP_REG(0x038) = PHYS(y_out);
     COMP_REG(0x03C) = PHYS(cr_out);
@@ -991,7 +991,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0;  /* rotation OFF */
     COMP_REG(0x04C) = 0x10001000;
-    COMP_REG(0x054) = ((uint32_t)240 << 16) | 320;
+    COMP_REG(0x054) = 0x014000F0;  /* landscape: (320<<16)|240 */
     COMP_REG(0x214) = 0x013F00EF;  /* landscape viewport */
     LCD_REG(0x78) = 0x000A000A;
     LCD_REG(0x74) = 0x014000F0;  /* landscape per-scan */
