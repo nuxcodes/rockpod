@@ -510,7 +510,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->audio_stop();
 
     log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP MVP Test v142m ===");
+    vlog("=== VPP MVP Test v143m ===");
     vlog("File: %s", test_path);
     vlog("Panel type: %d", (PDAT(6) & 0x30) >> 4);
 
@@ -723,7 +723,7 @@ enum plugin_status plugin_start(const void *parameter)
     lcd_cmd(0x200); lcd_data(0);
     lcd_cmd(0x201); lcd_data(0);
     lcd_cmd(0x202);
-    lcd_set_con(0x81100DB9);
+    lcd_set_con(0x80100DB0);  /* P16 */
 
     /* ---- Rockbox pixel calibration: paint known color via Rockbox, read GRAM ---- */
     vlog("CALIB: Rockbox white pixel at (160,120)");
@@ -814,7 +814,7 @@ enum plugin_status plugin_start(const void *parameter)
         lcd_cmd(0x200); lcd_data(0);
         lcd_cmd(0x201); lcd_data(0);
         lcd_cmd(0x202);
-        lcd_set_con(0x81100DB9);
+        lcd_set_con(0x80100DB0);  /* P16 */
     }
 
     /* Enable passthrough + release bus */
