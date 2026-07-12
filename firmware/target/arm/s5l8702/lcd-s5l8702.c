@@ -656,9 +656,10 @@ void lcd_init_device(void)
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
         if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-            /* Type 2/3 DCS init: toggle LCD_CON per command (Apple pattern).
-             * LCD_CON is P16 from bootloader. Each DCS command switches to
-             * P8 bit24, sends cmd+data, waits for completion, restores P16. */
+            /* Type 2/3 DCS init: LCD+0x88 bit 24 must be set BEFORE P8 bit24
+             * mode works for routing commands to D[17:10]. Without it,
+             * commands go to D[8:1] and panel never receives them. */
+            *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
             s5l_lcd_run_seq8_dcs(lcd_info->seq_init);
             { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
         } else {
