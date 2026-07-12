@@ -513,12 +513,12 @@ static int decode_one_frame(bool display)
                     if (compositor_is_active())
                         compositor_stop();
                     scale_and_blit_fb(y, cb, cr, w, h);
-                } else if (!ps.need_scale && w <= 320 && h <= 240) {
+                } else if (!ps.need_scale && w == 320 && h == 240) {
                     if (!compositor_is_active())
                         compositor_start(w, h, y, cb, cr);
                     else
                         compositor_update(y, cb, cr);
-                } else if (ps.need_scale && ps.dst_w <= 320 && ps.dst_h <= 240) {
+                } else if (ps.need_scale && ps.dst_w == 320 && ps.dst_h == 240) {
                     int cdst_w = ps.dst_w / 2;
                     int cdst_h = ps.dst_h / 2;
                     if (cdst_w < 2) cdst_w = 2;
