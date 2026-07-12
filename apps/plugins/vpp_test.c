@@ -1,17 +1,6 @@
-/* v147 — DCS DRIVER POC
- * Tests switching ILI9326 panel to DCS mode at runtime.
- * SAFETY: saves all LCD state, restores on exit.
- * If display goes blank, just wait — it auto-restores on exit.
- *
- * Approach:
- * 1. Save current Rockbox LCD state
- * 2. Switch LCD controller to P8 with bit 24 (Apple's DCS mode)
- * 3. Send DCS init: Sleep Out, COLMOD, MADCTL, Normal Mode, Display On
- * 4. Send DCS CASET/PASET for portrait window (240×320)
- * 5. Enable compositor passthrough (Apple defaults, rotation ON)
- * 6. Compositor pushes 240/scan portrait → DCS portrait panel
- * 7. On exit: restore ILI9326 state via Rockbox lcd_update
- *
+/* VPP Pre-Shear Test — Apple defaults + pre-distorted YUV
+ * Fixes 240/scan shearing by rearranging YUV planes.
+ * ALL compositor registers at Apple defaults. Zero HW risk.
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -29,40 +18,12 @@
 #define LR(o) (*(volatile uint32_t*)(LCD_BASE+(o)))
 #define PH(x) ((uint32_t)((uintptr_t)(x)&0x7FFFFFFF))
 
-#define P8_DCS  0x81000C21  /* P8 with bit 24 — Apple's DCS command mode */
-#define P16     0x80100DB0  /* P16 — pixel data mode for PAR18 panels */
-#define P18     0x80000DA9  /* P18 — ILI9326 register command mode */
-
-static int log_fd = -1;
-static void vlog(const char *fmt, ...) {
-    if (log_fd < 0) return;
-    char buf[256]; va_list ap;
-    va_start(ap, fmt);
-    int len = rb->vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    rb->write(log_fd, buf, len); rb->write(log_fd, "\n", 1);
-}
-
 static void lc(uint16_t c){while(LCD_STATUS&0x10);LCD_WCMD=c;}
 static void ld(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
 static int fsc(const uint8_t*b,int l,int*s){
     for(int i=0;i<l-3;i++){if(b[i]==0&&b[i+1]==0){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
-
-static void dcs_cmd(uint8_t cmd, int ndata, const uint8_t *data)
-{
-    int t;
-    t=100000; while(!(LCD_STATUS&0x2)&&--t>0);
-    if(t<=0){vlog("  DCS HANG at pre-wait cmd=0x%02x",cmd);return;}
-    LCD_CON = P8_DCS;
-    lc(cmd);
-    for (int i = 0; i < ndata; i++)
-        ld(data[i]);
-    t=100000; while(!(LCD_STATUS&0x2)&&--t>0);
-    if(t<=0){vlog("  DCS HANG at post-wait cmd=0x%02x",cmd);return;}
-    vlog("  DCS cmd 0x%02x OK (%d data)", cmd, ndata);
-}
 
 static void comp_init(void) {
     volatile uint32_t*c=(volatile uint32_t*)COMP;
@@ -84,7 +45,7 @@ static void comp_init(void) {
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080; c[0x204/4]=2; c[0x208/4]=0; c[0x20C/4]=2;
     c[0x210/4]=0x00010110;
-    c[0x214/4]=0x00EF013F;  /* Apple default portrait viewport */
+    c[0x214/4]=0x00EF013F;
     c[0x024/4]=0x00FFFFFF;
 }
 
@@ -94,16 +55,13 @@ enum plugin_status plugin_start(const void *parameter)
     if(!*path)return PLUGIN_ERROR;
     rb->cpu_boost(true); rb->audio_stop();
 
-    log_fd = rb->open("/vpu_vpp_test.log", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    vlog("=== VPP v147 — DCS DRIVER POC ===");
-
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
     size_t ds=vpu_h264_buf_size(640,480);
     struct vpu_h264*dec=vpu_h264_open(ab,ds,640,480);
-    if(!dec){rb->close(log_fd);return PLUGIN_ERROR;}
+    if(!dec)return PLUGIN_ERROR;
     uint8_t*fb=ab+ds;
-    int fd=rb->open(path,O_RDONLY);if(fd<0){rb->close(log_fd);return PLUGIN_ERROR;}
+    int fd=rb->open(path,O_RDONLY);if(fd<0)return PLUGIN_ERROR;
     int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
 
     int fw=0,fh=0;
@@ -116,116 +74,123 @@ enum plugin_status plugin_start(const void *parameter)
             vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
         pos=ns+nl;
     }
-    if(!yo){vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
-    vlog("Decoded %dx%d", fw, fh);
+    if(!yo){vpu_h264_close(dec);return PLUGIN_ERROR;}
 
-    /* === SAVE ALL LCD STATE === */
+    /* Allocate pre-sheared buffers after file data */
+    size_t y_sz=fw*fh, c_sz=(fw/2)*(fh/2);
+    uint8_t *ps_y=fb+fl, *ps_cb=ps_y+y_sz, *ps_cr=ps_cb+c_sz;
+
+    /* === PRE-SHEAR Y PLANE ===
+     * The compositor with rotation ON + 240/scan into 320 GRAM:
+     * GRAM(x,y) at linear=y*320+x receives source(col=linear/240, row=linear%240)
+     * We want GRAM(x,y) = original(x,y).
+     * So place original(x,y) at source position (col=(y*320+x)/240, row=(y*320+x)%240).
+     * In the Y plane: dst[row*fw + col] = src[y*fw + x] */
+    {
+        uint8_t *dst=(uint8_t*)((uintptr_t)ps_y|0x40000000);
+        const uint8_t *src=(const uint8_t*)((uintptr_t)yo|0x40000000);
+        rb->memset(dst, 0, y_sz);
+        for(int y=0;y<fh;y++){
+            for(int x=0;x<fw;x++){
+                int linear=y*320+x;
+                int col=linear/240;
+                int row=linear%240;
+                if(col<fw && row<fh)
+                    dst[row*fw+col]=src[y*fw+x];
+            }
+        }
+    }
+
+    /* === PRE-SHEAR Cb PLANE (quarter res) === */
+    {
+        int cw=fw/2, ch=fh/2;
+        uint8_t *dst=(uint8_t*)((uintptr_t)ps_cb|0x40000000);
+        const uint8_t *src=(const uint8_t*)((uintptr_t)cbo|0x40000000);
+        rb->memset(dst, 128, c_sz);
+        for(int y=0;y<ch;y++){
+            for(int x=0;x<cw;x++){
+                int linear=y*160+x;
+                int col=linear/120;
+                int row=linear%120;
+                if(col<cw && row<ch)
+                    dst[row*cw+col]=src[y*cw+x];
+            }
+        }
+    }
+
+    /* === PRE-SHEAR Cr PLANE === */
+    {
+        int cw=fw/2, ch=fh/2;
+        uint8_t *dst=(uint8_t*)((uintptr_t)ps_cr|0x40000000);
+        const uint8_t *src=(const uint8_t*)((uintptr_t)cro|0x40000000);
+        rb->memset(dst, 128, c_sz);
+        for(int y=0;y<ch;y++){
+            for(int x=0;x<cw;x++){
+                int linear=y*160+x;
+                int col=linear/120;
+                int row=linear%120;
+                if(col<cw && row<ch)
+                    dst[row*cw+col]=src[y*cw+x];
+            }
+        }
+    }
+
+    rb->commit_discard_dcache();
+
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
-    vlog("Saved LCD state: CON=%08lx", (unsigned long)sc);
 
     PWRCON(0)&=~0x2080;
     for(volatile int d=0;d<10000;d++);
 
-    /* === COMPOSITOR INIT (ALL APPLE DEFAULTS) === */
     comp_init();
 
-    /* Layer 5 — Apple defaults with rotation ON */
+    /* Layer 5 — ALL APPLE DEFAULTS + pre-sheared buffers */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100; CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
     CR(0x04C)=0x10001000;
-    CR(0x054)=0x00F00140;  /* Apple default portrait output */
-    CR(0x038)=PH(yo); CR(0x03C)=PH(cro); CR(0x040)=0; CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004003;  /* Apple default rotation ON */
+    CR(0x054)=0x00F00140;
+    CR(0x038)=PH(ps_y); CR(0x03C)=PH(ps_cr); CR(0x040)=0; CR(0x044)=PH(ps_cb);
+    CR(0x3AC)=0x04004003;  /* rotation ON — Apple default */
     CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}  /* CSC enable */
-    rb->commit_discard_dcache();
+    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
 
-    /* === SWITCH PANEL TO DCS MODE === */
-    vlog("Hardware reset + DCS init...");
-
-    /* Hardware reset — forces panel back to default (DCS-receptive) state */
-    LCD_RST_TIME = 0x7FFF;  /* set reset pulse duration */
-    LCD_DRV_RST = 0;  /* assert reset (active LOW) */
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<50000);}  /* 50ms */
-    LCD_DRV_RST = 1;  /* release reset */
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<150000);}  /* 150ms recovery */
-    vlog("Panel reset done. LCD_STATUS=0x%08lx", (unsigned long)LCD_STATUS);
-
-    /* DCS Software Reset (extra safety) */
-    {uint8_t d[]={};dcs_cmd(0x01,0,d);}
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<120000);}
-
-    /* DCS Sleep Out */
-    {uint8_t d[]={};dcs_cmd(0x11,0,d);}
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<120000);}  /* 120ms delay */
-
-    /* DCS Pixel Format = RGB565 (16-bit) */
-    {uint8_t d[]={0x05};dcs_cmd(0x3A,1,d);}
-
-    /* DCS MADCTL = 0x00 (normal scan, RGB order) */
-    {uint8_t d[]={0x00};dcs_cmd(0x36,1,d);}
-
-    /* DCS Normal Mode On */
-    {uint8_t d[]={};dcs_cmd(0x13,0,d);}
-
-    /* DCS Display On */
-    {uint8_t d[]={};dcs_cmd(0x29,0,d);}
-
-    vlog("DCS init sent");
-
-    /* === LCD PASSTHROUGH SETUP — TRY P9 (Apple's DCS pixel mode) === */
-    /* After DCS init, the panel is in DCS mode. Apple uses P9 for pixel data.
-     * P9 with COLMOD=0x05 (16-bit) = 2 × 9-bit transfers per RGB565 pixel.
-     * Try BOTH P9 and COLMOD=0x06 (18-bit, Apple's default). */
-    LCD_CON=0x81100DB9;  /* P9 mode — Apple's exact passthrough mode */
+    /* LCD passthrough — P16 for ILI9326, Apple defaults */
+    LCD_CON=0x80100DB0;
     LR(0x88)=0x01000000; LR(0x20)=0x33; LR(0x7C)=0x00000402;
-    LR(0x78)=0x000A000A;
-    LR(0x74)=0x00F00140;  /* Apple default: 240/scan portrait */
+    LR(0x78)=0x000A000A; LR(0x74)=0x00F00140;
 
-    /* Set COLMOD to 18-bit (Apple's default for DCS panels) */
-    {uint8_t d[]={0x06};dcs_cmd(0x3A,1,d);}
-    vlog("Set COLMOD=0x06 (18-bit) for P9 mode");
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    lc(0x003);ld(0x1030);
+    lc(0x210);ld(0); lc(0x211);ld(319);
+    lc(0x212);ld(0); lc(0x213);ld(239);
+    lc(0x200);ld(0); lc(0x201);ld(0); lc(0x202);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    LR(0x70)=1; LR(0x80)=0;
 
-    /* DCS GRAM window setup via P8 */
-    {uint8_t caset[]={0x00,0x00,0x00,0xEF};dcs_cmd(0x2A,4,caset);}  /* CASET=0-239 */
-    {uint8_t paset[]={0x00,0x00,0x01,0x3F};dcs_cmd(0x2B,4,paset);}  /* PASET=0-319 */
-    {uint8_t d[]={};dcs_cmd(0x2C,0,d);}  /* RAMWR */
-
-    /* Switch to P9 for pixel data, enable passthrough */
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x81100DB9;  /* P9 — Apple's exact passthrough mode */
-    LR(0x70)=1;  /* Enable passthrough */
-    LR(0x80)=0;
-
-    vlog("Passthrough enabled");
-
-    /* === START COMPOSITOR === */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<500000);}
+    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<300000);}
 
-    vlog("Compositor running — waiting for keypress");
+    for(int i=0;i<10;i++){
+        {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+        LR(0x80)=1; LCD_CON=0x80000DA9;
+        lc(0x200);ld(0);lc(0x201);ld(0);lc(0x202);
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+        LR(0x80)=0;{int t=500000;while((LR(0x8C)&3)&&--t>0);}
+    }
 
-    /* Wait for keypress */
     while(rb->button_get(true)==BUTTON_NONE) rb->backlight_on();
 
-    /* === SAFE SHUTDOWN — RESTORE ILI9326 STATE === */
-    vlog("Shutting down...");
     LR(0x70)=0; LR(0x80)=0; CR(0x000)=0;
-
-    /* Restore all saved LCD registers */
-    LCD_CON=sc;
-    LR(0x88)=s8; LR(0x20)=s2; LR(0x7C)=s7; LR(0x74)=s4; LR(0x78)=s5;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    lc(0x003);ld(0x0230);
+    while(!(LCD_STATUS&0x2)); LCD_CON=sc;
+    LR(0x88)=s8;LR(0x20)=s2;LR(0x7C)=s7;LR(0x74)=s4;LR(0x78)=s5;
     LCD_PHTIME=0x33;
-
-    /* Force ILI9326 re-init by doing Rockbox lcd_update */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     rb->lcd_update();
 
-    vlog("Restored. Done.");
-    rb->close(log_fd);
     vpu_h264_close(dec); rb->cpu_boost(false);
     return PLUGIN_OK;
 }
