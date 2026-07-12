@@ -248,9 +248,6 @@ static void s5l_lcd_recv_cmd8(uint8_t cmd, int len, uint8_t *buf)
 #define s5l_lcd_set_command_mode()  s5l_lcd_write_config(lcd_cmd_mode)
 #define s5l_lcd_set_frame_mode()    s5l_lcd_write_config(lcd_frame_mode)
 
-#ifdef IPOD_6G
-volatile uint32_t lcd_init_breadcrumb[8] __attribute__((section(".iram")));
-#endif
 
 static void s5l_lcd_run_seq8(void *seq8)
 {
@@ -271,7 +268,6 @@ static void s5l_lcd_run_seq8(void *seq8)
             break;
         case END:
         default:
-            /* bye */
             return;
     }
 }
@@ -578,11 +574,9 @@ void lcd_init_device(void)
     lcd_target_enable_clocks(true);
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
     LCD_PHTIME = 0x33;
-    /* Wait for any in-flight LCD DMA from bootloader to complete.
-     * The bootloader's lcd_update DMA may still be running when we
-     * arrive here. Changing LCD_CON while DMA is active hangs. */
+    /* Wait for any in-flight LCD operations from bootloader to settle */
     { int t = 100000; while ((*(volatile uint32_t*)(LCD_BASE + 0x8C) & 3) && --t > 0); }
-    while (!(LCD_STATUS & 0x2));
+    { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
     udelay(100);
 #elif defined(IPOD_NANO4G) && defined(BOOTLOADER)
     cg16_config(&CG16_LCD, true, CG16_SEL_PLL0, 16, 1, 0x0);
@@ -606,11 +600,8 @@ void lcd_init_device(void)
     {
         if (lcd_info->mpuiface == LCD_MPUIFACE_SERIAL)
             lcd_cmd_mode = LCD_MODE_S8;
-        else if (lcd_info->mpuiface == LCD_MPUIFACE_PAR18
-                 && lcd_info->lcd_type >= 2)
-            lcd_cmd_mode = 0x81000C20;  /* P8 bit24 for type 2/3 DCS (D[17:10]) */
         else
-            lcd_cmd_mode = LCD_MODE_P8;  /* type 0/1: standard P8 (D[8:1]) */
+            lcd_cmd_mode = LCD_MODE_P8;
         lcd_run_seq = s5l_lcd_run_seq8;
     }
 
@@ -624,33 +615,28 @@ void lcd_init_device(void)
 
     s5l_lcd_set_command_mode();
 
-#ifdef IPOD_6G
-    lcd_init_breadcrumb[0] = 0xDC500001;  /* reached set_command_mode */
-    lcd_init_breadcrumb[1] = LCD_CON;
-    lcd_init_breadcrumb[2] = LCD_STATUS;
-    lcd_init_breadcrumb[3] = lcd_cmd_mode;
-#endif
-
-    /* Configure DMA channel */                             // TODO: this right after mutex_init()
+    /* Configure DMA channel */
     dmac_ch_init(&lcd_dma_ch, &lcd_dma_ch_cfg);
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
-#ifdef IPOD_6G
-        lcd_init_breadcrumb[4] = 0xDC500002;  /* about to run seq_init */
-        lcd_init_breadcrumb[5] = LCD_STATUS;
-#endif
-        /* When switching LCD modes (e.g. P18→P8 after bootloader),
-         * the controller needs time to settle and the FIFO must drain.
-         * Without this, the first s5l_lcd_write_cmd hangs on FIFO full. */
-        while (LCD_STATUS & 0x10) ;     /* wait for FIFO not full */
-        while (!(LCD_STATUS & 0x2)) ;   /* wait for controller ready */
-        udelay(1000);                   /* 1ms settle after mode switch */
-#ifdef IPOD_6G
-        lcd_init_breadcrumb[6] = 0xDC500003;  /* FIFO drained, starting seq */
-        lcd_init_breadcrumb[7] = LCD_STATUS;
-#endif
-        lcd_run_seq(lcd_info->seq_init);
+        if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18
+            && lcd_info->cmdset == LCD_CMDSET_8BIT) {
+            /* Type 2/3 DCS init: temporarily switch to P8 bit24 to send
+             * DCS commands via D[17:10]. Reset LCD controller first to
+             * clear any stale FIFO state from bootloader's P18 mode. */
+            { int t = 100000; while ((LCD_STATUS & 0x10) && --t > 0); }
+            { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+            LCD_CON = 0;
+            udelay(1000);
+            s5l_lcd_write_config(0x81000C20);
+            udelay(1000);
+            lcd_run_seq(lcd_info->seq_init);
+            { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+            s5l_lcd_set_command_mode();
+        } else {
+            lcd_run_seq(lcd_info->seq_init);
+        }
     }
 #endif
 
