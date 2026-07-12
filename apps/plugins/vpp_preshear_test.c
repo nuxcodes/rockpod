@@ -77,11 +77,6 @@ static void comp_init(void) {
     c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
 }
 
-static void comp_retrigger(void)
-{
-    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
-}
 
 enum plugin_status plugin_start(const void *parameter)
 {
@@ -179,7 +174,8 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Entry Mode: 0x%04x",em_vals[em_idx]);
 
     LR(0x70)=1;LR(0x80)=0;
-    comp_retrigger();
+    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
+    CR(0x000)=1;
     vlog("Compositor running. LEFT/RIGHT=cycle Entry Mode, SELECT=exit");
 
     int btn;
@@ -188,20 +184,18 @@ enum plugin_status plugin_start(const void *parameter)
         if(btn==BUTTON_SELECT) break;
         if(btn==BUTTON_RIGHT) {
             em_idx=(em_idx+1)%8;
-            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            LR(0x70)=0;
             ili_set_entry_mode(em_vals[em_idx]);
             ili_set_gram_window();
             LR(0x70)=1;LR(0x80)=0;
-            comp_retrigger();
             vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
         }
         if(btn==BUTTON_LEFT) {
             em_idx=(em_idx+7)%8;
-            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            LR(0x70)=0;
             ili_set_entry_mode(em_vals[em_idx]);
             ili_set_gram_window();
             LR(0x70)=1;LR(0x80)=0;
-            comp_retrigger();
             vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
         }
         rb->backlight_on();
