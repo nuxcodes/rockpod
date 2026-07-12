@@ -295,7 +295,7 @@ static struct lcd_info_rec lcd_info_list[] =
         .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
     #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-        .seq_init   = (void*) lcd_init_seq_0,
+        .seq_init   = (void*) lcd_init_seq_dcs23,  /* Same DCS init as type 2 */
     #endif
     },
 };
