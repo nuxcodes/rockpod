@@ -251,7 +251,9 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Set LCD+0x74 BEFORE enabling passthrough (it latches at 0x70=1 transition) */
     LR(0x74)=0x00F00140;
-    vlog("  LCD passthrough registers set");
+    vlog("  LCD passthrough: CON=0x%08lx 74=0x%08lx 78=0x%08lx 7C=0x%08lx 88=0x%08lx",
+         (unsigned long)LCD_CON,(unsigned long)LR(0x74),(unsigned long)LR(0x78),
+         (unsigned long)LR(0x7C),(unsigned long)LR(0x88));
 
     /* Set DCS portrait window for compositor (240/scan matches portrait).
      * Start with MADCTL=0x40 (MX): Rockbox landscape uses 0x60 (MV+MX),
