@@ -156,7 +156,7 @@ static const uint16_t lcd_init_seq_23[] =
 static const uint8_t lcd_init_seq_dcs23[] =
 {
     CMD,   0x11,  0,                    /* Sleep Out */
-    SLEEP, 12,                          /* 120 ms */
+    SLEEP, 15,                          /* 150 ms (datasheet min 120, +25% margin) */
     CMD,   0xEF,  1, 0x80,             /* Extended access */
     CMD,   0xC0,  1, 0x06,             /* Power Control 1 */
     CMD,   0xC1,  1, 0x03,             /* Power Control 2 */
