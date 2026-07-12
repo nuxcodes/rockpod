@@ -171,8 +171,8 @@ static struct dmac_ch_cfg lcd_dma_ch_cfg =
 {
     .srcperi = S5L8702_DMAC0_PERI_MEM,
     .dstperi = S5L8702_DMAC0_PERI_LCD_WR,
-    .sbsize  = DMACCxCONTROL_BSIZE_1,
-    .dbsize  = DMACCxCONTROL_BSIZE_1,
+    .sbsize  = DMACCxCONTROL_BSIZE_4,  /* burst of 4 — saves 2-11ms/frame vs BSIZE_1 */
+    .dbsize  = DMACCxCONTROL_BSIZE_4,
     .swidth  = DMACCxCONTROL_WIDTH_16,
     .dwidth  = DMACCxCONTROL_WIDTH_16,
     .sbus    = DMAC_MASTER_AHB1,
@@ -589,10 +589,11 @@ void lcd_init_device(void)
     {
         if (lcd_info->mpuiface == LCD_MPUIFACE_SERIAL)
             lcd_cmd_mode = LCD_MODE_S8;
-        else if (lcd_info->mpuiface == LCD_MPUIFACE_PAR18)
-            lcd_cmd_mode = 0x81000C21;  /* P8 with bit 24 — routes to D[17:10] for PAR18 panels */
+        else if (lcd_info->mpuiface == LCD_MPUIFACE_PAR18
+                 && lcd_info->lcd_type >= 2)
+            lcd_cmd_mode = 0x81000C20;  /* P8 bit24 for type 2/3 DCS (D[17:10]) */
         else
-            lcd_cmd_mode = LCD_MODE_P8;
+            lcd_cmd_mode = LCD_MODE_P8;  /* type 0/1: standard P8 (D[8:1]) */
         lcd_run_seq = s5l_lcd_run_seq8;
     }
 
