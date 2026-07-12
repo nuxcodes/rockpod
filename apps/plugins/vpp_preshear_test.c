@@ -155,6 +155,9 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_CON=0x80100DB0;
     LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;LR(0x74)=0x00F00140;
+    vlog("LCD passthrough: CON=0x%08lx 74=0x%08lx 7C=0x%08lx 88=0x%08lx",
+         (unsigned long)LCD_CON,(unsigned long)LR(0x74),
+         (unsigned long)LR(0x7C),(unsigned long)LR(0x88));
 
     /* Entry Mode cycling — BGR=0 first (matches Rockbox), both I/D increment */
     static const uint16_t em_vals[] = {
