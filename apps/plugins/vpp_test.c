@@ -301,30 +301,29 @@ enum plugin_status plugin_start(const void *parameter)
             madctl_idx = (madctl_idx + 1) % 8;
             uint8_t m = madctl_vals[madctl_idx];
             is_portrait = !(m & 0x20);
-            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            LR(0x70)=0;
             dcs_set_madctl(m);
             dcs_set_window(is_portrait);
             LR(0x70)=1;LR(0x80)=0;
-            comp_retrigger();
             vlog("  MADCTL=0x%02x (%s) idx=%d",m,is_portrait?"portrait":"landscape",madctl_idx);
         }
         if(btn==BUTTON_LEFT) {
             madctl_idx = (madctl_idx + 7) % 8;
             uint8_t m = madctl_vals[madctl_idx];
             is_portrait = !(m & 0x20);
-            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            LR(0x70)=0;
             dcs_set_madctl(m);
             dcs_set_window(is_portrait);
             LR(0x70)=1;LR(0x80)=0;
-            comp_retrigger();
             vlog("  MADCTL=0x%02x (%s) idx=%d",m,is_portrait?"portrait":"landscape",madctl_idx);
         }
         if(btn==BUTTON_PLAY) {
-            /* Re-trigger compositor to refresh display */
-            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
-            LR(0x70)=1;LR(0x80)=0;
-            comp_retrigger();
-            vlog("  Retrigger");
+            /* Reset GRAM position (Apple's per-frame method) */
+            {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+            LR(0x80)=1;
+            dcs_set_window(is_portrait);
+            LR(0x80)=0;
+            vlog("  GRAM reset");
         }
         rb->backlight_on();
     }
