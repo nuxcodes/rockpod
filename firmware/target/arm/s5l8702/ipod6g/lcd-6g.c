@@ -143,11 +143,12 @@ static const uint16_t lcd_init_seq_23[] =
     END
 };
 
-#ifdef BOOTLOADER
 /* DCS init for type 2/3 panels — from Apple ROM table A at 0x9F05CA
  * Panel is ST7789V-family, NOT ILI9326 (Rockbox misidentification).
  * COLMOD changed from Apple's 0x06 (18-bit) to 0x05 (16-bit RGB565)
- * to match Rockbox's P16 DMA pixel format. */
+ * to match Rockbox's P16 DMA pixel format.
+ * Compiled for both BOOTLOADER and main firmware — main firmware needs
+ * this to override ILI9326 state left by old bootloaders. */
 static const uint8_t lcd_init_seq_dcs23[] =
 {
     CMD,   0x11,  0,                    /* Sleep Out */
@@ -229,7 +230,6 @@ static const uint8_t lcd_init_seq_1[] =
     CMD,   0x29,  0,        /* Display On */
     END
 };
-#endif /* BOOTLOADER */
 #endif /* HAVE_LCD_SLEEP || BOOTLOADER */
 
 
@@ -245,7 +245,7 @@ static struct lcd_info_rec lcd_info_list[] =
     #ifdef HAVE_LCD_SLEEP
         .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
-    #ifdef BOOTLOADER
+    #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
         .seq_init   = (void*) lcd_init_seq_0,
     #endif
     },
@@ -260,7 +260,7 @@ static struct lcd_info_rec lcd_info_list[] =
     #ifdef HAVE_LCD_SLEEP
         .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
-    #ifdef BOOTLOADER
+    #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
         .seq_init   = (void*) lcd_init_seq_1,
     #endif
     },
@@ -275,7 +275,7 @@ static struct lcd_info_rec lcd_info_list[] =
     #ifdef HAVE_LCD_SLEEP
         .seq_awake  = (void*) lcd_awake_seq_01,  /* DCS wake — iBoot left panel in DCS state */
     #endif
-    #ifdef BOOTLOADER
+    #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
         .seq_init   = (void*) lcd_init_seq_dcs23,  /* Full ST7789V DCS init from ROM */
     #endif
     },
@@ -290,7 +290,7 @@ static struct lcd_info_rec lcd_info_list[] =
     #ifdef HAVE_LCD_SLEEP
         .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
-    #ifdef BOOTLOADER
+    #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
         .seq_init   = (void*) lcd_init_seq_0,
     #endif
     },

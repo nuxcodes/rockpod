@@ -1,7 +1,6 @@
-/* VPP Test for DCS firmware — compositor passthrough
- * With DCS mode active, the compositor's 240/scan portrait output
- * matches the panel's DCS portrait window perfectly. No shearing.
- * ALL compositor registers at Apple defaults.
+/* VPP DCS Test — verifies DCS firmware + compositor passthrough
+ * Phase 1: Rockbox lcd_update test (verifies DCS firmware display)
+ * Phase 2: Compositor passthrough with MADCTL cycling
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -14,21 +13,55 @@
 #define vpu_h264_get_frame   rb->vpu_h264_get_frame
 #define vpu_h264_close       rb->vpu_h264_close
 
+#undef COMP
 #define COMP  0x38900000
 #define CR(o) (*(volatile uint32_t*)(COMP+(o)))
 #define LR(o) (*(volatile uint32_t*)(LCD_BASE+(o)))
 #define PH(x) ((uint32_t)((uintptr_t)(x)&0x7FFFFFFF))
 
+static int log_fd = -1;
+static void vlog(const char *fmt, ...) {
+    if(log_fd<0)return;
+    char buf[256];va_list ap;va_start(ap,fmt);
+    int len=rb->vsnprintf(buf,sizeof(buf),fmt,ap);va_end(ap);
+    rb->write(log_fd,buf,len);rb->write(log_fd,"\n",1);
+}
 static void lc(uint16_t c){while(LCD_STATUS&0x10);LCD_WCMD=c;}
 static void ld(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
+
 static int fsc(const uint8_t*b,int l,int*s){
     for(int i=0;i<l-3;i++){if(b[i]==0&&b[i+1]==0){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
 
+static void dcs_set_madctl(uint8_t val)
+{
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=0x81000C20;
+    lc(0x36);ld(val);
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=0x80100DB0;
+}
+
+static void dcs_set_window(int portrait)
+{
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=0x81000C20;
+    if (portrait) {
+        lc(0x2A);ld(0x00);ld(0x00);ld(0x00);ld(0xEF);  /* CASET=0-239 */
+        lc(0x2B);ld(0x00);ld(0x00);ld(0x01);ld(0x3F);  /* PASET=0-319 */
+    } else {
+        lc(0x2A);ld(0x00);ld(0x00);ld(0x01);ld(0x3F);  /* CASET=0-319 */
+        lc(0x2B);ld(0x00);ld(0x00);ld(0x00);ld(0xEF);  /* PASET=0-239 */
+    }
+    lc(0x2C);  /* RAMWR */
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=0x80100DB0;
+}
+
 static void comp_init(void) {
     volatile uint32_t*c=(volatile uint32_t*)COMP;
-    c[0x200/4]&=~1; c[0x004/4]=1; c[0x020/4]=1;
+    c[0x200/4]&=~1;c[0x004/4]=1;c[0x020/4]=1;
     for(int i=0;i<256;i++){c[0x400/4+i]=i*4;c[0x800/4+i]=i*4;c[0xC00/4+i]=i*4;}
     {volatile uint32_t*s=(volatile uint32_t*)0x0890D2DC;
      uint32_t t[5];for(int i=0;i<5;i++)t[i]=s[i];
@@ -44,105 +77,203 @@ static void comp_init(void) {
     {uint32_t v=c[0x008/4];v|=0x100;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
-    c[0x200/4]|=0x10080; c[0x204/4]=2; c[0x208/4]=0; c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;
-    c[0x214/4]=0x00EF013F;
-    c[0x024/4]=0x00FFFFFF;
+    c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
+    c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
+}
+
+static void comp_retrigger(void)
+{
+    CR(0x000)=0;
+    {volatile int d=0;while(d++<50000);}
+    CR(0x000)=1;
+    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
 }
 
 enum plugin_status plugin_start(const void *parameter)
 {
     const char*path=parameter?(const char*)parameter:"/test_iframe.264";
     if(!*path)return PLUGIN_ERROR;
-    rb->cpu_boost(true); rb->audio_stop();
+    rb->cpu_boost(true);rb->audio_stop();
 
+    log_fd=rb->open("/vpu_vpp_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
+    int panel_type = (PDAT(6)&0x30)>>4;
+    vlog("=== VPP DCS Test v8 ===");
+    vlog("Panel type: %d",panel_type);
+    vlog("LCD_CON: 0x%08lx",(unsigned long)LCD_CON);
+
+    /* === PHASE 1: Verify DCS firmware display works === */
+    vlog("Phase 1: Rockbox display test");
+    rb->lcd_set_foreground(LCD_RGBPACK(255,0,0));
+    rb->lcd_fillrect(0,0,106,240);
+    rb->lcd_set_foreground(LCD_RGBPACK(0,255,0));
+    rb->lcd_fillrect(106,0,108,240);
+    rb->lcd_set_foreground(LCD_RGBPACK(0,0,255));
+    rb->lcd_fillrect(214,0,106,240);
+    rb->lcd_set_foreground(LCD_WHITE);
+    rb->lcd_putsxy(10,10,"DCS firmware OK?");
+    rb->lcd_putsxy(10,25,"MENU=compositor test");
+    rb->lcd_putsxy(10,40,"SELECT=exit");
+    rb->lcd_putsxy(10,55,"(R/G/B bars visible = DCS works)");
+    rb->lcd_update();
+    vlog("  RGB bars displayed via lcd_update");
+
+    int btn;
+    while(1) {
+        btn=rb->button_get(true);
+        if(btn==BUTTON_MENU) break;
+        if(btn==BUTTON_SELECT) {
+            rb->close(log_fd);rb->cpu_boost(false);
+            return PLUGIN_OK;
+        }
+        rb->backlight_on();
+    }
+
+    /* === PHASE 2: Decode H.264 === */
+    vlog("Phase 2: Decode + compositor");
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
     size_t ds=vpu_h264_buf_size(640,480);
     struct vpu_h264*dec=vpu_h264_open(ab,ds,640,480);
-    if(!dec)return PLUGIN_ERROR;
+    if(!dec){vlog("ERROR: vpu_h264_open");rb->close(log_fd);return PLUGIN_ERROR;}
     uint8_t*fb=ab+ds;
-    int fd=rb->open(path,O_RDONLY);if(fd<0)return PLUGIN_ERROR;
+    int fd=rb->open(path,O_RDONLY);
+    if(fd<0){vlog("ERROR: open %s",path);rb->close(log_fd);return PLUGIN_ERROR;}
     int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
+    vlog("  Read %d bytes from %s",fl,path);
 
     int fw=0,fh=0;
     const uint8_t*yo=NULL,*cbo=NULL,*cro=NULL;
-    int pos=0;
+    int pos=0,nalu_count=0;
     while(pos<fl-4){
         int sl,sp=fsc(fb+pos,fl-pos,&sl);if(sp<0)break;
         int ns=pos+sp+sl,nx=fsc(fb+ns,fl-ns,&sl),nl=(nx>=0)?nx:fl-ns;
-        if(vpu_h264_decode_nalu(dec,fb+ns,nl)==1)
+        nalu_count++;
+        int ret=vpu_h264_decode_nalu(dec,fb+ns,nl);
+        vlog("  NALU %d: off=%d len=%d ret=%d",nalu_count,ns,nl,ret);
+        if(ret==1)
             vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
         pos=ns+nl;
     }
-    if(!yo){vpu_h264_close(dec);return PLUGIN_ERROR;}
+    if(!yo){vlog("ERROR: no decoded frame");vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
+    vlog("  Frame: %dx%d Y=0x%08lx Cb=0x%08lx Cr=0x%08lx",
+         fw,fh,(unsigned long)yo,(unsigned long)cbo,(unsigned long)cro);
 
+    /* Save LCD state */
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
+    vlog("  Saved LCD: CON=0x%08lx 70=0x%08lx 74=0x%08lx 78=0x%08lx 7C=0x%08lx 88=0x%08lx",
+         (unsigned long)sc,(unsigned long)LR(0x70),(unsigned long)s4,
+         (unsigned long)s5,(unsigned long)s7,(unsigned long)s8);
 
+    /* Enable compositor clock */
     PWRCON(0)&=~0x2080;
     for(volatile int d=0;d<10000;d++);
 
     comp_init();
+    vlog("  Compositor initialized");
 
-    /* Layer 5 — ALL APPLE DEFAULTS (rotation ON, portrait output) */
+    /* Layer 5 — Apple defaults */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
-    CR(0x028)=0x100; CR(0x02C)=fw|((fw/2)<<16);
+    CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
-    CR(0x04C)=0x10001000;
-    CR(0x054)=0x00F00140;
-    CR(0x038)=PH(yo); CR(0x03C)=PH(cro); CR(0x040)=0; CR(0x044)=PH(cbo);
+    CR(0x04C)=0x10001000;CR(0x054)=0x00F00140;
+    CR(0x038)=PH(yo);CR(0x03C)=PH(cro);CR(0x040)=0;CR(0x044)=PH(cbo);
     CR(0x3AC)=0x04004003;  /* rotation ON */
     CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
+    vlog("  Layer 5: Y=0x%08lx Cb=0x%08lx Cr=0x%08lx stride=%d dim=%dx%d",
+         (unsigned long)PH(yo),(unsigned long)PH(cbo),(unsigned long)PH(cro),fw,fw,fh);
 
-    /* LCD passthrough — Apple defaults */
-    LCD_CON=0x80100DB0;  /* P16 for pixel data */
-    LR(0x88)=0x01000000; LR(0x20)=0x33; LR(0x7C)=0x00000402;
-    LR(0x78)=0x000A000A; LR(0x74)=0x00F00140;
+    /* LCD passthrough mode */
+    LCD_CON=0x80100DB0;  /* P16 frame mode */
+    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
+    LR(0x78)=0x000A000A;
 
-    /* Set MADCTL to portrait for compositor (MV=0, no exchange) */
-    /* Compositor outputs 240/scan portrait. Panel in DCS portrait mode
-     * accepts 240 per row via CASET=0-239, PASET=0-319. */
-    {
-        while(!(LCD_STATUS&0x2));
-        LCD_CON = 0x81000C20;  /* P8 DCS command mode */
-        lc(0x36); ld(0x00);    /* MADCTL = portrait (MV=0) for compositor */
-        lc(0x2A);              /* CASET = 0-239 */
-        ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
-        lc(0x2B);              /* PASET = 0-319 */
-        ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
-        lc(0x2C);              /* RAMWR */
-        while(!(LCD_STATUS&0x2));
-        LCD_CON = 0x80100DB0;  /* back to P16 */
+    /* Set LCD+0x74 BEFORE enabling passthrough (it latches at 0x70=1 transition) */
+    LR(0x74)=0x00F00140;
+    vlog("  LCD passthrough registers set");
+
+    /* Set DCS portrait window for compositor (240/scan matches portrait) */
+    dcs_set_madctl(0x00);
+    dcs_set_window(1);  /* portrait: CASET=0-239, PASET=0-319 */
+    vlog("  DCS portrait MADCTL=0x00, window 240x320");
+
+    /* Enable passthrough */
+    LR(0x70)=1;LR(0x80)=0;
+
+    /* Trigger compositor */
+    comp_retrigger();
+    vlog("  Compositor running");
+
+    /* MADCTL cycling table for testing different orientations */
+    static const uint8_t madctl_vals[] = {
+        0x00,  /* portrait: no flags */
+        0x40,  /* portrait: MX (column mirrored) */
+        0x80,  /* portrait: MY (row mirrored) */
+        0xC0,  /* portrait: MY+MX (both mirrored) */
+        0x20,  /* landscape: MV */
+        0x60,  /* landscape: MV+MX */
+        0xA0,  /* landscape: MV+MY */
+        0xE0,  /* landscape: MV+MX+MY */
+    };
+    int madctl_idx = 0;
+    int is_portrait = 1;
+    vlog("  Controls: LEFT/RIGHT=cycle MADCTL, PLAY=toggle port/land, SELECT=exit");
+
+    while(1) {
+        btn=rb->button_get(true);
+        if(btn==BUTTON_SELECT) break;
+
+        if(btn==BUTTON_RIGHT) {
+            madctl_idx = (madctl_idx + 1) % 8;
+            uint8_t m = madctl_vals[madctl_idx];
+            is_portrait = !(m & 0x20);
+            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            dcs_set_madctl(m);
+            dcs_set_window(is_portrait);
+            LR(0x70)=1;LR(0x80)=0;
+            comp_retrigger();
+            vlog("  MADCTL=0x%02x (%s) idx=%d",m,is_portrait?"portrait":"landscape",madctl_idx);
+        }
+        if(btn==BUTTON_LEFT) {
+            madctl_idx = (madctl_idx + 7) % 8;
+            uint8_t m = madctl_vals[madctl_idx];
+            is_portrait = !(m & 0x20);
+            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            dcs_set_madctl(m);
+            dcs_set_window(is_portrait);
+            LR(0x70)=1;LR(0x80)=0;
+            comp_retrigger();
+            vlog("  MADCTL=0x%02x (%s) idx=%d",m,is_portrait?"portrait":"landscape",madctl_idx);
+        }
+        if(btn==BUTTON_PLAY) {
+            /* Re-trigger compositor to refresh display */
+            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            LR(0x70)=1;LR(0x80)=0;
+            comp_retrigger();
+            vlog("  Retrigger");
+        }
+        rb->backlight_on();
     }
 
-    LR(0x70)=1; LR(0x80)=0;
+    /* === SHUTDOWN === */
+    vlog("Shutdown");
+    LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
 
-    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<500000);}
-
-    while(rb->button_get(true)==BUTTON_NONE) rb->backlight_on();
-
-    LR(0x70)=0; LR(0x80)=0; CR(0x000)=0;
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    lc(0x003);ld(0x0230);
-    while(!(LCD_STATUS&0x2)); LCD_CON=sc;
+    /* Restore landscape MADCTL for Rockbox UI */
+    dcs_set_madctl(0x60);
+    /* Restore LCD state */
+    while(!(LCD_STATUS&0x2));
+    LCD_CON=sc;
     LR(0x88)=s8;LR(0x20)=s2;LR(0x7C)=s7;LR(0x74)=s4;LR(0x78)=s5;
     LCD_PHTIME=0x33;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    /* Restore MADCTL to landscape for Rockbox UI */
-    {
-        while(!(LCD_STATUS&0x2));
-        LCD_CON = 0x81000C20;
-        lc(0x36); ld(0x60);  /* MADCTL = landscape (MV+MX) */
-        while(!(LCD_STATUS&0x2));
-        LCD_CON = sc;
-    }
     rb->lcd_update();
 
-    vpu_h264_close(dec); rb->cpu_boost(false);
+    vlog("Done — restored landscape");
+    rb->close(log_fd);
+    vpu_h264_close(dec);rb->cpu_boost(false);
     return PLUGIN_OK;
 }
 #else

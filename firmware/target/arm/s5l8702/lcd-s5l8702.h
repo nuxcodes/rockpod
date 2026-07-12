@@ -74,7 +74,7 @@ struct lcd_info_rec {
 #ifdef HAVE_LCD_SLEEP
     void *seq_awake;
 #endif
-#ifdef BOOTLOADER
+#if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     void *seq_init;
 #endif
 };
