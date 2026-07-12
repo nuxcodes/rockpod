@@ -488,7 +488,6 @@ static void compositor_init(void)
     { uint32_t v = c[0x008/4]; v |= 0x8000; c[0x008/4] = v; }    /* bit 15 */
     { uint32_t v = c[0x008/4]; v &= ~2; c[0x008/4] = v; }       /* clear bit 1 */
     { uint32_t v = c[0x008/4]; v |= 0x100; c[0x008/4] = v; }    /* bit 8 */
-    { uint32_t v = c[0x008/4]; v |= 0x80; c[0x008/4] = v; }     /* bit 7 — REQUIRED for Layer 5 output */
     { uint32_t v = c[0x008/4]; v |= 0x40000000; c[0x008/4] = v; } /* bit 30 */
 
     c[0x200/4] |= 0x10080;
