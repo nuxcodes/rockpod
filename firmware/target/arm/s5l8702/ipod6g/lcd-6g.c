@@ -39,6 +39,7 @@ static const uint8_t lcd_sleep_seq_01[] =
     END
 };
 
+#if 0 /* ILI9326 deep standby — unused, panels are ST7789V DCS */
 static const uint16_t lcd_deepstandby_seq_23[] =
 {
     /* Display Off */
@@ -66,6 +67,7 @@ static const uint16_t lcd_deepstandby_seq_23[] =
 #endif
     END
 };
+#endif /* ILI9326 deep standby */
 #endif /* HAVE_LCD_SLEEP || HAVE_LCD_SHUTDOWN */
 
 #ifdef HAVE_LCD_SLEEP
@@ -85,6 +87,7 @@ static const uint8_t lcd_awake_seq_01[] =
 #if defined(HAVE_LCD_SLEEP) || defined(BOOTLOADER)
 /* init sequences */
 
+#if 0 /* ILI9326 init — unused, type 2/3 now use lcd_init_seq_dcs23 */
 static const uint16_t lcd_init_seq_23[] =
 {
 #ifdef HAVE_LCD_SLEEP
@@ -142,6 +145,7 @@ static const uint16_t lcd_init_seq_23[] =
     MREG16(1),  0x007, 0x0173,
     END
 };
+#endif /* ILI9326 init */
 
 /* DCS init for type 2/3 panels — from Apple ROM table A at 0x9F05CA
  * Panel is ST7789V-family, NOT ILI9326 (Rockbox misidentification).
