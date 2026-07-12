@@ -105,24 +105,26 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)LR(0x78),(unsigned long)LR(0x7C),(unsigned long)LR(0x88));
     vlog("  PWRCON0=0x%08lx",(unsigned long)PWRCON(0));
 
-    /* DCS readback diagnostics — per-command LCD_CON toggle */
+    /* DCS readback diagnostics — per-command LCD_CON toggle with sync */
     {
         /* Read MADCTL (0x0B) */
         while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+        {volatile int d=0;while(d++<100);}
         while(LCD_STATUS&0x10); LCD_WCMD=0x0B;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
         while(!(LCD_STATUS&1));
         uint8_t madctl_rb=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+        while(!(LCD_STATUS&0x2)); {volatile int d=0;while(d++<100);} LCD_CON=0x80100DB0;
         vlog("DCS 0x0B MADCTL readback: 0x%02x (expect 0x60 landscape)",madctl_rb);
 
         /* Read COLMOD (0x0C) */
         while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+        {volatile int d=0;while(d++<100);}
         while(LCD_STATUS&0x10); LCD_WCMD=0x0C;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
         while(!(LCD_STATUS&1));
         uint8_t colmod_rb=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+        while(!(LCD_STATUS&0x2)); {volatile int d=0;while(d++<100);} LCD_CON=0x80100DB0;
         vlog("DCS 0x0C COLMOD readback: 0x%02x (expect 0x05 RGB565)",colmod_rb);
     }
 
