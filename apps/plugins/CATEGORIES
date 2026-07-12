@@ -214,3 +214,4 @@ jpeg_poc,apps
 vpp_test,apps
 vpp_mvp_test,apps
 vpu_vpp_test,apps
+vpp_preshear_test,apps
