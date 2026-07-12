@@ -43,6 +43,7 @@
 #include "mp4_demux.h"
 #include "video_playback.h"
 #include "vpu_h264.h"
+#include "compositor-s5l8702.h"
 #include "core_alloc.h"
 #include "audio.h"
 #include "video_audio.h"
@@ -508,10 +509,20 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                if (ps.osd_visible || ps.vol_show_until)
+                if (ps.osd_visible || ps.vol_show_until) {
+                    if (compositor_is_active())
+                        compositor_stop();
                     scale_and_blit_fb(y, cb, cr, w, h);
-                else
+                } else if (!ps.need_scale && w <= 320 && h <= 240) {
+                    if (!compositor_is_active())
+                        compositor_start(w, h, y, cb, cr);
+                    else
+                        compositor_update(y, cb, cr);
+                } else {
+                    if (compositor_is_active())
+                        compositor_stop();
                     scale_and_blit(y, cb, cr, w, h);
+                }
             }
             return 1;
         }
@@ -537,6 +548,8 @@ static void blit_last_frame(void)
     vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
     if (!y || w == 0 || h == 0) return;
 
+    if (compositor_is_active())
+        compositor_stop();
     scale_and_blit(y, cb, cr, w, h);
 }
 
@@ -1970,6 +1983,7 @@ void video_playback_start(const char *filepath, const char *title)
 
 cleanup:
     cpu_boost(false);
+    if (compositor_is_active()) compositor_stop();
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.vid_fd >= 0) { close(ps.vid_fd); ps.vid_fd = -1; }
