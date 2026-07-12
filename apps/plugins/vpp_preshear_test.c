@@ -140,16 +140,16 @@ enum plugin_status plugin_start(const void *parameter)
     LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;LR(0x74)=0x00F00140;
 
-    /* Entry Mode cycling table — all AM=1 variants */
+    /* Entry Mode cycling — BGR=0 first (matches Rockbox), both I/D increment */
     static const uint16_t em_vals[] = {
+        0x0038,  /* AM=1, I/D=11, BGR=0 (predicted: Rockbox-compatible) */
+        0x0030,  /* AM=1, I/D=10, BGR=0 */
         0x1038,  /* AM=1, I/D=11, BGR=1 */
         0x1030,  /* AM=1, I/D=10, BGR=1 (v131m used this) */
-        0x1028,  /* AM=1, I/D=01, BGR=1 */
-        0x1020,  /* AM=1, I/D=00, BGR=1 */
-        0x0038,  /* AM=1, I/D=11, BGR=0 */
-        0x0030,  /* AM=1, I/D=10, BGR=0 */
         0x0028,  /* AM=1, I/D=01, BGR=0 */
         0x0020,  /* AM=1, I/D=00, BGR=0 */
+        0x1028,  /* AM=1, I/D=01, BGR=1 */
+        0x1020,  /* AM=1, I/D=00, BGR=1 */
     };
     int em_idx = 0;
 
