@@ -162,35 +162,68 @@ enum plugin_status plugin_start(const void *parameter)
         rb->backlight_on();
     }
 
-    /* === PHASE 2: Decode H.264 === */
+    /* === PHASE 2: Get YUV frame (decode or test pattern) === */
     vlog("Phase 2: Decode + compositor");
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
-    size_t ds=vpu_h264_buf_size(640,480);
-    struct vpu_h264*dec=vpu_h264_open(ab,ds,640,480);
-    if(!dec){vlog("ERROR: vpu_h264_open");rb->close(log_fd);return PLUGIN_ERROR;}
-    uint8_t*fb=ab+ds;
-    int fd=rb->open(path,O_RDONLY);
-    if(fd<0){vlog("ERROR: open %s",path);rb->close(log_fd);return PLUGIN_ERROR;}
-    int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
-    vlog("  Read %d bytes from %s",fl,path);
 
     int fw=0,fh=0;
     const uint8_t*yo=NULL,*cbo=NULL,*cro=NULL;
-    int pos=0,nalu_count=0;
-    while(pos<fl-4){
-        int sl,sp=fsc(fb+pos,fl-pos,&sl);if(sp<0)break;
-        int ns=pos+sp+sl,nx=fsc(fb+ns,fl-ns,&sl),nl=(nx>=0)?nx:fl-ns;
-        nalu_count++;
-        int ret=vpu_h264_decode_nalu(dec,fb+ns,nl);
-        vlog("  NALU %d: off=%d len=%d ret=%d",nalu_count,ns,nl,ret);
-        if(ret==1)
-            vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
-        pos=ns+nl;
+    uint8_t *test_y=NULL, *test_cb=NULL, *test_cr=NULL;
+
+    int fd=rb->open(path,O_RDONLY);
+    if(fd>=0) {
+        size_t ds=vpu_h264_buf_size(640,480);
+        struct vpu_h264*dec=vpu_h264_open(ab,ds,640,480);
+        if(!dec){vlog("ERROR: vpu_h264_open");rb->close(fd);rb->close(log_fd);return PLUGIN_ERROR;}
+        uint8_t*fb=ab+ds;
+        int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
+        vlog("  Read %d bytes from %s",fl,path);
+
+        int pos=0,nalu_count=0;
+        while(pos<fl-4){
+            int sl,sp=fsc(fb+pos,fl-pos,&sl);if(sp<0)break;
+            int ns=pos+sp+sl,nx=fsc(fb+ns,fl-ns,&sl),nl=(nx>=0)?nx:fl-ns;
+            nalu_count++;
+            int ret=vpu_h264_decode_nalu(dec,fb+ns,nl);
+            vlog("  NALU %d: off=%d len=%d ret=%d",nalu_count,ns,nl,ret);
+            if(ret==1)
+                vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
+            pos=ns+nl;
+        }
+        if(!yo) vlog("  No decoded frame, using test pattern");
+    } else {
+        vlog("  No %s, using test pattern",path);
     }
-    if(!yo){vlog("ERROR: no decoded frame");vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
-    vlog("  Frame: %dx%d Y=0x%08lx Cb=0x%08lx Cr=0x%08lx",
-         fw,fh,(unsigned long)yo,(unsigned long)cbo,(unsigned long)cro);
+
+    if(!yo) {
+        fw=320; fh=240;
+        test_y  = (uint8_t*)((uintptr_t)ab | 0x40000000);
+        test_cb = test_y + fw*fh;
+        test_cr = test_cb + (fw/2)*(fh/2);
+        /* Red/Green/Blue vertical bars in YCbCr (BT.601) */
+        for(int row=0;row<fh;row++) {
+            for(int col=0;col<fw;col++) {
+                int i = row*fw+col;
+                if(col<fw/3)       test_y[i]=81;   /* red: Y=81 */
+                else if(col<2*fw/3) test_y[i]=145;  /* green: Y=145 */
+                else               test_y[i]=41;    /* blue: Y=41 */
+            }
+        }
+        for(int row=0;row<fh/2;row++) {
+            for(int col=0;col<fw/2;col++) {
+                int i = row*(fw/2)+col;
+                if(col<fw/6)        { test_cb[i]=90;  test_cr[i]=240; }  /* red */
+                else if(col<2*fw/6) { test_cb[i]=54;  test_cr[i]=34;  }  /* green */
+                else                { test_cb[i]=240; test_cr[i]=110; }  /* blue */
+            }
+        }
+        yo=test_y; cbo=test_cb; cro=test_cr;
+        vlog("  Test pattern: %dx%d RGB bars in YCbCr",fw,fh);
+    } else {
+        vlog("  Frame: %dx%d Y=0x%08lx Cb=0x%08lx Cr=0x%08lx",
+             fw,fh,(unsigned long)yo,(unsigned long)cbo,(unsigned long)cro);
+    }
 
     /* Save LCD state */
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
@@ -309,7 +342,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Done — restored landscape");
     rb->close(log_fd);
-    vpu_h264_close(dec);rb->cpu_boost(false);
+    rb->cpu_boost(false);
     return PLUGIN_OK;
 }
 #else
