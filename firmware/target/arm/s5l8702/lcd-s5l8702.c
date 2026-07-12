@@ -262,8 +262,10 @@ static void s5l_lcd_run_seq8_dcs(void *seq8)
             uint8_t cmd = *seq++;
             int len = *seq++;
             s5l_lcd_write_config(0x81000C20);
+            udelay(2);
             s5l_lcd_send_cmd8(cmd, len, seq);
             while (!(LCD_STATUS & 0x2));
+            udelay(2);
             s5l_lcd_write_config(lcd_frame_mode);
             seq += len;
             break;

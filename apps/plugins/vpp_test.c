@@ -38,6 +38,7 @@ static int fsc(const uint8_t*b,int l,int*s){
 static void dcs_cmd(uint8_t cmd, int ndata, ...) {
     while(!(LCD_STATUS&0x2));
     LCD_CON=0x81000C20;
+    {volatile int d=0;while(d++<100);}
     lc(cmd);
     if (ndata > 0) {
         va_list ap; va_start(ap, ndata);
@@ -45,6 +46,7 @@ static void dcs_cmd(uint8_t cmd, int ndata, ...) {
         va_end(ap);
     }
     while(!(LCD_STATUS&0x2));
+    {volatile int d=0;while(d++<100);}
     LCD_CON=0x80100DB0;
 }
 

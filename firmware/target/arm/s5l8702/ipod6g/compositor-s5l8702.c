@@ -45,19 +45,19 @@ static void lcd_wcmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
 static void lcd_wdat(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
 
 static void dcs_cmd1(uint8_t cmd, uint8_t d0) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
     lcd_wcmd(cmd); lcd_wdat(d0);
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
 static void dcs_cmd4(uint8_t cmd, uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
     lcd_wcmd(cmd); lcd_wdat(d0); lcd_wdat(d1); lcd_wdat(d2); lcd_wdat(d3);
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
 static void dcs_cmd0(uint8_t cmd) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
     lcd_wcmd(cmd);
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
 
 static void comp_hw_init(void)
