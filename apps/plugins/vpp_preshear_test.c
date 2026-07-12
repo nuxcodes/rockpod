@@ -159,16 +159,18 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)LCD_CON,(unsigned long)LR(0x74),
          (unsigned long)LR(0x7C),(unsigned long)LR(0x88));
 
-    /* Entry Mode cycling — BGR=0 first (matches Rockbox), both I/D increment */
+    /* Entry Mode cycling — ALL must have AM=1 (bit 3, NOT bit 5!)
+     * Bit layout: bit12=BGR, bit5=I/D1, bit4=I/D0, bit3=AM
+     * Agent verified from 5+ Rockbox ILI932x drivers: HORZ vs VERT = bit 3 only */
     static const uint16_t em_vals[] = {
-        0x0038,  /* AM=1, I/D=11, BGR=0 (predicted: Rockbox-compatible) */
-        0x0030,  /* AM=1, I/D=10, BGR=0 */
+        0x0038,  /* AM=1, I/D=11, BGR=0 */
+        0x0028,  /* AM=1, I/D=10, BGR=0 */
+        0x0018,  /* AM=1, I/D=01, BGR=0 */
+        0x0008,  /* AM=1, I/D=00, BGR=0 */
         0x1038,  /* AM=1, I/D=11, BGR=1 */
-        0x1030,  /* AM=1, I/D=10, BGR=1 (v131m used this) */
-        0x0028,  /* AM=1, I/D=01, BGR=0 */
-        0x0020,  /* AM=1, I/D=00, BGR=0 */
-        0x1028,  /* AM=1, I/D=01, BGR=1 */
-        0x1020,  /* AM=1, I/D=00, BGR=1 */
+        0x1028,  /* AM=1, I/D=10, BGR=1 */
+        0x1018,  /* AM=1, I/D=01, BGR=1 */
+        0x1008,  /* AM=1, I/D=00, BGR=1 */
     };
     int em_idx = 0;
 
