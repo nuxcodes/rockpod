@@ -1,5 +1,6 @@
-/* VPP Pre-Shear Test — works with ORIGINAL ILI9326 firmware (no DCS changes)
- * Uses pre-shear to correct compositor 240/scan → 320-wide GRAM mapping.
+/* VPP ILI9326 Test — works with ORIGINAL ILI9326 firmware (no DCS)
+ * AM=1 mode: 240/scan matches 240 rows/column → zero shearing
+ * Entry Mode cycling to find correct orientation
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -31,42 +32,27 @@ static int fsc(const uint8_t*b,int l,int*s){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
 
-/* ILI9326 register commands (P18 mode) */
 static void ili_cmd(uint16_t c){while(LCD_STATUS&0x10);LCD_WCMD=c;}
 static void ili_data(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
 
-/* Pre-shear: rearrange YUV so compositor's 240/scan output fills 320-wide GRAM correctly.
- *
- * Compositor with rotation ON reads source[g] for output position g.
- * Output position g goes to source[p*W + s] where s=g/240, p=g%240 (rotation transpose).
- * GRAM position g displays at (g%320, g/320).
- * For correct display: source[(g%240)*W + (g/240)] must equal original[g].
- * So: presheared[(g%240)*W + (g/240)] = original[g] for all g in [0, W*H).
- * Proven bijective: if (g1%240)*W+(g1/240) = (g2%240)*W+(g2/240), then g1=g2. */
-static void preshear_y(const uint8_t *src, uint8_t *dst, int w, int h)
+static void ili_set_entry_mode(uint16_t val)
 {
-    int total = w * h;
-    rb->memset(dst, 0, total);
-    for (int g = 0; g < total; g++) {
-        int s = g / 240;   /* scan */
-        int p = g % 240;   /* pixel in scan */
-        int target = p * w + s;
-        if (target < total)
-            dst[target] = src[g];
-    }
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    ili_cmd(0x003);ili_data(val);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
 }
 
-static void preshear_c(const uint8_t *src, uint8_t *dst, int cw, int ch)
+static void ili_set_gram_window(void)
 {
-    int total = cw * ch;
-    rb->memset(dst, 128, total);
-    for (int g = 0; g < total; g++) {
-        int s = g / 120;   /* chroma scan = 240/2 */
-        int p = g % 120;
-        int target = p * cw + s;
-        if (target < total)
-            dst[target] = src[g];
-    }
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    ili_cmd(0x210);ili_data(0);      /* H start = 0 */
+    ili_cmd(0x211);ili_data(319);    /* H end = 319 */
+    ili_cmd(0x212);ili_data(0);      /* V start = 0 */
+    ili_cmd(0x213);ili_data(239);    /* V end = 239 */
+    ili_cmd(0x200);ili_data(0);      /* GRAM x = 0 */
+    ili_cmd(0x201);ili_data(0);      /* GRAM y = 0 */
+    ili_cmd(0x202);                  /* Write to GRAM */
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
 }
 
 static void comp_init(void) {
@@ -91,17 +77,22 @@ static void comp_init(void) {
     c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
 }
 
+static void comp_retrigger(void)
+{
+    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
+    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
+}
+
 enum plugin_status plugin_start(const void *parameter)
 {
     const char*path=parameter?(const char*)parameter:"/test_iframe.264";
     if(!*path)return PLUGIN_ERROR;
     rb->cpu_boost(true);rb->audio_stop();
 
-    log_fd=rb->open("/vpu_vpp_preshear.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== VPP Pre-Shear Test ===");
+    log_fd=rb->open("/vpu_vpp_ili.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
+    vlog("=== VPP ILI9326 AM=1 Test ===");
     vlog("Panel type: %d",(PDAT(6)&0x30)>>4);
 
-    /* Decode H.264 */
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
     size_t ds=vpu_h264_buf_size(640,480);
@@ -125,84 +116,79 @@ enum plugin_status plugin_start(const void *parameter)
     if(!yo){vlog("ERROR: no frame");vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
     vlog("Decoded %dx%d",fw,fh);
 
-    /* Allocate pre-sheared buffers */
-    size_t y_size = fw * fh;
-    size_t c_size = (fw/2) * (fh/2);
-    uint8_t *ps_y  = fb + fl + 1024;  /* some margin */
-    uint8_t *ps_cb = ps_y + y_size;
-    uint8_t *ps_cr = ps_cb + c_size;
-
-    /* Build pre-sheared planes */
-    uint32_t t0 = USEC_TIMER;
-    preshear_y(yo, ps_y, fw, fh);
-    preshear_c(cbo, ps_cb, fw/2, fh/2);
-    preshear_c(cro, ps_cr, fw/2, fh/2);
-    uint32_t t1 = USEC_TIMER;
-    vlog("Pre-shear took %lu us", (unsigned long)(t1-t0));
-    rb->commit_discard_dcache();
-
-    /* Save LCD state */
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
 
-    /* Enable compositor clock */
     PWRCON(0)&=~0x2080;
     for(volatile int d=0;d<10000;d++);
 
     comp_init();
 
-    /* Layer 5 — point to PRE-SHEARED buffers */
+    /* Layer 5 — original YUV planes (no pre-shear needed with AM=1) */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
     CR(0x04C)=0x10001000;CR(0x054)=0x00F00140;
-    CR(0x038)=PH(ps_y);
-    CR(0x03C)=PH(ps_cr);
-    CR(0x040)=0;
-    CR(0x044)=PH(ps_cb);
-    CR(0x3AC)=0x04004003;  /* rotation ON */
+    CR(0x038)=PH(yo);CR(0x03C)=PH(cro);CR(0x040)=0;CR(0x044)=PH(cbo);
+    CR(0x3AC)=0x04004003;
     CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    rb->commit_discard_dcache();
 
-    /* LCD passthrough — ILI9326 P18 mode */
+    /* LCD passthrough */
     LCD_CON=0x80100DB0;
     LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;LR(0x74)=0x00F00140;
 
-    /* Set ILI9326 GRAM window (P18 commands) */
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    ili_cmd(0x003);ili_data(0x1030);  /* Entry Mode: AM=0, I/D=11, landscape */
-    ili_cmd(0x210);ili_data(0);       /* H start = 0 */
-    ili_cmd(0x211);ili_data(319);     /* H end = 319 */
-    ili_cmd(0x212);ili_data(0);       /* V start = 0 */
-    ili_cmd(0x213);ili_data(239);     /* V end = 239 */
-    ili_cmd(0x200);ili_data(0);       /* GRAM x = 0 */
-    ili_cmd(0x201);ili_data(0);       /* GRAM y = 0 */
-    ili_cmd(0x202);                   /* Write to GRAM */
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+    /* Entry Mode cycling table — all AM=1 variants */
+    static const uint16_t em_vals[] = {
+        0x1038,  /* AM=1, I/D=11, BGR=1 */
+        0x1030,  /* AM=1, I/D=10, BGR=1 (v131m used this) */
+        0x1028,  /* AM=1, I/D=01, BGR=1 */
+        0x1020,  /* AM=1, I/D=00, BGR=1 */
+        0x0038,  /* AM=1, I/D=11, BGR=0 */
+        0x0030,  /* AM=1, I/D=10, BGR=0 */
+        0x0028,  /* AM=1, I/D=01, BGR=0 */
+        0x0020,  /* AM=1, I/D=00, BGR=0 */
+    };
+    int em_idx = 0;
 
-    /* Enable passthrough + compositor */
+    ili_set_entry_mode(em_vals[em_idx]);
+    ili_set_gram_window();
+    vlog("Entry Mode: 0x%04x",em_vals[em_idx]);
+
     LR(0x70)=1;LR(0x80)=0;
-    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<500000);}
+    comp_retrigger();
+    vlog("Compositor running. LEFT/RIGHT=cycle Entry Mode, SELECT=exit");
 
-    /* Push multiple frames to ensure GRAM fills */
-    for(int i=0;i<10;i++){
-        {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-        LR(0x80)=1; LCD_CON=0x80000DA9;
-        ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
-        LR(0x80)=0;{int t=500000;while((LR(0x8C)&3)&&--t>0);}
+    int btn;
+    while(1) {
+        btn=rb->button_get(true);
+        if(btn==BUTTON_SELECT) break;
+        if(btn==BUTTON_RIGHT) {
+            em_idx=(em_idx+1)%8;
+            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            ili_set_entry_mode(em_vals[em_idx]);
+            ili_set_gram_window();
+            LR(0x70)=1;LR(0x80)=0;
+            comp_retrigger();
+            vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
+        }
+        if(btn==BUTTON_LEFT) {
+            em_idx=(em_idx+7)%8;
+            LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+            ili_set_entry_mode(em_vals[em_idx]);
+            ili_set_gram_window();
+            LR(0x70)=1;LR(0x80)=0;
+            comp_retrigger();
+            vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
+        }
+        rb->backlight_on();
     }
-    vlog("Compositor running with pre-sheared buffers");
 
-    while(rb->button_get(true)==BUTTON_NONE) rb->backlight_on();
-
-    /* Shutdown */
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-    ili_cmd(0x003);ili_data(0x0230);  /* restore Rockbox Entry Mode */
-    while(!(LCD_STATUS&0x2)); LCD_CON=sc;
+    ili_set_entry_mode(0x0230);
+    while(!(LCD_STATUS&0x2));LCD_CON=sc;
     LR(0x88)=s8;LR(0x20)=s2;LR(0x7C)=s7;LR(0x74)=s4;LR(0x78)=s5;
     LCD_PHTIME=0x33;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
