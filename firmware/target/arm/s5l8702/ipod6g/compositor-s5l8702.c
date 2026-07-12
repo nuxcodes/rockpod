@@ -150,7 +150,7 @@ void compositor_start(int frame_w, int frame_h,
     /* DCS portrait window for compositor */
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x81000C20;
-    lc(0x36); ld(0x00);
+    lc(0x36); ld(0x40);
     lc(0x2A); ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
     lc(0x2B); ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
     lc(0x2C);

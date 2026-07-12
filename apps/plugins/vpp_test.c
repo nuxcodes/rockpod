@@ -222,10 +222,12 @@ enum plugin_status plugin_start(const void *parameter)
     LR(0x74)=0x00F00140;
     vlog("  LCD passthrough registers set");
 
-    /* Set DCS portrait window for compositor (240/scan matches portrait) */
-    dcs_set_madctl(0x00);
+    /* Set DCS portrait window for compositor (240/scan matches portrait).
+     * Start with MADCTL=0x40 (MX): Rockbox landscape uses 0x60 (MV+MX),
+     * portrait = landscape minus MV = 0x40. Apple ROM confirms 0x40 wrapper. */
+    dcs_set_madctl(0x40);
     dcs_set_window(1);  /* portrait: CASET=0-239, PASET=0-319 */
-    vlog("  DCS portrait MADCTL=0x00, window 240x320");
+    vlog("  DCS portrait MADCTL=0x40 (MX), window 240x320");
 
     /* Enable passthrough */
     LR(0x70)=1;LR(0x80)=0;
@@ -234,12 +236,12 @@ enum plugin_status plugin_start(const void *parameter)
     comp_retrigger();
     vlog("  Compositor running");
 
-    /* MADCTL cycling table for testing different orientations */
+    /* MADCTL cycling table — 0x40 first (predicted correct from landscape 0x60) */
     static const uint8_t madctl_vals[] = {
+        0x40,  /* portrait: MX (predicted correct — landscape 0x60 minus MV) */
         0x00,  /* portrait: no flags */
-        0x40,  /* portrait: MX (column mirrored) */
-        0x80,  /* portrait: MY (row mirrored) */
         0xC0,  /* portrait: MY+MX (both mirrored) */
+        0x80,  /* portrait: MY (row mirrored) */
         0x20,  /* landscape: MV */
         0x60,  /* landscape: MV+MX */
         0xA0,  /* landscape: MV+MY */
