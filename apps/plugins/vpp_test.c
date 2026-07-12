@@ -252,7 +252,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* LCD passthrough mode */
     LCD_CON=0x80100DB0;  /* P16 frame mode */
-    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
+    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000401;
     LR(0x78)=0x000A000A;
 
     /* Set LCD+0x74 BEFORE enabling passthrough (it latches at 0x70=1 transition) */
