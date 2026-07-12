@@ -629,7 +629,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16);
     COMP_REG(0x04C) = 0x10001000;  /* Scaler step 1.0/1.0 — CSC-enabled path uses hardcoded 320,240 */
     COMP_REG(0x050) = 0;
-    COMP_REG(0x054) = 0x014000F0;  /* landscape: (320<<16)|240 */
+    COMP_REG(0x054) = 0x00F00140;  /* output: 240 per scan, 320 scans (Apple ROM) */
 
     COMP_REG(0x038) = PHYS(y_out);
     COMP_REG(0x03C) = PHYS(cr_out);
@@ -709,7 +709,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Passthrough registers — LANDSCAPE for ILI9326 */
     LCD_REG(0x78) = 0x000A000A;
-    LCD_REG(0x74) = 0x014000F0;  /* per_scan=320, num_scans=240 */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
 
     /* Prime panel for DCS mode: send ILI9326 "interface control" via P18
      * to enable the DCS command decoder alongside ILI9326 registers.
@@ -809,7 +809,7 @@ enum plugin_status plugin_start(const void *parameter)
         LCD_REG(0x20) = 0x33;
         LCD_REG(0x7C) = 0x00000402;
         LCD_REG(0x78) = 0x000A000A;
-        LCD_REG(0x74) = 0x014000F0;
+        LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
         lcd_set_con(0x80000DA9);
         lcd_cmd(0x003); lcd_data(0x1238);
         lcd_cmd(0x210); lcd_data(0);
@@ -836,13 +836,13 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x80) = 0;
     COMP_REG(0x3AC) = 0;
     COMP_REG(0x214) = 0x013F00EF;
-    COMP_REG(0x054) = 0x014000F0;  /* ALSO swap output dims */
-    LCD_REG(0x74) = 0x014000F0;
+    COMP_REG(0x054) = 0x00F00140;  /* output: 240/scan, 320 scans (Apple ROM) */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     LCD_REG(0x80) = 0;
     COMP_REG(0x3AC) = 0;            /* rotation OFF */
-    LCD_REG(0x74) = 0x014000F0;     /* per_scan=320, num_scans=240 */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */     /* per_scan=320, num_scans=240 */
     {
         LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
@@ -879,7 +879,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0;  /* rotation OFF */
-    COMP_REG(0x054) = 0x014000F0;
+    COMP_REG(0x054) = 0x00F00140;
     COMP_REG(0x214) = 0x013F00EF;
     LCD_REG(0x74) = 0x00A00078;  /* (160<<16)|120 = half of 320×240 */
     {
@@ -947,7 +947,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0x04004003;
-    LCD_REG(0x74) = 0x014000F0;
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
     {
         LCD_REG(0x80) = 1;
         LCD_CON = 0x80000DA9;
@@ -973,7 +973,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x80) = 0;
     COMP_REG(0x3AC) = 0;       /* rotation OFF */
     LCD_REG(0x78) = 0;          /* NO porch gaps */
-    LCD_REG(0x74) = 0x014000F0; /* (320<<16)|240 = 320/scan */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */ /* (320<<16)|240 = 320/scan */
     /* Re-setup GRAM and re-enable */
     {
         LCD_REG(0x80) = 1;
@@ -1003,8 +1003,8 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("TEST0b: rotation OFF + porch=0 + comp054=0x014000F0");
     COMP_REG(0x000) = 0;
     LCD_REG(0x70) = 0;
-    COMP_REG(0x054) = 0x014000F0;  /* swap: fast=240, slow=320 */
-    LCD_REG(0x74) = 0x014000F0;
+    COMP_REG(0x054) = 0x00F00140;  /* swap: fast=240, slow=320 */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
     LCD_REG(0x78) = 0;
     {
         LCD_REG(0x80) = 1;
@@ -1041,8 +1041,8 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0x04004003;  /* rotation ON */
     COMP_REG(0x04C) = 0x0C001555;  /* scale 240→320 per scan, 320→240 scans */
-    COMP_REG(0x054) = 0x014000F0;  /* output: fast=240(per-scan), slow=320 → BUT scaler makes output 320×240 */
-    LCD_REG(0x74) = 0x014000F0;
+    COMP_REG(0x054) = 0x00F00140;  /* output: fast=240(per-scan), slow=320 → BUT scaler makes output 320×240 */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
     LCD_REG(0x78) = 0x000A000A;    /* restore porch */
     {
         LCD_REG(0x80) = 1;
@@ -1073,10 +1073,10 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_REG(0x70) = 0;
     COMP_REG(0x3AC) = 0;  /* rotation OFF */
     COMP_REG(0x04C) = 0x10001000;
-    COMP_REG(0x054) = 0x014000F0;  /* landscape: (320<<16)|240 */
+    COMP_REG(0x054) = 0x00F00140;  /* output: 240 per scan, 320 scans (Apple ROM) */
     COMP_REG(0x214) = 0x013F00EF;  /* landscape viewport */
     LCD_REG(0x78) = 0x000A000A;
-    LCD_REG(0x74) = 0x014000F0;  /* landscape per-scan */
+    LCD_REG(0x74) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */  /* landscape per-scan */
 
     /* ---- TEST 0d: SWAP comp+0x214 (the SIMPLEST fix) ---- */
     /* comp+0x214 = 0x00EF013F = (239<<16)|319. Upper+1=240=per-scan!
