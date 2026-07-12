@@ -126,6 +126,8 @@ enum plugin_status plugin_start(const void *parameter)
         uint8_t colmod_rb=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
         while(!(LCD_STATUS&0x2)); {volatile int d=0;while(d++<100);} LCD_CON=0x80100DB0;
         vlog("DCS 0x0C COLMOD readback: 0x%02x (expect 0x05 RGB565)",colmod_rb);
+        if (madctl_rb == 0 && colmod_rb == 0)
+            vlog("  NOTE: readback may be zero on type 2/3 (read bus D[8:1] vs write D[17:10])");
     }
 
     /* === PHASE 1: Verify DCS firmware display works === */
