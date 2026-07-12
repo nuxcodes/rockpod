@@ -41,8 +41,24 @@ static uint32_t saved_lcd_20;
 static uint32_t saved_lcd_74;
 static uint32_t saved_lcd_78;
 
-static void lc(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
-static void ld(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
+static void lcd_wcmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
+static void lcd_wdat(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
+
+static void dcs_cmd1(uint8_t cmd, uint8_t d0) {
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    lcd_wcmd(cmd); lcd_wdat(d0);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+}
+static void dcs_cmd4(uint8_t cmd, uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3) {
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    lcd_wcmd(cmd); lcd_wdat(d0); lcd_wdat(d1); lcd_wdat(d2); lcd_wdat(d3);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+}
+static void dcs_cmd0(uint8_t cmd) {
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+    lcd_wcmd(cmd);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
+}
 
 static void comp_hw_init(void)
 {
@@ -149,15 +165,11 @@ void compositor_start(int frame_w, int frame_h,
     LR(0x78) = 0x000A000A;
     LR(0x74) = 0x00F00140;
 
-    /* DCS portrait window for compositor */
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81000C20;
-    lc(0x36); ld(0x40);
-    lc(0x2A); ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
-    lc(0x2B); ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
-    lc(0x2C);
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80100DB0;
+    /* DCS portrait window — per-command LCD_CON toggle (Apple pattern) */
+    dcs_cmd1(0x36, 0x40);
+    dcs_cmd4(0x2A, 0x00, 0x00, 0x00, 0xEF);
+    dcs_cmd4(0x2B, 0x00, 0x00, 0x01, 0x3F);
+    dcs_cmd0(0x2C);
 
     /* Enable passthrough */
     LR(0x70) = 1;
@@ -186,13 +198,9 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
      * Compositor runs continuously (GO stays 1) — no retrigger needed. */
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
     LR(0x80) = 1;
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81000C20;
-    lc(0x2A); ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
-    lc(0x2B); ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
-    lc(0x2C);
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80100DB0;
+    dcs_cmd4(0x2A, 0x00, 0x00, 0x00, 0xEF);
+    dcs_cmd4(0x2B, 0x00, 0x00, 0x01, 0x3F);
+    dcs_cmd0(0x2C);
     LR(0x80) = 0;
 }
 
@@ -206,10 +214,7 @@ void compositor_stop(void)
     CR(0x000) = 0;
 
     /* Restore MADCTL to landscape */
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81000C20;
-    lc(0x36); ld(0x60);
-    while (!(LCD_STATUS & 0x2));
+    dcs_cmd1(0x36, 0x60);
 
     LCD_CON = saved_lcd_con;
     LR(0x88) = saved_lcd_88;
