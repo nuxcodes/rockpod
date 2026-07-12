@@ -104,6 +104,8 @@ void compositor_start(int frame_w, int frame_h,
 {
     if (comp_active)
         return;
+    if (frame_w != 320 || frame_h != 240)
+        return;
 
     lcd_set_inhibit(true);
 
