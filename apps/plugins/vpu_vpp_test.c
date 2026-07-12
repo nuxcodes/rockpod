@@ -937,7 +937,7 @@ enum plugin_status plugin_start(const void *parameter)
     COMP_REG(0x034) = frame_h | ((uint32_t)frame_w << 16);
     COMP_REG(0x04C) = 0x10001000;
     COMP_REG(0x050) = 0;
-    COMP_REG(0x054) = out_h | ((uint32_t)out_w << 16);
+    COMP_REG(0x054) = 0x00F00140;  /* per_scan=240, num_scans=320 (Apple ROM) */
 
     /* v47: Initialize scaler coefficient tables.
      * comp+0x0F0-0x17C (9x4=36 dwords): vertical 4-tap polyphase filter
