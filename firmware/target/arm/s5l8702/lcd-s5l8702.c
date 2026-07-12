@@ -248,6 +248,35 @@ static void s5l_lcd_recv_cmd8(uint8_t cmd, int len, uint8_t *buf)
 #define s5l_lcd_set_command_mode()  s5l_lcd_write_config(lcd_cmd_mode)
 #define s5l_lcd_set_frame_mode()    s5l_lcd_write_config(lcd_frame_mode)
 
+/* DCS sequence runner for PAR18 type 2/3 panels via P8 bit24.
+ * Apple enters/exits command mode for EACH command (ROM 0x0B0BFC-0x0B0C38).
+ * Without per-command LCD_CON toggle, commands are dropped by the FIFO. */
+static void s5l_lcd_run_seq8_dcs(void *seq8)
+{
+    uint8_t *seq = seq8;
+
+    while (1) switch (*seq++)
+    {
+        case CMD:
+        {
+            uint8_t cmd = *seq++;
+            int len = *seq++;
+            s5l_lcd_write_config(0x81000C20);
+            s5l_lcd_send_cmd8(cmd, len, seq);
+            while (!(LCD_STATUS & 0x2));
+            s5l_lcd_write_config(lcd_frame_mode);
+            seq += len;
+            break;
+        }
+        case SLEEP:
+            sleep(*seq++);
+            break;
+        case END:
+        default:
+            return;
+    }
+}
+
 
 static void s5l_lcd_run_seq8(void *seq8)
 {
@@ -512,10 +541,7 @@ static void lcd_powersave(void)
     displaylcd_wait_dma();
     s5l_lcd_set_command_mode();
     if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-        s5l_lcd_write_config(0x81000C20);
-        udelay(100);
-        s5l_lcd_run_seq8(lcd_info->seq_sleep);
-        s5l_lcd_set_command_mode();
+        s5l_lcd_run_seq8_dcs(lcd_info->seq_sleep);
     } else {
         lcd_run_seq(lcd_info->seq_sleep);
     }
@@ -549,10 +575,7 @@ void lcd_awake(void)
     lcd_target_enable_clocks(true);
     s5l_lcd_set_command_mode();
     if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-        s5l_lcd_write_config(0x81000C20);
-        udelay(100);
-        s5l_lcd_run_seq8(lcd_info->seq_awake);
-        s5l_lcd_set_command_mode();
+        s5l_lcd_run_seq8_dcs(lcd_info->seq_awake);
     } else {
         lcd_run_seq(lcd_info->seq_awake);
     }
@@ -631,12 +654,10 @@ void lcd_init_device(void)
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
         if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-            /* Type 2/3: DCS init via P8 bit24 BEFORE setting P18 command mode.
-             * LCD_CON is still P16 from bootloader's last lcd_update.
-             * P16→P8b24 is proven (compositor does it). P18→P8b24 hangs. */
-            s5l_lcd_write_config(0x81000C20);
-            udelay(100);
-            s5l_lcd_run_seq8(lcd_info->seq_init);
+            /* Type 2/3 DCS init: toggle LCD_CON per command (Apple pattern).
+             * LCD_CON is P16 from bootloader. Each DCS command switches to
+             * P8 bit24, sends cmd+data, waits for completion, restores P16. */
+            s5l_lcd_run_seq8_dcs(lcd_info->seq_init);
             { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
         } else {
             lcd_run_seq(lcd_info->seq_init);

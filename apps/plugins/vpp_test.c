@@ -34,29 +34,32 @@ static int fsc(const uint8_t*b,int l,int*s){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
 
-static void dcs_set_madctl(uint8_t val)
-{
+/* Send one DCS command with per-command LCD_CON toggle (Apple pattern) */
+static void dcs_cmd(uint8_t cmd, int ndata, ...) {
     while(!(LCD_STATUS&0x2));
     LCD_CON=0x81000C20;
-    lc(0x36);ld(val);
+    lc(cmd);
+    if (ndata > 0) {
+        va_list ap; va_start(ap, ndata);
+        for (int i = 0; i < ndata; i++) ld((uint16_t)va_arg(ap, int));
+        va_end(ap);
+    }
     while(!(LCD_STATUS&0x2));
     LCD_CON=0x80100DB0;
 }
 
+static void dcs_set_madctl(uint8_t val) { dcs_cmd(0x36, 1, val); }
+
 static void dcs_set_window(int portrait)
 {
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x81000C20;
     if (portrait) {
-        lc(0x2A);ld(0x00);ld(0x00);ld(0x00);ld(0xEF);  /* CASET=0-239 */
-        lc(0x2B);ld(0x00);ld(0x00);ld(0x01);ld(0x3F);  /* PASET=0-319 */
+        dcs_cmd(0x2A, 4, 0x00, 0x00, 0x00, 0xEF);
+        dcs_cmd(0x2B, 4, 0x00, 0x00, 0x01, 0x3F);
     } else {
-        lc(0x2A);ld(0x00);ld(0x00);ld(0x01);ld(0x3F);  /* CASET=0-319 */
-        lc(0x2B);ld(0x00);ld(0x00);ld(0x00);ld(0xEF);  /* PASET=0-239 */
+        dcs_cmd(0x2A, 4, 0x00, 0x00, 0x01, 0x3F);
+        dcs_cmd(0x2B, 4, 0x00, 0x00, 0x00, 0xEF);
     }
-    lc(0x2C);  /* RAMWR */
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x80100DB0;
+    dcs_cmd(0x2C, 0);
 }
 
 static void comp_init(void) {
