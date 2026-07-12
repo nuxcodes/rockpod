@@ -611,10 +611,8 @@ void lcd_init_device(void)
     dmac_ch_init(&lcd_dma_ch, &lcd_dma_ch_cfg);
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-    if (lcd_info->seq_init) {
-        s5l_lcd_set_command_mode();
+    if (lcd_info->seq_init)
         lcd_run_seq(lcd_info->seq_init);
-    }
 #endif
 
     lcd_ispowered = true;
