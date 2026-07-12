@@ -77,6 +77,7 @@ bool dbg_hw_info(void)
             _DEBUG_PRINTF("current_tick: %d", (unsigned int)current_tick);
             line++;
             _DEBUG_PRINTF("LCD type: %d", lcd_type);
+            _DEBUG_PRINTF("LCD_CON: 0x%08lx", (unsigned long)LCD_CON);
             line++;
             _DEBUG_PRINTF("capture HW type: %d", rec_hw_ver);
             line++;
