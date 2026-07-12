@@ -97,9 +97,15 @@ enum plugin_status plugin_start(const void *parameter)
 
     log_fd=rb->open("/vpu_vpp_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
     int panel_type = (PDAT(6)&0x30)>>4;
-    vlog("=== VPP DCS Test v9 ===");
+    vlog("=== VPP DCS Test v10 ===");
     vlog("Panel type: %d",panel_type);
-    vlog("LCD_CON: 0x%08lx",(unsigned long)LCD_CON);
+    vlog("LCD state at plugin start:");
+    vlog("  CON=0x%08lx STATUS=0x%08lx PHTIME=0x%08lx",
+         (unsigned long)LCD_CON,(unsigned long)LCD_STATUS,(unsigned long)LCD_PHTIME);
+    vlog("  +20=0x%08lx +70=0x%08lx +74=0x%08lx +78=0x%08lx +7C=0x%08lx +88=0x%08lx",
+         (unsigned long)LR(0x20),(unsigned long)LR(0x70),(unsigned long)LR(0x74),
+         (unsigned long)LR(0x78),(unsigned long)LR(0x7C),(unsigned long)LR(0x88));
+    vlog("  PWRCON0=0x%08lx",(unsigned long)PWRCON(0));
 
     /* DCS readback diagnostics */
     {
