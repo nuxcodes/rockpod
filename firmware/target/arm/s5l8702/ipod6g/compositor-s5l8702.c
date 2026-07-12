@@ -171,14 +171,15 @@ void compositor_start(int frame_w, int frame_h,
     dcs_cmd4(0x2B, 0x00, 0x00, 0x01, 0x3F);
     dcs_cmd0(0x2C);
 
-    /* Enable passthrough */
-    LR(0x70) = 1;
-    LR(0x80) = 0;
-
-    /* Trigger compositor */
+    /* Apple's order: start compositor BEFORE enabling passthrough */
     CR(0x000) = 0;
     { volatile int d = 0; while (d++ < 50000); }
     CR(0x000) = 1;
+    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
+
+    /* Enable passthrough AFTER compositor is running */
+    LR(0x70) = 1;
+    LR(0x80) = 0;
 
     comp_active = true;
 }

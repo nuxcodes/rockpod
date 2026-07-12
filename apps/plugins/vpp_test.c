@@ -268,13 +268,13 @@ enum plugin_status plugin_start(const void *parameter)
     dcs_set_window(1);  /* portrait: CASET=0-239, PASET=0-319 */
     vlog("  DCS portrait MADCTL=0x40 (MX), window 240x320");
 
-    /* Enable passthrough */
-    LR(0x70)=1;LR(0x80)=0;
-
-    /* Start compositor (GO 0→1, stays 1 forever — Apple's continuous mode) */
+    /* Start compositor BEFORE passthrough (Apple's order: GO first, then LCD+0x70=1) */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
     CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
-    vlog("  Compositor running (continuous GO)");
+
+    /* Enable passthrough AFTER compositor is running */
+    LR(0x70)=1;LR(0x80)=0;
+    vlog("  Compositor GO=1, passthrough enabled (Apple order)");
 
     /* MADCTL cycling table — 0x40 first (predicted correct from landscape 0x60) */
     static const uint8_t madctl_vals[] = {

@@ -176,10 +176,11 @@ enum plugin_status plugin_start(const void *parameter)
     ili_set_gram_window();
     vlog("Entry Mode: 0x%04x",em_vals[em_idx]);
 
-    LR(0x70)=1;LR(0x80)=0;
+    /* Apple's order: GO first, then passthrough enable */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;
-    vlog("Compositor running. LEFT/RIGHT=cycle Entry Mode, SELECT=exit");
+    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
+    LR(0x70)=1;LR(0x80)=0;
+    vlog("Compositor GO=1, passthrough on. LEFT/RIGHT=cycle, SELECT=exit");
 
     int btn;
     while(1) {
