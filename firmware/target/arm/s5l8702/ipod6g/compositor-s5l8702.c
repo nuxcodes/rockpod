@@ -176,14 +176,24 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     if (!comp_active)
         return;
 
+    /* Update plane addresses */
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
     commit_discard_dcache();
 
-    CR(0x000) = 0;
-    { volatile int d = 0; while (d++ < 10000); }
-    CR(0x000) = 1;
+    /* Apple's per-frame sequence: pause LCD bus, reset GRAM position, resume.
+     * Compositor runs continuously (GO stays 1) — no retrigger needed. */
+    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+    LR(0x80) = 1;
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81000C20;
+    lc(0x2A); ld(0x00); ld(0x00); ld(0x00); ld(0xEF);
+    lc(0x2B); ld(0x00); ld(0x00); ld(0x01); ld(0x3F);
+    lc(0x2C);
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80100DB0;
+    LR(0x80) = 0;
 }
 
 void compositor_stop(void)
