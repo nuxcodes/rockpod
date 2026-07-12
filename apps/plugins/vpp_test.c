@@ -81,13 +81,6 @@ static void comp_init(void) {
     c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
 }
 
-static void comp_retrigger(void)
-{
-    CR(0x000)=0;
-    {volatile int d=0;while(d++<50000);}
-    CR(0x000)=1;
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
-}
 
 enum plugin_status plugin_start(const void *parameter)
 {
@@ -274,9 +267,10 @@ enum plugin_status plugin_start(const void *parameter)
     /* Enable passthrough */
     LR(0x70)=1;LR(0x80)=0;
 
-    /* Trigger compositor */
-    comp_retrigger();
-    vlog("  Compositor running");
+    /* Start compositor (GO 0→1, stays 1 forever — Apple's continuous mode) */
+    CR(0x000)=0;{volatile int d=0;while(d++<50000);}
+    CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
+    vlog("  Compositor running (continuous GO)");
 
     /* MADCTL cycling table — 0x40 first (predicted correct from landscape 0x60) */
     static const uint8_t madctl_vals[] = {
