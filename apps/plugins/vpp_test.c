@@ -106,7 +106,6 @@ enum plugin_status plugin_start(const void *parameter)
     /* Compositor outputs 240/scan portrait. Panel in DCS portrait mode
      * accepts 240 per row via CASET=0-239, PASET=0-319. */
     {
-        uint32_t saved_con = LCD_CON;
         while(!(LCD_STATUS&0x2));
         LCD_CON = 0x81000C20;  /* P8 DCS command mode */
         lc(0x36); ld(0x00);    /* MADCTL = portrait (MV=0) for compositor */
