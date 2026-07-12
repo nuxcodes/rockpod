@@ -541,10 +541,13 @@ static void lcd_powersave(void)
     mutex_lock(&lcd_mutex);
 
     displaylcd_wait_dma();
-    s5l_lcd_set_command_mode();
     if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
+        *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
+        *(volatile uint32_t*)(LCD_BASE + 0x20) = 0x33;
+        *(volatile uint32_t*)(LCD_BASE + 0x7C) = 0x00000402;
         s5l_lcd_run_seq8_dcs(lcd_info->seq_sleep);
     } else {
+        s5l_lcd_set_command_mode();
         lcd_run_seq(lcd_info->seq_sleep);
     }
 
@@ -575,13 +578,13 @@ void lcd_awake(void)
     mutex_lock(&lcd_mutex);
 
     lcd_target_enable_clocks(true);
-    s5l_lcd_set_command_mode();
     if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
         *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
         *(volatile uint32_t*)(LCD_BASE + 0x20) = 0x33;
         *(volatile uint32_t*)(LCD_BASE + 0x7C) = 0x00000402;
         s5l_lcd_run_seq8_dcs(lcd_info->seq_awake);
     } else {
+        s5l_lcd_set_command_mode();
         lcd_run_seq(lcd_info->seq_awake);
     }
     lcd_ispowered = true;       // XXX: we have to put the lcd_ispowered before the lcd_update()

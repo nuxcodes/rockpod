@@ -223,7 +223,6 @@ void compositor_stop(void)
     LR(0x7C) = saved_lcd_7c;
     LR(0x74) = saved_lcd_74;
     LR(0x78) = saved_lcd_78;
-    LCD_PHTIME = 0x33;
 
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
