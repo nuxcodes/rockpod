@@ -22,6 +22,7 @@
 #define __LCD_S5L8702_H__
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "config.h"
 #include "lcd-target.h"
@@ -80,6 +81,7 @@ struct lcd_info_rec {
 };
 
 void lcd_awake(void);
+void lcd_set_inhibit(bool inhibit);
 
 #ifdef S5L_LCD_WITH_READID
 void lcd_read_display_id(int mupiface, uint8_t *lcd_id);

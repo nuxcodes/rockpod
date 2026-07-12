@@ -105,6 +105,8 @@ void compositor_start(int frame_w, int frame_h,
     if (comp_active)
         return;
 
+    lcd_set_inhibit(true);
+
     saved_lcd_con = LCD_CON;
     saved_lcd_7c = LR(0x7C);
     saved_lcd_88 = LR(0x88);
@@ -203,6 +205,8 @@ void compositor_stop(void)
     LCD_PHTIME = 0x33;
 
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
+    lcd_set_inhibit(false);
     lcd_update();
 
     comp_active = false;

@@ -497,6 +497,13 @@ bool lcd_active(void)
 }
 #endif
 
+void lcd_set_inhibit(bool inhibit)
+{
+    mutex_lock(&lcd_mutex);
+    lcd_ispowered = !inhibit;
+    mutex_unlock(&lcd_mutex);
+}
+
 #if defined(HAVE_LCD_SHUTDOWN) || defined(HAVE_LCD_SLEEP)
 static void lcd_powersave(void)
 {
