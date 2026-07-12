@@ -149,7 +149,7 @@ static const uint8_t lcd_init_seq_0[] =
     CMD,   0x11,  0,        /* Sleep Out */
     SLEEP, 3,               /* 30 ms */
     CMD,   0x35,  1, 0x00,  /* Tearing Effect Line On */
-    CMD,   0x3a,  1, 0x06,  /* Pixel Format Set */
+    CMD,   0x3a,  1, 0x05,  /* Pixel Format Set — RGB565 (16-bit) for P16 DMA */
     CMD,   0x36,  1, 0x00,  /* Memory Access Control */
 
     CMD,   0x13,  0,        /* Normal Mode On */
