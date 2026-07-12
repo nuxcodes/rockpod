@@ -103,32 +103,25 @@ enum plugin_status plugin_start(const void *parameter)
          (unsigned long)LR(0x78),(unsigned long)LR(0x7C),(unsigned long)LR(0x88));
     vlog("  PWRCON0=0x%08lx",(unsigned long)PWRCON(0));
 
-    /* DCS readback diagnostics */
+    /* DCS readback diagnostics — per-command LCD_CON toggle */
     {
-        while(!(LCD_STATUS&0x2));
-        LCD_CON=0x81000C20;
-        /* Read Display Status (0x09) — 4 bytes */
-        while(LCD_STATUS&0x10); LCD_WCMD=0x09;
-        uint8_t status[4];
-        for(int i=0;i<4;i++){
-            while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
-            while(!(LCD_STATUS&1)); status[i]=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
-        }
-        vlog("DCS 0x09 status: %02x %02x %02x %02x",status[0],status[1],status[2],status[3]);
-        /* Read MADCTL (0x0B) — 1 byte */
+        /* Read MADCTL (0x0B) */
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
         while(LCD_STATUS&0x10); LCD_WCMD=0x0B;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
         while(!(LCD_STATUS&1));
         uint8_t madctl_rb=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
         vlog("DCS 0x0B MADCTL readback: 0x%02x (expect 0x60 landscape)",madctl_rb);
-        /* Read COLMOD (0x0C) — 1 byte */
+
+        /* Read COLMOD (0x0C) */
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
         while(LCD_STATUS&0x10); LCD_WCMD=0x0C;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
         while(!(LCD_STATUS&1));
         uint8_t colmod_rb=(uint8_t)(*(volatile uint32_t*)(LCD_BASE+0x14)>>1);
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
         vlog("DCS 0x0C COLMOD readback: 0x%02x (expect 0x05 RGB565)",colmod_rb);
-        while(!(LCD_STATUS&0x2));
-        LCD_CON=0x80100DB0;
     }
 
     /* === PHASE 1: Verify DCS firmware display works === */
