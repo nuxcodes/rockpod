@@ -625,31 +625,26 @@ void lcd_init_device(void)
     else /* LCD_MPUIFACE_SERIAL */
         lcd_frame_mode = LCD_MODE_S9;
 
-    s5l_lcd_set_command_mode();
-
     /* Configure DMA channel */
     dmac_ch_init(&lcd_dma_ch, &lcd_dma_ch_cfg);
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
         if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-            /* Type 2/3: DCS init via temporary P8 bit24 mode switch.
-             * Normal UI uses ILI9326/P18 — only the DCS init needs P8 bit24.
-             * Reset LCD controller (LCD_CON=0) to clear FIFO before switch. */
-            { int t = 100000; while ((LCD_STATUS & 0x10) && --t > 0); }
-            { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
-            LCD_CON = 0;
-            udelay(1000);
+            /* Type 2/3: DCS init via P8 bit24 BEFORE setting P18 command mode.
+             * LCD_CON is still P16 from bootloader's last lcd_update.
+             * P16→P8b24 is proven (compositor does it). P18→P8b24 hangs. */
             s5l_lcd_write_config(0x81000C20);
-            udelay(1000);
+            udelay(100);
             s5l_lcd_run_seq8(lcd_info->seq_init);
             { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
-            s5l_lcd_set_command_mode();
         } else {
             lcd_run_seq(lcd_info->seq_init);
         }
     }
 #endif
+
+    s5l_lcd_set_command_mode();
 
     lcd_ispowered = true;
 }
