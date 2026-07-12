@@ -107,6 +107,9 @@ void compositor_start(int frame_w, int frame_h,
 
     lcd_set_inhibit(true);
 
+    /* Wait for any in-flight LCD DMA to complete */
+    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
     saved_lcd_con = LCD_CON;
     saved_lcd_7c = LR(0x7C);
     saved_lcd_88 = LR(0x88);
