@@ -518,6 +518,28 @@ static int decode_one_frame(bool display)
                         compositor_start(w, h, y, cb, cr);
                     else
                         compositor_update(y, cb, cr);
+                } else if (ps.need_scale && ps.dst_w <= 320 && ps.dst_h <= 240) {
+                    int cdst_w = ps.dst_w / 2;
+                    int cdst_h = ps.dst_h / 2;
+                    if (cdst_w < 2) cdst_w = 2;
+                    if (cdst_h < 2) cdst_h = 2;
+                    if (w == ps.dst_w * 2 && h == ps.dst_h * 2) {
+                        scale_plane_box2x2(y, w, ps.scale_y, ps.dst_w, ps.dst_h);
+                        scale_plane_box2x2(cb, w/2, ps.scale_cb, cdst_w, cdst_h);
+                        scale_plane_box2x2(cr, w/2, ps.scale_cr, cdst_w, cdst_h);
+                    } else {
+                        scale_plane_downscale(y, w, h, w,
+                                              ps.scale_y, ps.dst_w, ps.dst_h);
+                        scale_plane_downscale(cb, w/2, h/2, w/2,
+                                              ps.scale_cb, cdst_w, cdst_h);
+                        scale_plane_downscale(cr, w/2, h/2, w/2,
+                                              ps.scale_cr, cdst_w, cdst_h);
+                    }
+                    if (!compositor_is_active())
+                        compositor_start(ps.dst_w, ps.dst_h,
+                                         ps.scale_y, ps.scale_cb, ps.scale_cr);
+                    else
+                        compositor_update(ps.scale_y, ps.scale_cb, ps.scale_cr);
                 } else {
                     if (compositor_is_active())
                         compositor_stop();
