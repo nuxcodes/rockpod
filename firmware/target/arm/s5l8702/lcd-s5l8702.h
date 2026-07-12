@@ -82,6 +82,9 @@ struct lcd_info_rec {
 
 void lcd_awake(void);
 void lcd_set_inhibit(bool inhibit);
+#ifdef IPOD_6G
+extern volatile uint32_t lcd_init_breadcrumb[8];
+#endif
 
 #ifdef S5L_LCD_WITH_READID
 void lcd_read_display_id(int mupiface, uint8_t *lcd_id);

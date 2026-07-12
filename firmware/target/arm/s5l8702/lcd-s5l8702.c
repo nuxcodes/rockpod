@@ -248,6 +248,10 @@ static void s5l_lcd_recv_cmd8(uint8_t cmd, int len, uint8_t *buf)
 #define s5l_lcd_set_command_mode()  s5l_lcd_write_config(lcd_cmd_mode)
 #define s5l_lcd_set_frame_mode()    s5l_lcd_write_config(lcd_frame_mode)
 
+#ifdef IPOD_6G
+volatile uint32_t lcd_init_breadcrumb[8] __attribute__((section(".iram")));
+#endif
+
 static void s5l_lcd_run_seq8(void *seq8)
 {
     uint8_t *seq = seq8;
@@ -614,12 +618,34 @@ void lcd_init_device(void)
 
     s5l_lcd_set_command_mode();
 
+#ifdef IPOD_6G
+    lcd_init_breadcrumb[0] = 0xDC500001;  /* reached set_command_mode */
+    lcd_init_breadcrumb[1] = LCD_CON;
+    lcd_init_breadcrumb[2] = LCD_STATUS;
+    lcd_init_breadcrumb[3] = lcd_cmd_mode;
+#endif
+
     /* Configure DMA channel */                             // TODO: this right after mutex_init()
     dmac_ch_init(&lcd_dma_ch, &lcd_dma_ch_cfg);
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-    if (lcd_info->seq_init)
+    if (lcd_info->seq_init) {
+#ifdef IPOD_6G
+        lcd_init_breadcrumb[4] = 0xDC500002;  /* about to run seq_init */
+        lcd_init_breadcrumb[5] = LCD_STATUS;
+#endif
+        /* When switching LCD modes (e.g. P18→P8 after bootloader),
+         * the controller needs time to settle and the FIFO must drain.
+         * Without this, the first s5l_lcd_write_cmd hangs on FIFO full. */
+        while (LCD_STATUS & 0x10) ;     /* wait for FIFO not full */
+        while (!(LCD_STATUS & 0x2)) ;   /* wait for controller ready */
+        udelay(1000);                   /* 1ms settle after mode switch */
+#ifdef IPOD_6G
+        lcd_init_breadcrumb[6] = 0xDC500003;  /* FIFO drained, starting seq */
+        lcd_init_breadcrumb[7] = LCD_STATUS;
+#endif
         lcd_run_seq(lcd_info->seq_init);
+    }
 #endif
 
     lcd_ispowered = true;
