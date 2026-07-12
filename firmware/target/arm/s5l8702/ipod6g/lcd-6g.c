@@ -272,22 +272,22 @@ static struct lcd_info_rec lcd_info_list[] =
     [2] = {
         .lcd_type   = 2,
         .mpuiface   = LCD_MPUIFACE_PAR18,
-        .cmdset     = LCD_CMDSET_8BIT,  /* DCS mode — panel supports both DCS and ILI9326 */
+        .cmdset     = LCD_CMDSET_16BIT,  /* ILI9326 registers for normal UI (P18 mode) */
     #if defined(HAVE_LCD_SLEEP) || defined(HAVE_LCD_SHUTDOWN)
-        .seq_sleep  = (void*) lcd_sleep_seq_01,  /* DCS sleep */
+        .seq_sleep  = (void*) lcd_sleep_seq_01,  /* DCS sleep (sent via temp P8 bit24) */
     #endif
     #ifdef HAVE_LCD_SLEEP
-        .seq_awake  = (void*) lcd_awake_seq_01,  /* DCS wake — iBoot left panel in DCS state */
+        .seq_awake  = (void*) lcd_awake_seq_01,  /* DCS wake */
     #endif
     #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-        .seq_init   = (void*) lcd_init_seq_dcs23,  /* Full ST7789V DCS init from ROM */
+        .seq_init   = (void*) lcd_init_seq_dcs23,  /* DCS init (sent via temp P8 bit24) */
     #endif
     },
 
     [3] = {
         .lcd_type   = 3,
         .mpuiface   = LCD_MPUIFACE_PAR18,
-        .cmdset     = LCD_CMDSET_8BIT,  /* DCS mode */
+        .cmdset     = LCD_CMDSET_16BIT, /* ILI9326 registers for normal UI */
     #if defined(HAVE_LCD_SLEEP) || defined(HAVE_LCD_SHUTDOWN)
         .seq_sleep  = (void*) lcd_sleep_seq_01,
     #endif

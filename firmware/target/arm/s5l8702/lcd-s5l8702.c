@@ -510,9 +510,15 @@ static void lcd_powersave(void)
     mutex_lock(&lcd_mutex);
 
     displaylcd_wait_dma();
-                                   // XXX: Do not change modes while data is being sent
     s5l_lcd_set_command_mode();
-    lcd_run_seq(lcd_info->seq_sleep);
+    if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
+        s5l_lcd_write_config(0x81000C20);
+        udelay(100);
+        s5l_lcd_run_seq8(lcd_info->seq_sleep);
+        s5l_lcd_set_command_mode();
+    } else {
+        lcd_run_seq(lcd_info->seq_sleep);
+    }
 
     lcd_target_enable_clocks(false);
 
@@ -541,9 +547,15 @@ void lcd_awake(void)
     mutex_lock(&lcd_mutex);
 
     lcd_target_enable_clocks(true);
-                                 // XXX: Do not change modes while data is being sent
     s5l_lcd_set_command_mode();
-    lcd_run_seq(lcd_info->seq_awake);
+    if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
+        s5l_lcd_write_config(0x81000C20);
+        udelay(100);
+        s5l_lcd_run_seq8(lcd_info->seq_awake);
+        s5l_lcd_set_command_mode();
+    } else {
+        lcd_run_seq(lcd_info->seq_awake);
+    }
     lcd_ispowered = true;       // XXX: we have to put the lcd_ispowered before the lcd_update()
 
     lcd_update();               // XXX: update the display and wait for the update to finish before returning,
@@ -620,18 +632,17 @@ void lcd_init_device(void)
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
-        if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18
-            && lcd_info->cmdset == LCD_CMDSET_8BIT) {
-            /* Type 2/3 DCS init: temporarily switch to P8 bit24 to send
-             * DCS commands via D[17:10]. Reset LCD controller first to
-             * clear any stale FIFO state from bootloader's P18 mode. */
+        if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
+            /* Type 2/3: DCS init via temporary P8 bit24 mode switch.
+             * Normal UI uses ILI9326/P18 — only the DCS init needs P8 bit24.
+             * Reset LCD controller (LCD_CON=0) to clear FIFO before switch. */
             { int t = 100000; while ((LCD_STATUS & 0x10) && --t > 0); }
             { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
             LCD_CON = 0;
             udelay(1000);
             s5l_lcd_write_config(0x81000C20);
             udelay(1000);
-            lcd_run_seq(lcd_info->seq_init);
+            s5l_lcd_run_seq8(lcd_info->seq_init);
             { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
             s5l_lcd_set_command_mode();
         } else {
