@@ -191,14 +191,17 @@ enum plugin_status plugin_start(const void *parameter)
                 vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
             pos=ns+nl;
         }
-        if(!yo) vlog("  No decoded frame, using test pattern");
+        if(!yo) {
+            vlog("  No decoded frame, using test pattern");
+            vpu_h264_close(dec);
+        }
     } else {
         vlog("  No %s, using test pattern",path);
     }
 
     if(!yo) {
         fw=320; fh=240;
-        test_y  = (uint8_t*)((uintptr_t)ab | 0x40000000);
+        test_y  = ab;
         test_cb = test_y + fw*fh;
         test_cr = test_cb + (fw/2)*(fh/2);
         /* Red/Green/Blue vertical bars in YCbCr (BT.601) */
