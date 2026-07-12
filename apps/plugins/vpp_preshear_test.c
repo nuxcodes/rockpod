@@ -95,26 +95,47 @@ enum plugin_status plugin_start(const void *parameter)
 
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
-    size_t ds=vpu_h264_buf_size(640,480);
-    struct vpu_h264*dec=vpu_h264_open(ab,ds,640,480);
-    if(!dec){vlog("ERROR: decoder");rb->close(log_fd);return PLUGIN_ERROR;}
-    uint8_t*fb=ab+ds;
-    int fd=rb->open(path,O_RDONLY);
-    if(fd<0){vlog("ERROR: file");rb->close(log_fd);return PLUGIN_ERROR;}
-    int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
-
     int fw=0,fh=0;
     const uint8_t*yo=NULL,*cbo=NULL,*cro=NULL;
-    int pos=0;
-    while(pos<fl-4){
-        int sl,sp=fsc(fb+pos,fl-pos,&sl);if(sp<0)break;
-        int ns=pos+sp+sl,nx=fsc(fb+ns,fl-ns,&sl),nl=(nx>=0)?nx:fl-ns;
-        if(vpu_h264_decode_nalu(dec,fb+ns,nl)==1)
-            vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
-        pos=ns+nl;
+    struct vpu_h264*dec=NULL;
+
+    int fd=rb->open(path,O_RDONLY);
+    if(fd>=0) {
+        size_t ds=vpu_h264_buf_size(640,480);
+        dec=vpu_h264_open(ab,ds,640,480);
+        if(!dec){vlog("ERROR: decoder");rb->close(fd);rb->close(log_fd);return PLUGIN_ERROR;}
+        uint8_t*fb=ab+ds;
+        int fl=rb->read(fd,fb,320*240*2);rb->close(fd);
+        int pos=0;
+        while(pos<fl-4){
+            int sl,sp=fsc(fb+pos,fl-pos,&sl);if(sp<0)break;
+            int ns=pos+sp+sl,nx=fsc(fb+ns,fl-ns,&sl),nl=(nx>=0)?nx:fl-ns;
+            if(vpu_h264_decode_nalu(dec,fb+ns,nl)==1)
+                vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
+            pos=ns+nl;
+        }
+        if(!yo) { vlog("No frame decoded, test pattern"); vpu_h264_close(dec); dec=NULL; }
+        else vlog("Decoded %dx%d",fw,fh);
+    } else {
+        vlog("No %s, test pattern",path);
     }
-    if(!yo){vlog("ERROR: no frame");vpu_h264_close(dec);rb->close(log_fd);return PLUGIN_ERROR;}
-    vlog("Decoded %dx%d",fw,fh);
+
+    if(!yo) {
+        fw=320; fh=240;
+        uint8_t *ty=ab, *tcb=ab+fw*fh, *tcr=tcb+(fw/2)*(fh/2);
+        for(int r=0;r<fh;r++) for(int c=0;c<fw;c++) {
+            int i=r*fw+c;
+            if(c<fw/3) ty[i]=81; else if(c<2*fw/3) ty[i]=145; else ty[i]=41;
+        }
+        for(int r=0;r<fh/2;r++) for(int c=0;c<fw/2;c++) {
+            int i=r*(fw/2)+c;
+            if(c<fw/6)       { tcb[i]=90; tcr[i]=240; }
+            else if(c<fw/3)  { tcb[i]=54; tcr[i]=34;  }
+            else             { tcb[i]=240;tcr[i]=110; }
+        }
+        yo=ty; cbo=tcb; cro=tcr;
+        vlog("Test pattern: %dx%d RGB bars",fw,fh);
+    }
 
     uint32_t sc=LCD_CON,s7=LR(0x7C),s8=LR(0x88),s2=LR(0x20),s4=LR(0x74),s5=LR(0x78);
 
@@ -196,7 +217,8 @@ enum plugin_status plugin_start(const void *parameter)
 
     vlog("Done");
     rb->close(log_fd);
-    vpu_h264_close(dec);rb->cpu_boost(false);
+    if(dec) vpu_h264_close(dec);
+    rb->cpu_boost(false);
     return PLUGIN_OK;
 }
 #else
