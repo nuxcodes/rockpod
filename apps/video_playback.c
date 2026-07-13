@@ -510,13 +510,16 @@ static int decode_one_frame(bool display)
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
                 if (ps.osd_visible || ps.vol_show_until) {
-                    if (compositor_is_active())
+                    if (compositor_is_active()) {
                         compositor_stop();
+                        cpu_boost(true);  /* SW path needs boost */
+                    }
                     scale_and_blit_fb(y, cb, cr, w, h);
                 } else if (!ps.need_scale && w == 320 && h == 240) {
-                    if (!compositor_is_active())
+                    if (!compositor_is_active()) {
+                        cpu_boost(false); /* HW path — unboost */
                         compositor_start(w, h, y, cb, cr);
-                    else
+                    } else
                         compositor_update(y, cb, cr);
                 } else if (ps.need_scale && ps.dst_w == 320 && ps.dst_h == 240) {
                     int cdst_w = ps.dst_w / 2;
@@ -535,14 +538,17 @@ static int decode_one_frame(bool display)
                         scale_plane_downscale(cr, w/2, h/2, w/2,
                                               ps.scale_cr, cdst_w, cdst_h);
                     }
-                    if (!compositor_is_active())
+                    if (!compositor_is_active()) {
+                        cpu_boost(false);
                         compositor_start(ps.dst_w, ps.dst_h,
                                          ps.scale_y, ps.scale_cb, ps.scale_cr);
-                    else
+                    } else
                         compositor_update(ps.scale_y, ps.scale_cb, ps.scale_cr);
                 } else {
-                    if (compositor_is_active())
+                    if (compositor_is_active()) {
                         compositor_stop();
+                        cpu_boost(true);
+                    }
                     scale_and_blit(y, cb, cr, w, h);
                 }
             }
