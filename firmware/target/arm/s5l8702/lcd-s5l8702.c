@@ -541,12 +541,7 @@ static void lcd_powersave(void)
     mutex_lock(&lcd_mutex);
 
     displaylcd_wait_dma();
-    if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-        *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
-        *(volatile uint32_t*)(LCD_BASE + 0x20) = 0x33;
-        *(volatile uint32_t*)(LCD_BASE + 0x7C) = 0x00000402;
-        s5l_lcd_run_seq8_dcs(lcd_info->seq_sleep);
-    } else {
+    if (lcd_info->lcd_type < 2) {
         s5l_lcd_set_command_mode();
         lcd_run_seq(lcd_info->seq_sleep);
     }
@@ -578,12 +573,7 @@ void lcd_awake(void)
     mutex_lock(&lcd_mutex);
 
     lcd_target_enable_clocks(true);
-    if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-        *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
-        *(volatile uint32_t*)(LCD_BASE + 0x20) = 0x33;
-        *(volatile uint32_t*)(LCD_BASE + 0x7C) = 0x00000402;
-        s5l_lcd_run_seq8_dcs(lcd_info->seq_awake);
-    } else {
+    if (lcd_info->lcd_type < 2) {
         s5l_lcd_set_command_mode();
         lcd_run_seq(lcd_info->seq_awake);
     }
@@ -662,14 +652,9 @@ void lcd_init_device(void)
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
         if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
-            /* Type 2/3 DCS init: set LCD registers BEFORE DCS commands.
-             * Apple FUN_000ca178 sets +0x88, +0x20, +0x7C before any
-             * DCS command mode switching. These may enable D[17:10] routing. */
-            *(volatile uint32_t*)(LCD_BASE + 0x88) = 0x01000000;
-            *(volatile uint32_t*)(LCD_BASE + 0x20) = 0x33;
-            *(volatile uint32_t*)(LCD_BASE + 0x7C) = 0x00000402;
-            s5l_lcd_run_seq8_dcs(lcd_info->seq_init);
-            { int t = 100000; while (!(LCD_STATUS & 0x2) && --t > 0); }
+            /* Type 2/3: panel is ILI9326 (no DCS decoder).
+             * DCS init is useless — skip it. ILI9326 register init
+             * was already done by the bootloader. */
         } else {
             lcd_run_seq(lcd_info->seq_init);
         }
