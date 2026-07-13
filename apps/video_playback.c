@@ -1125,7 +1125,6 @@ static void play_pause(void)
             video_audio_pause();
             video_pcm_pause(true);
         }
-        cpu_boost(false);
     }
     else
     {
@@ -1143,7 +1142,6 @@ static void play_pause(void)
         ps.play_start_tick = current_tick;
         ps.play_start_time = ps.curr_time_ms;
         ps.state = PB_PLAYING;
-        cpu_boost(true);
         if (ps.has_audio)
         {
             video_audio_resume();
@@ -1370,7 +1368,6 @@ static void button_loop(const char *filepath)
                     video_audio_pause();
                     video_pcm_pause(true);
                 }
-                cpu_boost(false);
                 ps.curr_time_ms = ps.duration_ms;
                 osd_show();
             }
@@ -1949,8 +1946,10 @@ void video_playback_start(const char *filepath, const char *title)
         cpu_boost(false);
     }
 
-    /* Boost CPU for audio init, pre-fill, and playback */
-    cpu_boost(true);
+    /* CPU boost: only needed for SW display path (lcd_blit_yuv).
+     * With compositor, VPU-B + compositor are HW-accelerated (own clocks).
+     * AAC audio runs unboosted in normal Rockbox. NAL parsing is trivial.
+     * Total CPU work: ~3-4ms/frame at 54MHz vs 33ms budget = 90% idle. */
 
     /* Re-apply hardware volume before starting audio output.
      * audio_hard_stop() may leave CS42L55 at 0dB (power-on default).
