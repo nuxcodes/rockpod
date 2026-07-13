@@ -510,16 +510,13 @@ static int decode_one_frame(bool display)
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
                 if (ps.osd_visible || ps.vol_show_until) {
-                    if (compositor_is_active()) {
+                    if (compositor_is_active())
                         compositor_stop();
-                        cpu_boost(true);  /* SW path needs boost */
-                    }
                     scale_and_blit_fb(y, cb, cr, w, h);
                 } else if (!ps.need_scale && w == 320 && h == 240) {
-                    if (!compositor_is_active()) {
-                        cpu_boost(false); /* HW path — unboost */
+                    if (!compositor_is_active())
                         compositor_start(w, h, y, cb, cr);
-                    } else
+                    else
                         compositor_update(y, cb, cr);
                 } else if (ps.need_scale && ps.dst_w == 320 && ps.dst_h == 240) {
                     int cdst_w = ps.dst_w / 2;
@@ -538,17 +535,14 @@ static int decode_one_frame(bool display)
                         scale_plane_downscale(cr, w/2, h/2, w/2,
                                               ps.scale_cr, cdst_w, cdst_h);
                     }
-                    if (!compositor_is_active()) {
-                        cpu_boost(false);
+                    if (!compositor_is_active())
                         compositor_start(ps.dst_w, ps.dst_h,
                                          ps.scale_y, ps.scale_cb, ps.scale_cr);
-                    } else
+                    else
                         compositor_update(ps.scale_y, ps.scale_cb, ps.scale_cr);
                 } else {
-                    if (compositor_is_active()) {
+                    if (compositor_is_active())
                         compositor_stop();
-                        cpu_boost(true);
-                    }
                     scale_and_blit(y, cb, cr, w, h);
                 }
             }
@@ -1131,6 +1125,7 @@ static void play_pause(void)
             video_audio_pause();
             video_pcm_pause(true);
         }
+        cpu_boost(false);
     }
     else
     {
@@ -1148,6 +1143,7 @@ static void play_pause(void)
         ps.play_start_tick = current_tick;
         ps.play_start_time = ps.curr_time_ms;
         ps.state = PB_PLAYING;
+        cpu_boost(true);
         if (ps.has_audio)
         {
             video_audio_resume();
@@ -1374,6 +1370,7 @@ static void button_loop(const char *filepath)
                     video_audio_pause();
                     video_pcm_pause(true);
                 }
+                cpu_boost(false);
                 ps.curr_time_ms = ps.duration_ms;
                 osd_show();
             }
@@ -1952,10 +1949,11 @@ void video_playback_start(const char *filepath, const char *title)
         cpu_boost(false);
     }
 
-    /* CPU boost: only needed for SW display path (lcd_blit_yuv).
-     * With compositor, VPU-B + compositor are HW-accelerated (own clocks).
-     * AAC audio runs unboosted in normal Rockbox. NAL parsing is trivial.
-     * Total CPU work: ~3-4ms/frame at 54MHz vs 33ms budget = 90% idle. */
+    /* CPU boost during playback. TODO: Phase 2 optimization — Apple uses
+     * 108MHz (not 54MHz) for media playback. 54MHz may be too slow for
+     * ATA DMA + NAL parsing + audio decode combined. For now, keep boost
+     * to ensure smooth FPS. Future: add 108MHz intermediate level. */
+    cpu_boost(true);
 
     /* Re-apply hardware volume before starting audio output.
      * audio_hard_stop() may leave CS42L55 at 0dB (power-on default).
