@@ -1,6 +1,9 @@
-/* VPP ILI9326 Test — works with ORIGINAL ILI9326 firmware (no DCS)
- * AM=1 mode: 240/scan matches 240 rows/column → zero shearing
- * Entry Mode cycling to find correct orientation
+/* VPP ILI9326 Test — v131m reproduction
+ * Uses EXACT v131m values that showed VISIBLE compositor output:
+ *   LCD+0x74 = 0x014000F0 (per_scan=320, num_scans=240)
+ *   comp+0x054 = 0x014000F0 (same)
+ *   LCD+0x7C = 0x00000402 (2 transfers)
+ *   push_one_frame called 10 times with LCD+0x80 bracket
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -55,6 +58,31 @@ static void ili_set_gram_window(void)
     while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
 }
 
+/* push_one_frame: LCD+0x80 bracket from vpp_mvp_test.c
+ * CPU takes bus, sends full ILI9326 Entry Mode + GRAM window,
+ * then releases bus so compositor pushes pixels into GRAM. */
+static void push_one_frame(void)
+{
+    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
+    LR(0x80) = 1;  /* CPU takes bus */
+
+    while(!(LCD_STATUS&0x2)); LCD_CON = 0x80000DA9;  /* P18 for ILI9326 */
+    ili_cmd(0x003); ili_data(0x1030);  /* AM=0, I/D=11, BGR=1, HWM=1 */
+    ili_cmd(0x210); ili_data(0);
+    ili_cmd(0x211); ili_data(319);    /* HE=319 */
+    ili_cmd(0x212); ili_data(0);
+    ili_cmd(0x213); ili_data(239);    /* VE=239 */
+    ili_cmd(0x200); ili_data(0);
+    ili_cmd(0x201); ili_data(0);
+    ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2)); LCD_CON = 0x80100DB0;  /* P16 for ILI9326 */
+
+    LR(0x80) = 0;  /* release bus to compositor */
+
+    { int t = 500000; while ((LR(0x8C) & 3) && --t > 0); }
+}
+
 static void comp_init(void) {
     volatile uint32_t*c=(volatile uint32_t*)COMP;
     c[0x200/4]&=~1;c[0x004/4]=1;c[0x020/4]=1;
@@ -86,7 +114,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);rb->audio_stop();
 
     log_fd=rb->open("/vpu_vpp_ili.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== VPP ILI9326 AM=1 Test ===");
+    vlog("=== VPP ILI9326 v131m Reproduction ===");
     vlog("Panel type: %d",(PDAT(6)&0x30)>>4);
 
     uint8_t*ab;size_t as;
@@ -140,22 +168,25 @@ enum plugin_status plugin_start(const void *parameter)
 
     comp_init();
 
-    /* Layer 5 — original YUV planes (no pre-shear needed with AM=1) */
+    /* Layer 5 — YUV planes */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
-    CR(0x04C)=0x10001000;CR(0x054)=0x014000F0;
+    CR(0x04C)=0x10001000;
+    CR(0x054)=0x014000F0;  /* v131m value: per_scan=320, num_scans=240 */
     CR(0x038)=PH(yo);CR(0x03C)=PH(cro);CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004003;
+    CR(0x3AC)=0;
     CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
 
-    /* LCD passthrough */
+    /* LCD passthrough — v131m values */
     LCD_CON=0x80100DB0;
-    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
-    LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
+    LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LR(0x7C)=0x00000402;  /* v131m: 2 transfers */
+    LR(0x78)=0x000A000A;
+    LR(0x74)=0x014000F0;  /* v131m: per_scan=320, num_scans=240 */
     vlog("LCD passthrough: CON=0x%08lx 74=0x%08lx 7C=0x%08lx 88=0x%08lx",
          (unsigned long)LCD_CON,(unsigned long)LR(0x74),
          (unsigned long)LR(0x7C),(unsigned long)LR(0x88));
@@ -179,21 +210,13 @@ enum plugin_status plugin_start(const void *parameter)
     ili_set_gram_window();
     vlog("Entry Mode: 0x%04x",em_vals[em_idx]);
 
-    /* v131m sequence: GO, passthrough, then push frames via LCD+0x80 bracket */
+    /* v131m sequence: GO first, then passthrough enable */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
     CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
     LR(0x70)=1;LR(0x80)=0;
 
-    /* Push frames — v131m did this 10 times and it WORKED */
-    for(int i=0;i<10;i++){
-        {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-        LR(0x80)=1;
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
-        ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x80100DB0;
-        LR(0x80)=0;
-        {int t=500000;while((LR(0x8C)&3)&&--t>0);}
-    }
+    /* push_one_frame 10 times — v131m did this and it WORKED */
+    for(int i=0;i<10;i++) push_one_frame();
     vlog("Compositor GO=1, passthrough on, 10 frames pushed. LEFT/RIGHT=cycle, SELECT=exit");
 
     int btn;
@@ -206,6 +229,7 @@ enum plugin_status plugin_start(const void *parameter)
             ili_set_entry_mode(em_vals[em_idx]);
             ili_set_gram_window();
             LR(0x70)=1;LR(0x80)=0;
+            for(int i=0;i<10;i++) push_one_frame();
             vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
         }
         if(btn==BUTTON_LEFT) {
@@ -214,6 +238,7 @@ enum plugin_status plugin_start(const void *parameter)
             ili_set_entry_mode(em_vals[em_idx]);
             ili_set_gram_window();
             LR(0x70)=1;LR(0x80)=0;
+            for(int i=0;i<10;i++) push_one_frame();
             vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
         }
         rb->backlight_on();
