@@ -142,20 +142,34 @@ enum plugin_status plugin_start(const void *parameter)
     rb->lcd_putsxy(10,10,"DCS firmware OK?");
     rb->lcd_putsxy(10,25,"MENU=compositor test");
     rb->lcd_putsxy(10,40,"SELECT=exit");
-    rb->lcd_putsxy(10,55,"(R/G/B bars visible = DCS works)");
+    rb->lcd_putsxy(10,55,"PLAY=toggle DCS inversion test");
+    rb->lcd_putsxy(10,70,"MENU=compositor, SELECT=exit");
     rb->lcd_update();
     vlog("  RGB bars displayed via lcd_update");
 
+    /* DCS inversion test: if colors invert, DCS commands reach panel */
+    rb->sleep(HZ);
+    dcs_cmd(0x21, 0);  /* Display Inversion On */
+    vlog("  DCS 0x21 inversion ON — if colors flip, DCS WORKS");
+
     int btn;
+    int inv = 1;
     while(1) {
         btn=rb->button_get(true);
         if(btn==BUTTON_MENU) break;
         if(btn==BUTTON_SELECT) {
+            dcs_cmd(0x20, 0);  /* restore before exit */
             rb->close(log_fd);rb->cpu_boost(false);
             return PLUGIN_OK;
         }
+        if(btn==BUTTON_PLAY) {
+            inv = !inv;
+            dcs_cmd(inv ? 0x21 : 0x20, 0);
+            vlog("  DCS inversion %s", inv ? "ON" : "OFF");
+        }
         rb->backlight_on();
     }
+    dcs_cmd(0x20, 0);  /* inversion off before Phase 2 */
 
     /* === PHASE 2: Get YUV frame (decode or test pattern) === */
     vlog("Phase 2: Decode + compositor");
