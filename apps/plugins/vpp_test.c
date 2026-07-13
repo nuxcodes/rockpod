@@ -37,7 +37,7 @@ static int fsc(const uint8_t*b,int l,int*s){
 /* Send one DCS command with per-command LCD_CON toggle (Apple pattern) */
 static void dcs_cmd(uint8_t cmd, int ndata, ...) {
     while(!(LCD_STATUS&0x2));
-    LCD_CON=0x81000C20;
+    LCD_CON=0x81000C21;
     {volatile int d=0;while(d++<100);}
     lc(cmd);
     if (ndata > 0) {
@@ -83,7 +83,7 @@ static void comp_init(void) {
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
+    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;c[0x024/4]=0x00FFFFFF;
 }
 
 
@@ -108,7 +108,7 @@ enum plugin_status plugin_start(const void *parameter)
     /* DCS readback diagnostics — per-command LCD_CON toggle with sync */
     {
         /* Read MADCTL (0x0B) */
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21;
         {volatile int d=0;while(d++<100);}
         while(LCD_STATUS&0x10); LCD_WCMD=0x0B;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
@@ -118,7 +118,7 @@ enum plugin_status plugin_start(const void *parameter)
         vlog("DCS 0x0B MADCTL readback: 0x%02x (expect 0x60 landscape)",madctl_rb);
 
         /* Read COLMOD (0x0C) */
-        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20;
+        while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21;
         {volatile int d=0;while(d++<100);}
         while(LCD_STATUS&0x10); LCD_WCMD=0x0C;
         while(!(LCD_STATUS&0x2)); *(volatile uint32_t*)(LCD_BASE+0x10)=0;
@@ -241,7 +241,7 @@ enum plugin_status plugin_start(const void *parameter)
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
-    CR(0x04C)=0x10001000;CR(0x054)=0x00F00140;
+    CR(0x04C)=0x10001000;CR(0x054)=0x014000F0;
     CR(0x038)=PH(yo);CR(0x03C)=PH(cro);CR(0x040)=0;CR(0x044)=PH(cbo);
     CR(0x3AC)=0x04004003;  /* rotation ON */
     CR(0x0D4)=1;
@@ -252,11 +252,11 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* LCD passthrough mode */
     LCD_CON=0x80100DB0;  /* P16 frame mode */
-    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000401;
+    LR(0x88)=0x01000000;LR(0x20)=0x33;LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;
 
     /* Set LCD+0x74 BEFORE enabling passthrough (it latches at 0x70=1 transition) */
-    LR(0x74)=0x00F00140;
+    LR(0x74)=0x014000F0;
     vlog("  LCD passthrough: CON=0x%08lx 74=0x%08lx 78=0x%08lx 7C=0x%08lx 88=0x%08lx",
          (unsigned long)LCD_CON,(unsigned long)LR(0x74),(unsigned long)LR(0x78),
          (unsigned long)LR(0x7C),(unsigned long)LR(0x88));

@@ -45,17 +45,17 @@ static void lcd_wcmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
 static void lcd_wdat(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
 
 static void dcs_cmd1(uint8_t cmd, uint8_t d0) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
     lcd_wcmd(cmd); lcd_wdat(d0);
     while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
 static void dcs_cmd4(uint8_t cmd, uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
     lcd_wcmd(cmd); lcd_wdat(d0); lcd_wdat(d1); lcd_wdat(d2); lcd_wdat(d3);
     while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
 static void dcs_cmd0(uint8_t cmd) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C20; udelay(2);
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
     lcd_wcmd(cmd);
     while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
 }
@@ -111,7 +111,7 @@ static void comp_hw_init(void)
     c[0x208/4] = 0;
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;
-    c[0x214/4] = 0x00EF013F;
+    c[0x214/4] = 0x013F00EF;
     c[0x024/4] = 0x00FFFFFF;
 }
 
@@ -147,7 +147,7 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x02C) = frame_w | ((frame_w/2) << 16);
     CR(0x034) = frame_h | ((uint32_t)frame_w << 16);
     CR(0x04C) = 0x10001000;
-    CR(0x054) = 0x00F00140;
+    CR(0x054) = 0x014000F0;
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
@@ -161,9 +161,9 @@ void compositor_start(int frame_w, int frame_h,
     LCD_CON = 0x80100DB0;
     LR(0x88) = 0x01000000;
     LR(0x20) = 0x33;
-    LR(0x7C) = 0x00000401;
+    LR(0x7C) = 0x00000402;
     LR(0x78) = 0x000A000A;
-    LR(0x74) = 0x00F00140;
+    LR(0x74) = 0x014000F0;
 
     /* DCS portrait window — per-command LCD_CON toggle (Apple pattern) */
     dcs_cmd1(0x36, 0x40);
