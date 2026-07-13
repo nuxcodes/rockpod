@@ -1,9 +1,7 @@
-/* VPP ILI9326 Test — v131m reproduction
- * Uses EXACT v131m values that showed VISIBLE compositor output:
- *   LCD+0x74 = 0x014000F0 (per_scan=320, num_scans=240)
- *   comp+0x054 = 0x014000F0 (same)
- *   LCD+0x7C = 0x00000402 (2 transfers)
- *   push_one_frame called 10 times with LCD+0x80 bracket
+/* VPP ILI9326 Test -- P9 vs P16 passthrough experiment
+ * Config 0 (default): P16 passthrough (0x80100DB0), landscape, no rotation
+ * Config 1 (MENU):    P9 Apple passthrough (0x81100DB9), Apple regs, rotation ON
+ * Tests whether passthrough mechanism is P9-only.
  * Copyright (C) 2025 Nux Li */
 
 #include "plugin.h"
@@ -38,18 +36,24 @@ static int fsc(const uint8_t*b,int l,int*s){
 static void ili_cmd(uint16_t c){while(LCD_STATUS&0x10);LCD_WCMD=c;}
 static void ili_data(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
 
+/* Active passthrough mode: 0 = P16 (0x80100DB0), 1 = P9 Apple (0x81100DB9) */
+static int pt_mode = 0;
+
+static uint32_t get_pixel_con(void)
+{
+    return pt_mode ? 0x81100DB9 : 0x80100DB0;
+}
+
 static void ili_set_entry_mode(uint16_t val)
 {
-    uint32_t pixel_con = 0x81100DB9; /* P9 — v131m accident */
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;  /* P18 for ILI9326 cmds */
     ili_cmd(0x003);ili_data(val);
-    while(!(LCD_STATUS&0x2)); LCD_CON=pixel_con;
+    while(!(LCD_STATUS&0x2)); LCD_CON=get_pixel_con();
 }
 
 static void ili_set_gram_window(void)
 {
-    uint32_t pixel_con = 0x81100DB9; /* P9 — v131m accident */
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;  /* P18 for ILI9326 cmds */
     ili_cmd(0x210);ili_data(0);      /* H start = 0 */
     ili_cmd(0x211);ili_data(319);    /* H end = 319 */
     ili_cmd(0x212);ili_data(0);      /* V start = 0 */
@@ -57,26 +61,21 @@ static void ili_set_gram_window(void)
     ili_cmd(0x200);ili_data(0);      /* GRAM x = 0 */
     ili_cmd(0x201);ili_data(0);      /* GRAM y = 0 */
     ili_cmd(0x202);                  /* Write to GRAM */
-    while(!(LCD_STATUS&0x2)); LCD_CON=pixel_con;
+    while(!(LCD_STATUS&0x2)); LCD_CON=get_pixel_con();
 }
 
-/* Active passthrough mode: 0 = P16 (0x80100DB0), 1 = P9 Apple (0x81100DB9) */
-
-/* push_one_frame: LCD+0x80 bracket from vpp_mvp_test.c
- * CPU takes bus, sends full ILI9326 Entry Mode + GRAM window,
- * then releases bus so compositor pushes pixels into GRAM.
- * ILI9326 register commands always use P18 (0x80000DA9).
+/* push_one_frame: LCD+0x80 bracket
+ * CPU takes bus, sends ILI9326 Entry Mode + GRAM window via P18,
+ * then releases bus so compositor pushes pixels.
  * Pixel data phase uses P16 or P9 depending on pt_mode. */
 static void push_one_frame(void)
 {
-    uint32_t pixel_con = 0x81100DB9; /* P9 — v131m accident */
-
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
     LR(0x80) = 1;  /* CPU takes bus */
 
     while(!(LCD_STATUS&0x2)); LCD_CON = 0x80000DA9;  /* P18 for ILI9326 */
-    ili_cmd(0x003); ili_data(0x1238);  /* v131m: AM=1, I/D=11, BGR=1, HWM=1 */
+    ili_cmd(0x003); ili_data(0x1238);  /* AM=1, I/D=11, BGR=1 — fixes shearing */
     ili_cmd(0x210); ili_data(0);
     ili_cmd(0x211); ili_data(319);    /* HE=319 */
     ili_cmd(0x212); ili_data(0);
@@ -84,7 +83,7 @@ static void push_one_frame(void)
     ili_cmd(0x200); ili_data(0);
     ili_cmd(0x201); ili_data(0);
     ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2)); LCD_CON = pixel_con;  /* P16 or P9 for pixels */
+    while(!(LCD_STATUS&0x2)); LCD_CON = get_pixel_con();
 
     LR(0x80) = 0;  /* release bus to compositor */
 
@@ -111,7 +110,7 @@ static void comp_init(void) {
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
+    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;c[0x024/4]=0x00FFFFFF;
 }
 
 
@@ -122,7 +121,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->cpu_boost(true);rb->audio_stop();
 
     log_fd=rb->open("/vpu_vpp_ili.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== VPP ILI9326 v131m Reproduction ===");
+    vlog("=== VPP P9 vs P16 Passthrough Test ===");
     vlog("Panel type: %d",(PDAT(6)&0x30)>>4);
 
     uint8_t*ab;size_t as;
@@ -176,38 +175,32 @@ enum plugin_status plugin_start(const void *parameter)
 
     comp_init();
 
-    /* Layer 5 — YUV planes */
+    /* Layer 5 -- YUV planes */
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
     CR(0x04C)=0x10001000;
-    /* v131m EXACT values — including the P9 LCD_CON "accident" that WORKED:
-     * comp+0x054 = 0x00F00140 (portrait, 240/scan — Apple value)
-     * LCD+0x74  = 0x014000F0 (landscape — v131m override)
-     * comp+0x3AC = 0 (rotation OFF — v131m TEST0)
-     * comp+0x214 = 0x00EF013F (portrait viewport — never changed)
-     * LCD_CON = 0x81100DB9 (P9! — leaked from TEST_SW in v131m)
-     * Entry Mode = 0x1238 (AM=1, I/D=11, BGR=1 — v131m push_one_frame) */
-    CR(0x054)=0x00F00140;  /* Apple portrait: 240/scan, 320 scans */
+    CR(0x054)=0x014000F0;  /* Config 0 default: landscape 320x240 */
     CR(0x038)=PH(yo);CR(0x03C)=PH(cro);CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004003;  /* rotation ON — Apple value */    CR(0x0D4)=1;
+    CR(0x3AC)=0;           /* Config 0 default: rotation OFF */
+    CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
 
-    /* LCD passthrough — v131m EXACT leaked state */
-    LCD_CON=0x81100DB9;  /* P9 mode — v131m accident! */
+    /* LCD passthrough -- Config 0 (P16) defaults */
+    pt_mode = 0;
+    LCD_CON=0x80100DB0;    /* P16 mode */
     LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;
     LR(0x78)=0x000A000A;
-    LR(0x74)=0x014000F0;  /* v131m: 320/scan, 240 scans (landscape override) */
-    vlog("LCD passthrough: CON=0x%08lx 74=0x%08lx 7C=0x%08lx 88=0x%08lx",
+    LR(0x74)=0x014000F0;  /* landscape: 320/scan, 240 scans */
+    vlog("Config 0 (P16): CON=0x%08lx 74=0x%08lx 7C=0x%08lx",
          (unsigned long)LCD_CON,(unsigned long)LR(0x74),
-         (unsigned long)LR(0x7C),(unsigned long)LR(0x88));
+         (unsigned long)LR(0x7C));
 
-    /* Entry Mode cycling — ALL must have AM=1 (bit 3, NOT bit 5!)
-     * Bit layout: bit12=BGR, bit5=I/D1, bit4=I/D0, bit3=AM
-     * Agent verified from 5+ Rockbox ILI932x drivers: HORZ vs VERT = bit 3 only */
+    /* Entry Mode cycling -- ALL must have AM=1 (bit 3)
+     * Bit layout: bit12=BGR, bit5=I/D1, bit4=I/D0, bit3=AM */
     static const uint16_t em_vals[] = {
         0x0038,  /* AM=1, I/D=11, BGR=0 */
         0x0028,  /* AM=1, I/D=10, BGR=0 */
@@ -220,9 +213,7 @@ enum plugin_status plugin_start(const void *parameter)
     };
     int em_idx = 0;
 
-    /* Compositor configuration table: cycle through all combos to find
-     * the one that fixes -45deg rotation, 3x repetition, top 1/4 only.
-     * Fields: comp+0x054, LCD+0x74, comp rotation (0x0D8-0x0EC), comp+0x214 */
+    /* Compositor configuration table */
     struct comp_cfg {
         uint32_t comp_054;   /* compositor layer size */
         uint32_t lcd_074;    /* LCD passthrough size */
@@ -232,83 +223,115 @@ enum plugin_status plugin_start(const void *parameter)
     };
     static const struct comp_cfg cfgs[] = {
         { 0x014000F0, 0x014000F0, 0,          0x013F00EF,
-          "cfg0: current (landscape, no rot)" },
+          "cfg0: landscape, no rot" },
         { 0x00F00140, 0x00F00140, 0x04004003, 0x00EF013F,
-          "cfg1: Apple values + rotation ON" },
+          "cfg1: Apple + rot ON" },
         { 0x014000F0, 0x014000F0, 0x04004003, 0x013F00EF,
-          "cfg2: landscape + rotation ON" },
+          "cfg2: landscape + rot ON" },
         { 0x00F00140, 0x014000F0, 0,          0x013F00EF,
-          "cfg3: mixed (comp portrait, LCD landscape)" },
+          "cfg3: comp portrait, LCD landscape" },
         { 0x014000F0, 0x00F00140, 0x04004003, 0x00EF013F,
-          "cfg4: mixed other way + rotation ON" },
+          "cfg4: comp landscape, LCD portrait + rot" },
         { 0x00F00140, 0x00F00140, 0,          0x00EF013F,
-          "cfg5: Apple no rotation" },
+          "cfg5: Apple no rot" },
     };
     int cfg_idx = 0;
-    int lcd_7c_val = 0x402;  /* toggles between 0x402 and 0x401 via PLAY */
+    int lcd_7c_val = 0x402;
 
     ili_set_entry_mode(em_vals[em_idx]);
     ili_set_gram_window();
     vlog("Entry Mode: 0x%04x",em_vals[em_idx]);
 
-    /* v131m sequence: GO first, then passthrough enable */
+    /* GO first, then passthrough enable */
     CR(0x000)=0;{volatile int d=0;while(d++<50000);}
     CR(0x000)=1;{uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<200000);}
     LR(0x70)=1;LR(0x80)=0;
 
-    /* push_one_frame 10 times — v131m did this and it WORKED */
     for(int i=0;i<10;i++) push_one_frame();
     vlog("Compositor GO=1, passthrough on, 10 frames pushed");
-    vlog("RIGHT=cycle config, LEFT=cycle entry mode, PLAY=toggle 7C, SELECT=exit");
+    vlog("MENU=P9/P16, RIGHT=cfg, LEFT=entry, PLAY=7C, SELECT=exit");
 
     int btn;
     while(1) {
         btn=rb->button_get(true);
         if(btn==BUTTON_SELECT) break;
 
-        /* RIGHT — cycle compositor configuration */
+        /* MENU -- toggle P9 Apple (Config 1) vs P16 (Config 0) */
+        if(btn==BUTTON_MENU) {
+            pt_mode = !pt_mode;
+            LR(0x70)=0;  /* disable passthrough */
+
+            if(pt_mode) {
+                /* Config 1: P9 Apple passthrough */
+                LCD_CON = 0x81100DB9;             /* P9 mode */
+                LR(0x74) = 0x00F00140;            /* Apple portrait: 240x320 */
+                CR(0x054) = 0x00F00140;            /* comp layer: portrait */
+                CR(0x3AC) = 0x04004003;            /* rotation ON */
+                CR(0x214) = 0x00EF013F;            /* comp output: portrait */
+                /* Apple rotation matrix */
+                CR(0x0D8)=0x0400; CR(0x0DC)=0x4003;
+                CR(0x0E0)=0x0400; CR(0x0E4)=0x4003;
+                CR(0x0E8)=0x0400; CR(0x0EC)=0x4003;
+                vlog("=== Config 1: P9 Apple mode ===");
+                vlog("  LCD_CON=0x81100DB9 LCD+074=0x00F00140");
+                vlog("  comp+054=0x00F00140 comp+3AC=0x04004003");
+                vlog("  comp+214=0x00EF013F rotation=ON");
+            } else {
+                /* Config 0: P16 passthrough (original) */
+                LCD_CON = 0x80100DB0;             /* P16 mode */
+                LR(0x74) = 0x014000F0;            /* landscape: 320x240 */
+                CR(0x054) = 0x014000F0;            /* comp layer: landscape */
+                CR(0x3AC) = 0;                     /* rotation OFF */
+                CR(0x214) = 0x013F00EF;            /* comp output: landscape */
+                /* Identity rotation matrix */
+                CR(0x0D8)=0x1000; CR(0x0DC)=0;
+                CR(0x0E0)=0x1000; CR(0x0E4)=0;
+                CR(0x0E8)=0x1000; CR(0x0EC)=0;
+                vlog("=== Config 0: P16 mode (original) ===");
+                vlog("  LCD_CON=0x80100DB0 LCD+074=0x014000F0");
+                vlog("  comp+054=0x014000F0 comp+3AC=0x00000000");
+                vlog("  comp+214=0x013F00EF rotation=OFF");
+            }
+
+            LR(0x70)=1; LR(0x80)=0;  /* re-enable passthrough */
+            for(int i=0;i<10;i++) push_one_frame();
+            vlog("  readback: LCD_CON=0x%08lx comp+054=0x%08lx LCD+074=0x%08lx",
+                 (unsigned long)LCD_CON, (unsigned long)CR(0x054),
+                 (unsigned long)LR(0x74));
+        }
+
+        /* RIGHT -- cycle compositor configuration */
         if(btn==BUTTON_RIGHT) {
             cfg_idx=(cfg_idx+1)%6;
             const struct comp_cfg *c = &cfgs[cfg_idx];
 
-            LR(0x70)=0;  /* disable passthrough */
+            LR(0x70)=0;
 
-            /* Set compositor registers */
             CR(0x054) = c->comp_054;
             CR(0x214) = c->comp_214;
 
-            /* Set rotation matrix: identity or Apple rotation */
             if(c->rotation == 0) {
-                /* Identity: [1 0; 0 1; 0 0] in 12.12 fixed-point */
                 CR(0x0D8)=0x1000; CR(0x0DC)=0;
                 CR(0x0E0)=0x1000; CR(0x0E4)=0;
                 CR(0x0E8)=0x1000; CR(0x0EC)=0;
             } else {
-                /* Apple rotation: 0x04004003 decoded as scaler regs */
                 CR(0x0D8)=0x0400; CR(0x0DC)=0x4003;
                 CR(0x0E0)=0x0400; CR(0x0E4)=0x4003;
                 CR(0x0E8)=0x0400; CR(0x0EC)=0x4003;
             }
 
-            /* Set LCD registers */
             LR(0x74) = c->lcd_074;
 
-            LR(0x70)=1; LR(0x80)=0;  /* re-enable passthrough */
+            LR(0x70)=1; LR(0x80)=0;
             for(int i=0;i<10;i++) push_one_frame();
 
-            vlog("%s", c->desc);
+            vlog("%s (pt=%s)", c->desc, pt_mode ? "P9" : "P16");
             vlog("  comp+054=0x%08lx LCD+074=0x%08lx rot=0x%08lx comp+214=0x%08lx",
                  (unsigned long)c->comp_054, (unsigned long)c->lcd_074,
                  (unsigned long)c->rotation, (unsigned long)c->comp_214);
-            vlog("  readback: comp+054=0x%08lx LCD+074=0x%08lx comp+214=0x%08lx",
-                 (unsigned long)CR(0x054), (unsigned long)LR(0x74),
-                 (unsigned long)CR(0x214));
-            vlog("  rot regs: D8=0x%08lx DC=0x%08lx E0=0x%08lx E4=0x%08lx",
-                 (unsigned long)CR(0x0D8), (unsigned long)CR(0x0DC),
-                 (unsigned long)CR(0x0E0), (unsigned long)CR(0x0E4));
         }
 
-        /* LEFT — cycle entry mode */
+        /* LEFT -- cycle entry mode */
         if(btn==BUTTON_LEFT) {
             em_idx=(em_idx+1)%8;
             LR(0x70)=0;
@@ -316,22 +339,26 @@ enum plugin_status plugin_start(const void *parameter)
             ili_set_gram_window();
             LR(0x70)=1;LR(0x80)=0;
             for(int i=0;i<10;i++) push_one_frame();
-            vlog("Entry Mode: 0x%04x idx=%d",em_vals[em_idx],em_idx);
+            vlog("Entry Mode: 0x%04x idx=%d (pt=%s)",
+                 em_vals[em_idx],em_idx,pt_mode?"P9":"P16");
         }
 
-        /* PLAY — toggle LCD+0x7C between 0x402 and 0x401 */
+        /* PLAY -- toggle LCD+0x7C between 0x402 and 0x401 */
         if(btn==BUTTON_PLAY) {
             lcd_7c_val = (lcd_7c_val == 0x402) ? 0x401 : 0x402;
             LR(0x70)=0;
             LR(0x7C) = lcd_7c_val;
             LR(0x70)=1; LR(0x80)=0;
             for(int i=0;i<10;i++) push_one_frame();
-            vlog("LCD+07C=0x%08lx", (unsigned long)lcd_7c_val);
+            vlog("LCD+07C=0x%08lx (pt=%s)",
+                 (unsigned long)lcd_7c_val, pt_mode?"P9":"P16");
         }
 
         rb->backlight_on();
     }
 
+    /* Restore state */
+    pt_mode = 0;
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
     ili_set_entry_mode(0x0230);
     while(!(LCD_STATUS&0x2));LCD_CON=sc;
