@@ -1125,7 +1125,6 @@ static void play_pause(void)
             video_audio_pause();
             video_pcm_pause(true);
         }
-        cpu_boost(false);
     }
     else
     {
@@ -1143,7 +1142,6 @@ static void play_pause(void)
         ps.play_start_tick = current_tick;
         ps.play_start_time = ps.curr_time_ms;
         ps.state = PB_PLAYING;
-        cpu_boost(true);
         if (ps.has_audio)
         {
             video_audio_resume();
@@ -1370,7 +1368,6 @@ static void button_loop(const char *filepath)
                     video_audio_pause();
                     video_pcm_pause(true);
                 }
-                cpu_boost(false);
                 ps.curr_time_ms = ps.duration_ms;
                 osd_show();
             }
@@ -1951,9 +1948,9 @@ void video_playback_start(const char *filepath, const char *title)
 
     /* CPU boost during playback. TODO: Phase 2 optimization — Apple uses
      * 108MHz (not 54MHz) for media playback. 54MHz may be too slow for
-     * ATA DMA + NAL parsing + audio decode combined. For now, keep boost
-     * to ensure smooth FPS. Future: add 108MHz intermediate level. */
-    cpu_boost(true);
+     * The FPS fix (removed 500K blocking wait in push_frame) should make
+     * 54MHz sufficient. Compositor does HW CSC — zero CPU for display.
+     * Total CPU work: ~3-4ms/frame at 54MHz vs 33ms budget. */
 
     /* Re-apply hardware volume before starting audio output.
      * audio_hard_stop() may leave CS42L55 at 0dB (power-on default).
