@@ -44,8 +44,9 @@ static uint32_t saved_lcd_78;
 static void ili_cmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
 static void ili_data(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
 
-/* Push one frame: LCD+0x80 bracket with ILI9326 GRAM reset.
- * This is MANDATORY — LCD+0x70 alone doesn't push frames. */
+/* Push one frame: LCD+0x80 bracket with ILI9326 GRAM cursor reset.
+ * Minimal version — only resets cursor, not full GRAM window setup.
+ * The GRAM window (0x210-0x213) and Entry Mode were set in compositor_start. */
 static void push_frame(void)
 {
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
@@ -53,17 +54,15 @@ static void push_frame(void)
     LR(0x80) = 1;
 
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80000DA9;  /* P18 for ILI9326 register commands */
-    ili_cmd(0x003); ili_data(0x1238);  /* AM=1, I/D=11, BGR=1 */
-    ili_cmd(0x200); ili_data(0);
-    ili_cmd(0x201); ili_data(0);
-    ili_cmd(0x202);  /* GRAM write */
+    LCD_CON = 0x80000DA9;
+    ili_cmd(0x200); ili_data(0);  /* cursor H=0 */
+    ili_cmd(0x201); ili_data(0);  /* cursor V=0 */
+    ili_cmd(0x202);               /* GRAM write */
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB9;  /* P9 for pixel data passthrough */
+    LCD_CON = 0x81100DB9;
 
     LR(0x80) = 0;
-
-    { int t = 500000; while ((LR(0x8C) & 3) && --t > 0); }
+    /* NO blocking wait — let the next push_frame's wait-before handle it */
 }
 
 static void comp_hw_init(void)
@@ -187,9 +186,8 @@ void compositor_start(int frame_w, int frame_h,
     LR(0x70) = 1;
     LR(0x80) = 0;
 
-    /* Push initial frames */
-    for (int i = 0; i < 10; i++)
-        push_frame();
+    /* Push initial frame */
+    push_frame();
 
     comp_active = true;
 }
@@ -202,7 +200,7 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
-    commit_discard_dcache();
+    commit_dcache();  /* clean only, no invalidate — compositor just reads */
 
     push_frame();
 }
