@@ -1,12 +1,11 @@
 /***************************************************************************
- * S5L8702 VPP Compositor Display Driver
+ * S5L8702 VPP Compositor Display Driver — ILI9326 path
  *
  * Copyright (C) 2025 Nux Li
  *
  * Hardware-accelerated YCbCr→RGB display via the S5L8702 compositor.
- * Passes YUV420 planes directly to the compositor which does BT.601
- * color space conversion and outputs RGB to the LCD controller in
- * passthrough mode. Zero CPU involvement for color conversion.
+ * Uses ILI9326 register commands (P18) for GRAM setup + P9 passthrough.
+ * Panel is ILI9326 (no DCS decoder).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -41,23 +40,30 @@ static uint32_t saved_lcd_20;
 static uint32_t saved_lcd_74;
 static uint32_t saved_lcd_78;
 
-static void lcd_wcmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
-static void lcd_wdat(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
+/* ILI9326 register write via P18 mode */
+static void ili_cmd(uint16_t c) { while(LCD_STATUS&0x10); LCD_WCMD=c; }
+static void ili_data(uint16_t d) { while(LCD_STATUS&0x10); LCD_WDATA=d; }
 
-static void dcs_cmd1(uint8_t cmd, uint8_t d0) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
-    lcd_wcmd(cmd); lcd_wdat(d0);
-    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
-}
-static void dcs_cmd4(uint8_t cmd, uint8_t d0, uint8_t d1, uint8_t d2, uint8_t d3) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
-    lcd_wcmd(cmd); lcd_wdat(d0); lcd_wdat(d1); lcd_wdat(d2); lcd_wdat(d3);
-    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
-}
-static void dcs_cmd0(uint8_t cmd) {
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x81000C21; udelay(2);
-    lcd_wcmd(cmd);
-    while(!(LCD_STATUS&0x2)); udelay(2); LCD_CON=0x80100DB0;
+/* Push one frame: LCD+0x80 bracket with ILI9326 GRAM reset.
+ * This is MANDATORY — LCD+0x70 alone doesn't push frames. */
+static void push_frame(void)
+{
+    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
+    LR(0x80) = 1;
+
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80000DA9;  /* P18 for ILI9326 register commands */
+    ili_cmd(0x003); ili_data(0x1238);  /* AM=1, I/D=11, BGR=1 */
+    ili_cmd(0x200); ili_data(0);
+    ili_cmd(0x201); ili_data(0);
+    ili_cmd(0x202);  /* GRAM write */
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81100DB9;  /* P9 for pixel data passthrough */
+
+    LR(0x80) = 0;
+
+    { int t = 500000; while ((LR(0x8C) & 3) && --t > 0); }
 }
 
 static void comp_hw_init(void)
@@ -74,7 +80,6 @@ static void comp_hw_init(void)
         c[0xC00/4+i] = i*4;
     }
 
-    /* Timing coefficients from Apple SRAM */
     volatile uint32_t *s = (volatile uint32_t*)0x0890D2DC;
     uint32_t t[5];
     for (int i = 0; i < 5; i++) t[i] = s[i];
@@ -85,14 +90,13 @@ static void comp_hw_init(void)
         for (int i = 0; i < 5; i++) c[(0x1EC+i*4)/4] = h[i];
     }
 
-    /* CSC matrix: identity diagonal (BT.601 hardwired) */
     c[0x0D8/4] = 0x1000; c[0x0DC/4] = 0;
     c[0x0E0/4] = 0x1000; c[0x0E4/4] = 0;
     c[0x0E8/4] = 0x1000; c[0x0EC/4] = 0;
 
-    /* Main config register */
     {
         uint32_t v = c[0x008/4];
+        v &= ~0x20000000; v &= ~0x10000000;
         v &= ~0x03000000; v |= 0x01000000;
         v &= ~0x00300000; v |= 0x00100000;
         v &= ~0x00030000; v |= 0x00010000;
@@ -111,7 +115,7 @@ static void comp_hw_init(void)
     c[0x208/4] = 0;
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;
-    c[0x214/4] = 0x013F00EF;
+    c[0x214/4] = 0x00EF013F;  /* portrait viewport */
     c[0x024/4] = 0x00FFFFFF;
 }
 
@@ -125,7 +129,6 @@ void compositor_start(int frame_w, int frame_h,
 
     lcd_set_inhibit(true);
 
-    /* Wait for any in-flight LCD DMA to complete */
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
     saved_lcd_con = LCD_CON;
@@ -147,39 +150,46 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x02C) = frame_w | ((frame_w/2) << 16);
     CR(0x034) = frame_h | ((uint32_t)frame_w << 16);
     CR(0x04C) = 0x10001000;
-    CR(0x054) = 0x014000F0;
+    CR(0x054) = 0x00F00140;   /* portrait: 240/scan, 320 scans */
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0x04004003;
+    CR(0x3AC) = 0x04004003;   /* rotation ON */
     CR(0x0D4) = 1;
     { uint32_t v = CR(0x008); v &= ~0x100; CR(0x008) = v; }
     commit_discard_dcache();
 
-    /* LCD passthrough registers */
-    LCD_CON = 0x80100DB0;
+    /* LCD passthrough — v131m working config with P9 */
+    LCD_CON = 0x81100DB9;     /* P9 mode */
     LR(0x88) = 0x01000000;
     LR(0x20) = 0x33;
-    LR(0x7C) = 0x00000402;
+    LR(0x7C) = 0x00000402;   /* 16-bit bus */
     LR(0x78) = 0x000A000A;
-    LR(0x74) = 0x014000F0;
+    LR(0x74) = 0x014000F0;   /* v131m override */
 
-    /* DCS portrait window — per-command LCD_CON toggle (Apple pattern) */
-    dcs_cmd1(0x36, 0x40);
-    dcs_cmd4(0x2A, 0x00, 0x00, 0x00, 0xEF);
-    dcs_cmd4(0x2B, 0x00, 0x00, 0x01, 0x3F);
-    dcs_cmd0(0x2C);
+    /* ILI9326 GRAM setup via P18 */
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80000DA9;
+    ili_cmd(0x003); ili_data(0x1238);  /* AM=1, I/D=11, BGR=1 */
+    ili_cmd(0x210); ili_data(0);
+    ili_cmd(0x211); ili_data(319);
+    ili_cmd(0x212); ili_data(0);
+    ili_cmd(0x213); ili_data(239);
+    ili_cmd(0x200); ili_data(0);
+    ili_cmd(0x201); ili_data(0);
+    ili_cmd(0x202);
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x81100DB9;
 
-    /* Apple's order: start compositor BEFORE enabling passthrough */
-    CR(0x000) = 0;
-    { volatile int d = 0; while (d++ < 50000); }
+    /* Compositor GO=1 then passthrough enable */
     CR(0x000) = 1;
-    { uint32_t t = USEC_TIMER; while ((USEC_TIMER - t) < 200000); }
-
-    /* Enable passthrough AFTER compositor is running */
     LR(0x70) = 1;
     LR(0x80) = 0;
+
+    /* Push initial frames */
+    for (int i = 0; i < 10; i++)
+        push_frame();
 
     comp_active = true;
 }
@@ -189,20 +199,12 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     if (!comp_active)
         return;
 
-    /* Update plane addresses */
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
     commit_discard_dcache();
 
-    /* Apple's per-frame sequence: pause LCD bus, reset GRAM position, resume.
-     * Compositor runs continuously (GO stays 1) — no retrigger needed. */
-    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
-    LR(0x80) = 1;
-    dcs_cmd4(0x2A, 0x00, 0x00, 0x00, 0xEF);
-    dcs_cmd4(0x2B, 0x00, 0x00, 0x01, 0x3F);
-    dcs_cmd0(0x2C);
-    LR(0x80) = 0;
+    push_frame();
 }
 
 void compositor_stop(void)
@@ -214,8 +216,11 @@ void compositor_stop(void)
     LR(0x80) = 0;
     CR(0x000) = 0;
 
-    /* Restore MADCTL to landscape */
-    dcs_cmd1(0x36, 0x60);
+    /* Restore ILI9326 Entry Mode for Rockbox UI */
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80000DA9;
+    ili_cmd(0x003); ili_data(0x0230);  /* Rockbox default */
+    while (!(LCD_STATUS & 0x2));
 
     LCD_CON = saved_lcd_con;
     LR(0x88) = saved_lcd_88;

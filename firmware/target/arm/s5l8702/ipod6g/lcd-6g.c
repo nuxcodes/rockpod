@@ -148,7 +148,7 @@ static const uint16_t lcd_init_seq_23[] =
 #endif /* ILI9326 init */
 
 /* DCS init for type 2/3 panels — from Apple ROM table A at 0x9F05CA
- * Panel is ST7789V-family, NOT ILI9326 (Rockbox misidentification).
+ * Panel IS ILI9326 — DCS commands do not work (no DCS decoder).
  * COLMOD changed from Apple's 0x06 (18-bit) to 0x05 (16-bit RGB565)
  * to match Rockbox's P16 DMA pixel format.
  * Compiled for both BOOTLOADER and main firmware — main firmware needs
