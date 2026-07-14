@@ -72,8 +72,15 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
      */
     CHECKLEN(3);
 
-    /* Lingo 0x02 must have been negotiated */
-    if (!DEVICE_LINGO_SUPPORTED(0x02)) {
+    /* Lingo 0x02 must have been negotiated, except for
+     * ContextButtonStatus (0x00): simple remotes like the Apple A1018
+     * identify only once at power-up. If the remote was already
+     * powered before Rockbox started (e.g. plugged in at boot) that
+     * identification is never seen, and rejecting the button events
+     * would leave the remote dead until it is replugged. Per MFi
+     * spec Table 2-7, cmd 0x00 on UART does not require auth.
+     */
+    if ((cmd != 0x00) && !DEVICE_LINGO_SUPPORTED(0x02)) {
         cmd_ack(cmd, IAP_ACK_BAD_PARAM);
         return;
     }

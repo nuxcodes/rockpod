@@ -782,6 +782,16 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
                 iap_send_tx();
 
+                /* MFi spec Table 2-8 step 4: send GetAccessoryInfo
+                 * between AckAccessoryAuthenticationInfo and
+                 * GetAccessoryAuthenticationSignature (non-IDPS only). */
+                if (!device.auth.idps)
+                {
+                    IAP_TX_INIT(0x00, 0x27);
+                    IAP_TX_PUT(0x00);
+                    iap_send_tx();
+                }
+
                 device.auth.state = AUST_CERTDONE;
             }
             break;
@@ -846,13 +856,18 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             iap_send_tx();
             device.auth.state = AUST_AUTH;
-            device.accinfo = ACCST_INIT;
+            if (device.accinfo == ACCST_NONE)
+                device.accinfo = ACCST_INIT;
 
             /* After auth, initiate digital audio via periodic handler.
              * Do NOT call iap_set_remote_volume() or any other send here —
              * tx_buf is shared and 0x19 hasn't finished DMA yet. */
             if (DEVICE_LINGO_SUPPORTED(0x0A))
                 device.audio_init_pending = true;
+
+            /* Defer volume notification until after auth completes
+             * and the periodic handler has a free tx_buf. */
+            device.volume_notify_pending = true;
 
             break;
         }
@@ -1159,6 +1174,42 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             break;
         }
 
+        /* SetUIMode (0x37)
+         *
+         * Sets the UI mode of the iPod.
+         * UIMode 0x00 = Standard mode
+         * UIMode 0x01 = Extended Interface mode
+         * UIMode 0x02 = iPod Out mode
+         *
+         * In IDPS mode, a 2-byte transID precedes the payload.
+         */
+        case 0x37:
+        {
+            CHECKAUTH;
+            CHECKLEN(3 + (device.auth.idps ? 2 : 0));
+            int off = device.auth.idps ? 2 : 0;
+            unsigned char mode = buf[2 + off];
+            unsigned char status;
+            if (mode == 0x01) {
+                iap_interface_state_change(IST_EXTENDED);
+                status = IAP_ACK_OK;
+            } else if (mode == 0x00) {
+                iap_interface_state_change(IST_STANDARD);
+                status = IAP_ACK_OK;
+            } else {
+                status = IAP_ACK_BAD_PARAM;
+            }
+            IAP_TX_INIT(0x00, 0x02);
+            if (device.auth.idps) {
+                IAP_TX_PUT(buf[2]);
+                IAP_TX_PUT(buf[3]);
+            }
+            IAP_TX_PUT(status);
+            IAP_TX_PUT(cmd);
+            iap_send_tx();
+            break;
+        }
+
         /* StartIDPS (0x38)
          *
          * Newer accessories use IDPS instead of IdentifyDeviceLingoes.
@@ -1230,6 +1281,33 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
                 uint8_t fid_type = buf[offset + 1];
                 uint8_t fid_subtype = buf[offset + 2];
 
+                /* Parse IdentifyToken (FIDType=0x00, FIDSubtype=0x00) */
+                if (fid_type == 0x00 && fid_subtype == 0x00 &&
+                    fid_len >= 3 && offset + 1 + fid_len <= (int)len)
+                {
+                    uint8_t num_lingoes = buf[offset + 3];
+                    uint32_t lingoes = 0;
+                    int j;
+                    for (j = 0; j < num_lingoes &&
+                         (offset + 4 + j) < (offset + 1 + fid_len); j++)
+                    {
+                        uint8_t lingo = buf[offset + 4 + j];
+                        if (lingo < 32)
+                            lingoes |= BIT_N(lingo);
+                    }
+                    device.idps_lingoes = lingoes;
+
+                    /* Extract options (4 bytes) after lingo bytes */
+                    int opt_off = offset + 4 + num_lingoes;
+                    if (opt_off + 4 <= offset + 1 + fid_len)
+                        device.idps_options = get_u32(&buf[opt_off]);
+
+                    /* Extract deviceID (4 bytes) after options */
+                    int did_off = opt_off + 4;
+                    if (did_off + 4 <= offset + 1 + fid_len)
+                        device.idps_deviceid = get_u32(&buf[did_off]);
+                }
+
                 /* ACK entry: [length][type][subtype][status] */
                 IAP_TX_PUT(0x03); /* length: type+subtype+status */
                 IAP_TX_PUT(fid_type);
@@ -1281,8 +1359,21 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
                  * finished sending IDPSStatus (0x3C) yet.
                  * The periodic handler will send 0x14 on the next tick.
                  */
+                /* Save IDPS-parsed fields before reset clears them */
+                uint32_t saved_lingoes = device.idps_lingoes;
+                uint32_t saved_options = device.idps_options;
+                uint32_t saved_deviceid = device.idps_deviceid;
+
                 iap_reset_device(&device);
-                device.lingoes = BIT_N(0x00) | BIT_N(0x03) | BIT_N(0x0A);
+                /* Use lingoes parsed from IdentifyToken if available,
+                 * otherwise fall back to General + Digital Audio */
+                if (saved_lingoes)
+                    device.lingoes = saved_lingoes;
+                else
+                    device.lingoes = BIT_N(0x00) | BIT_N(0x03) | BIT_N(0x0A);
+                device.idps_lingoes = saved_lingoes;
+                device.idps_options = saved_options;
+                device.idps_deviceid = saved_deviceid;
                 device.do_power_notify = true;
                 device.auth.idps = true;
                 device.auth.state = AUST_INIT;
@@ -1364,6 +1455,25 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             IAP_TX_PUT(lingo);
             IAP_TX_PUT_U32(0x00);
             IAP_TX_PUT_U32(0x00);
+            iap_send_tx();
+            break;
+        }
+
+        /* SetEventNotification (0x49)
+         *
+         * Accessory requests event notifications from the iPod.
+         * ACK OK for now; no events are actually generated.
+         */
+        case 0x49:
+        {
+            CHECKAUTH;
+            IAP_TX_INIT(0x00, 0x02);
+            if (device.auth.idps) {
+                IAP_TX_PUT(buf[2]);
+                IAP_TX_PUT(buf[3]);
+            }
+            IAP_TX_PUT(IAP_ACK_OK);
+            IAP_TX_PUT(cmd);
             iap_send_tx();
             break;
         }

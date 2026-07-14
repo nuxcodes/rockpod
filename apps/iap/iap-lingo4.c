@@ -75,6 +75,7 @@ static void get_playlist_name(unsigned char *dest,
     struct dirent* playlist_file = NULL;
 
     dp = opendir(global_settings.playlist_catalog_dir);
+    if (dp == NULL) return;
 
     char *extension;
     unsigned long nbr = 0;
@@ -119,6 +120,7 @@ static unsigned long nbr_total_playlists(void)
     struct dirent* playlist_file = NULL;
     char *extension;
     dp = opendir(global_settings.playlist_catalog_dir);
+    if (dp == NULL) return 0;
     while ((playlist_file = readdir(dp)) != NULL)
     {
         /*Increment only if there is a playlist extension*/
@@ -1431,15 +1433,35 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             uint32_t trackcount;
             trackcount = playlist_amount();
 
-            if ((buf[3] == 0x05) && ((start_index + read_count ) > trackcount))
-            {
-                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
-                break;
+            /* Clamp read_count for tracks: -1 means "all records" */
+            if (buf[3] == 0x05) {
+                if (start_index >= trackcount) {
+                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    break;
+                }
+                if (read_count == 0xFFFFFFFF ||
+                    (start_index + read_count) > trackcount)
+                    read_count = trackcount - start_index;
             }
-            if ((buf[3] == 0x01) && ((start_index + read_count) > (number_of_playlists + 1)))
-            {
-                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
-                break;
+            /* Clamp read_count for playlists: -1 means "all records" */
+            if (buf[3] == 0x01) {
+                if (start_index >= (number_of_playlists + 1)) {
+                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    break;
+                }
+                if (read_count == 0xFFFFFFFF ||
+                    (start_index + read_count) > (number_of_playlists + 1))
+                    read_count = (number_of_playlists + 1) - start_index;
+            }
+            /* Clamp read_count for other categories that resolve to tracks */
+            if (buf[3] >= 0x02 && buf[3] <= 0x06 && buf[3] != 0x05) {
+                if (start_index >= trackcount) {
+                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    break;
+                }
+                if (read_count == 0xFFFFFFFF ||
+                    (start_index + read_count) > trackcount)
+                    read_count = trackcount - start_index;
             }
             for (counter=0;counter<read_count;counter++)
             {
@@ -1464,14 +1486,23 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                         switch(buf[3])
                         {
                             case 0x05:
-                                strmemccpy((char *)&data[7], id3.title,64);
+                            {
+                                const char *title = id3.title ? id3.title : "";
+                                strmemccpy((char *)&data[7], title, 64);
                                 break;
+                            }
                             case 0x02:
-                                strmemccpy((char *)&data[7], id3.artist,64);
+                            {
+                                const char *artist = id3.artist ? id3.artist : "";
+                                strmemccpy((char *)&data[7], artist, 64);
                                 break;
+                            }
                             case 0x03:
-                                strmemccpy((char *)&data[7], id3.album,64);
+                            {
+                                const char *album = id3.album ? id3.album : "";
+                                strmemccpy((char *)&data[7], album, 64);
                                 break;
+                            }
                             case 0x04:
                             case 0x06:
                                 strmemccpy((char *)&data[7], "Not Supported",14);
@@ -1808,15 +1839,18 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             switch(cmd)
             {
                 case 0x20:
-                    len = strlcpy((char *)&data[3], id3.title, 64);
+                    len = strlcpy((char *)&data[3],
+                                  id3.title ? id3.title : "", 64);
                     iap_send_pkt(data, 4+len);
                     break;
                 case 0x22:
-                    len = strlcpy((char *)&data[3], id3.artist, 64);
+                    len = strlcpy((char *)&data[3],
+                                  id3.artist ? id3.artist : "", 64);
                     iap_send_pkt(data, 4+len);
                     break;
                 case 0x24:
-                    len = strlcpy((char *)&data[3], id3.album, 64);
+                    len = strlcpy((char *)&data[3],
+                                  id3.album ? id3.album : "", 64);
                     iap_send_pkt(data, 4+len);
                     break;
             }
@@ -3135,6 +3169,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                     break;
                 }
             }
+            break;
         }
         default:
         {

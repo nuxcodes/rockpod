@@ -150,6 +150,11 @@ struct device_t {
                                      */
     uint32_t capabilities_queried;  /* Capabilities already queried */
     bool audio_init_pending;        /* Send GetAccSampleRateCaps after auth */
+    bool volume_notify_pending;     /* Send volume notification after auth */
+    uint32_t idps_lingoes;          /* Lingoes parsed from IDPS IdentifyToken */
+    uint32_t idps_options;          /* Options from IDPS IdentifyToken */
+    uint32_t idps_deviceid;         /* DeviceID from IDPS IdentifyToken */
+    uint16_t ipod_trans_id;         /* Transaction ID for iPod-originated cmds */
 };
 
 extern struct device_t device;
@@ -222,6 +227,17 @@ extern unsigned char* iap_txnext;
  * functions
  */
 #define IAP_TX_PUT_STRLCPY(str) iap_tx_strlcpy(str)
+
+/* Put an iPod-originated transaction ID into the TX buffer if in IDPS mode.
+ * Increments the counter after use.
+ */
+#define IAP_TX_PUT_IPOD_TRANSID() do { \
+        if (device.auth.idps) { \
+            IAP_TX_PUT((device.ipod_trans_id >> 8) & 0xFF); \
+            IAP_TX_PUT(device.ipod_trans_id & 0xFF); \
+            device.ipod_trans_id++; \
+        } \
+    } while(0)
 
 extern unsigned char lingo_versions[32][2];
 #define LINGO_SUPPORTED(x) (LINGO_MAJOR((x)&0x1f) > 0)

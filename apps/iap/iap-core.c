@@ -362,6 +362,11 @@ void iap_reset_device(struct device_t* device)
     device->capabilities = 0;
     device->capabilities_queried = 0;
     device->audio_init_pending = false;
+    device->volume_notify_pending = false;
+    device->idps_lingoes = 0;
+    device->idps_options = 0;
+    device->idps_deviceid = 0;
+    device->ipod_trans_id = 1;
 #ifdef USB_ENABLE_AUDIO
     iap_audio_reported_frequency = 0;
     iap_audio_pending_frequency = 0;
@@ -389,6 +394,7 @@ static int iap_task(struct timeout *tmo)
         && device.accinfo != ACCST_SENT
         && device.accinfo != ACCST_DATA
         && !device.audio_init_pending
+        && !device.volume_notify_pending
         && !device.do_notify
         && !iap_shutdown
         && iap_timeoutbtn == 0
@@ -402,6 +408,7 @@ static int iap_task(struct timeout *tmo)
 void iap_set_remote_volume(void)
 {
     IAP_TX_INIT(0x03, 0x0D);
+    IAP_TX_PUT_IPOD_TRANSID();
     IAP_TX_PUT(0x04);
     IAP_TX_PUT(0x00);
     IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
@@ -673,7 +680,7 @@ bool iap_getc(IF_IAP_MP(int port,) const unsigned char x)
     static long pkt_timeout;
 
     if (!iap_setupflag)
-        return false;
+        return true;
 
     /* Check the time since the last packet arrived. */
     if ((s->state != ST_SYNC) && TIME_AFTER(current_tick, pkt_timeout)) {
@@ -832,6 +839,7 @@ void iap_periodic(void)
         {
             /* Send out GetDevAuthenticationInfo */
             IAP_TX_INIT(0x00, 0x14);
+            IAP_TX_PUT_IPOD_TRANSID();
 
             iap_send_tx();
             device.auth.state = AUST_CERTREQ;
@@ -840,21 +848,11 @@ void iap_periodic(void)
 
         case AUST_CERTDONE:
         {
-            /* Send out GetDevAuthenticationSignature, with
-             * 20 bytes of challenge and a retry counter of 1.
-             * Since we do not really care about the content of the
-             * challenge we just use the first 20 bytes of whatever
-             * is in the RX buffer right now.
-             *
-             * In IDPS mode, include the transID saved from the last
-             * RetDevAuthenticationInfo (0x15). The Go daemon does the
-             * same via ipod.Respond which echoes the request's transID.
-             */
+            /* Send GetDevAuthenticationSignature with 20 bytes of
+             * challenge and retry counter 1.  We use whatever happens
+             * to be in the RX buffer as the challenge data. */
             IAP_TX_INIT(0x00, 0x17);
-            if (device.auth.idps) {
-                IAP_TX_PUT(device.auth.tid_hi);
-                IAP_TX_PUT(device.auth.tid_lo);
-            }
+            IAP_TX_PUT_IPOD_TRANSID();
             IAP_TX_PUT_DATA(iap_rxstart,
                         (device.auth.version == 0x100) ? 16 : 20);
             IAP_TX_PUT(0x01);
@@ -876,12 +874,15 @@ void iap_periodic(void)
         device.audio_init_pending = false;
 
         IAP_TX_INIT(0x0A, 0x02);
-        if (device.auth.idps) {
-            /* Generate outgoing transID (doesn't need to match anything) */
-            IAP_TX_PUT(0x00);
-            IAP_TX_PUT(0x01);
-        }
+        IAP_TX_PUT_IPOD_TRANSID();
         iap_send_tx();
+    }
+
+    /* Deferred volume notification after auth completes */
+    if (device.volume_notify_pending && DEVICE_AUTHENTICATED)
+    {
+        device.volume_notify_pending = false;
+        iap_set_remote_volume();
     }
 
     /* Time out button down events */
@@ -901,6 +902,7 @@ void iap_periodic(void)
     {
         /* NotifyiPodStateChange */
         IAP_TX_INIT(0x00, 0x23);
+        IAP_TX_PUT_IPOD_TRANSID();
         IAP_TX_PUT(0x01);
 
         iap_send_tx();
@@ -915,6 +917,7 @@ void iap_periodic(void)
     {
         /* GetAccessoryInfo */
         IAP_TX_INIT(0x00, 0x27);
+        IAP_TX_PUT_IPOD_TRANSID();
         IAP_TX_PUT(0x00);
 
         iap_send_tx();
@@ -957,6 +960,7 @@ void iap_periodic(void)
                 case 0x09:
                 {
                     IAP_TX_INIT(0x00, 0x27);
+                    IAP_TX_PUT_IPOD_TRANSID();
                     IAP_TX_PUT(first_set);
 
                     iap_send_tx();
@@ -967,6 +971,7 @@ void iap_periodic(void)
                 case 0x02:
                 {
                     IAP_TX_INIT(0x00, 0x27);
+                    IAP_TX_PUT_IPOD_TRANSID();
                     IAP_TX_PUT(2);
                     IAP_TX_PUT_U32(IAP_IPOD_MODEL);
                     IAP_TX_PUT(IAP_IPOD_FIRMWARE_MAJOR);
@@ -981,6 +986,7 @@ void iap_periodic(void)
                 case 0x03:
                 {
                     IAP_TX_INIT(0x00, 0x27);
+                    IAP_TX_PUT_IPOD_TRANSID();
                     IAP_TX_PUT(3);
                     IAP_TX_PUT(0);
 
