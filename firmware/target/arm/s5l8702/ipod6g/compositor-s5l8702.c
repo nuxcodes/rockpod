@@ -104,7 +104,9 @@ static void comp_hw_init(void)
     { uint32_t v = c[0x008/4]; v |= 0x8000;     c[0x008/4] = v; }
     { uint32_t v = c[0x008/4]; v &= ~2;         c[0x008/4] = v; }
     { uint32_t v = c[0x008/4]; v |= 0x100;      c[0x008/4] = v; }
-    { uint32_t v = c[0x008/4]; v |= 0x80;       c[0x008/4] = v; }
+    /* bit 7 (Layer 5/scaler) NOT set here — set in compositor_start after
+     * Layer 5 registers are configured. Layer 0 shares DMA with scaler;
+     * enabling scaler early locks Layer 0's DMA path. */
     { uint32_t v = c[0x008/4]; v |= 0x40000000; c[0x008/4] = v; }
 
     c[0x200/4] |= 0x10080;
@@ -162,10 +164,10 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0;                /* no pipeline — proven tear-free */
+    CR(0x3AC) = 0x04004002;    /* pipeline + bit 1 (required for overlay layers) */
     CR(0x0D4) = 1;
-    /* bit 8 SET = CSC for Layer 5 only. Layers 0-4 pass through as RGB. */
-    { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
+    /* Enable Layer 5 (bit 7) + CSC bypass (bit 8) AFTER all L5 regs configured */
+    { uint32_t v = CR(0x008); v |= 0x180; CR(0x008) = v; }
     commit_discard_dcache();
 
     /* P16 passthrough — confirmed working */
