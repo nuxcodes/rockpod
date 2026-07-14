@@ -198,8 +198,40 @@ enum plugin_status plugin_start(const void *parameter)
     while(!(LCD_STATUS&0x2));LCD_CON=0x80100DA8;
     LR(0x80)=0;
     vlog("  CON=0x%08lx",(unsigned long)LCD_CON);
-    busywait_us(4000000);
-    /* Restore P16 */
+
+    /* P18 GRAM readback at multiple points for pixel comparison */
+    {
+        /* Read GRAM at 5 positions in P18 mode */
+        static const int px[]={10,80,160,240,310};
+        static const int py[]={10,60,120,180,230};
+        vlog("  P18 pixel samples:");
+        for(int i=0;i<5;i++){
+            {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+            LR(0x70)=0;LR(0x80)=1;
+            while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
+            LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
+            ili_cmd(0x200);ili_data(px[i]);ili_cmd(0x201);ili_data(py[i]);ili_cmd(0x202);
+            while(!(LCD_STATUS&0x2));
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+            uint32_t g=LCD_DBUFF&0x3FFFF;
+            LCD_CON=0x80100DA8;LR(0x80)=0;LR(0x70)=1;
+            /* P18 push restore */
+            {int t2=100000;while((LR(0x8C)&3)&&--t2>0);}
+            LR(0x80)=1;
+            while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+            ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+            while(!(LCD_STATUS&0x2));LCD_CON=0x80100DA8;
+            LR(0x80)=0;
+            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu",
+                 px[i],py[i],(unsigned long)g,
+                 (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+                 (unsigned long)(g&0x3F));
+        }
+    }
+    busywait_us(2000000);
+
+    /* Now switch back to P16 and read same points for comparison */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     LR(0x70)=0;LR(0x80)=1;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
@@ -208,6 +240,29 @@ enum plugin_status plugin_start(const void *parameter)
     while(!(LCD_STATUS&0x2));
     LR(0x80)=0;{int t=100000;while((LR(0x8C)&3)&&--t>0);}
     LCD_CON=0x81100DB0;LR(0x70)=1;push_frame();
+    busywait_us(500000);
+
+    vlog("  P16 pixel samples:");
+    {
+        static const int px[]={10,80,160,240,310};
+        static const int py[]={10,60,120,180,230};
+        for(int i=0;i<5;i++){
+            {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+            LR(0x70)=0;LR(0x80)=1;
+            while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
+            LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
+            ili_cmd(0x200);ili_data(px[i]);ili_cmd(0x201);ili_data(py[i]);ili_cmd(0x202);
+            while(!(LCD_STATUS&0x2));
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+            uint32_t g=LCD_DBUFF&0x3FFFF;
+            LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;push_frame();
+            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu",
+                 px[i],py[i],(unsigned long)g,
+                 (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+                 (unsigned long)(g&0x3F));
+        }
+    }
 
     vlog("=== DONE ===");
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
