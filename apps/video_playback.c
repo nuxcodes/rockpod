@@ -57,6 +57,36 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Simple profiling — writes CSV to /video_perf.log */
+static int perf_fd = -1;
+static uint32_t perf_frames;
+
+static void perf_open(void)
+{
+    perf_fd = open("/video_perf.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    perf_frames = 0;
+    if (perf_fd >= 0)
+        write(perf_fd, "frame,ring,cpu_mhz,comp,osd\n", 28);
+}
+
+static void perf_log(int ring_count, int ring_cap, bool comp, bool osd)
+{
+    if (perf_fd < 0) return;
+    if (perf_frames > 0 && (perf_frames % 30) != 0) { perf_frames++; return; }
+    char buf[80];
+    int n = snprintf(buf, sizeof(buf), "%lu,%d/%d,%ld,%d,%d\n",
+                     (unsigned long)perf_frames, ring_count, ring_cap,
+                     cpu_frequency / 1000000,
+                     comp ? 1 : 0, osd ? 1 : 0);
+    if (n > 0) write(perf_fd, buf, (size_t)n);
+    perf_frames++;
+}
+
+static void perf_close(void)
+{
+    if (perf_fd >= 0) { fsync(perf_fd); close(perf_fd); perf_fd = -1; }
+}
+
 /* ARM assembly YUV420->RGB565 converter (writes 2 lines to contiguous outbuf).
  * Global symbol from firmware/target/arm/s5l8702/lcd-asm-s5l8702.S. */
 extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
@@ -1660,6 +1690,9 @@ static void button_loop(const char *filepath)
                         }
 
                         ring_consume();
+                        perf_log(ps.ring.count, ps.ring.capacity,
+                                 compositor_is_active(),
+                                 ps.osd_visible);
                     }
                 }
                 else
@@ -2172,6 +2205,7 @@ void video_playback_start(const char *filepath, const char *title)
     /* Enable media DVFS and suppress button boost interference */
     set_media_boost(true);
     button_boost_set_inhibit(true);
+    perf_open();
 
     /* Pre-fill ring buffer — show first frame while audio pre-fills */
     ring_burst_decode(BURST_MAX);
@@ -2208,6 +2242,7 @@ void video_playback_start(const char *filepath, const char *title)
     button_loop(filepath);
 
 cleanup:
+    perf_close();
     set_media_boost(false);
     button_boost_set_inhibit(false);
     cpu_boost(false);

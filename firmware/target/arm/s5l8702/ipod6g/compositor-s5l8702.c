@@ -201,10 +201,14 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     if (!comp_active)
         return;
 
+    /* Wait for previous frame to finish before updating pointers —
+     * prevents tearing from mid-push pointer change */
+    { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
-    commit_dcache();  /* clean only, no invalidate — compositor just reads */
+    commit_dcache();
 
     push_frame();
 }
