@@ -144,7 +144,7 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x040)=0;CR(0x044)=PH(cbo);
     CR(0x3AC)=0;CR(0x0D4)=1;
     /* bit 8 SET = CSC for Layer 5 only, RGB passthrough for overlays */
-    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
+    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
     LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
