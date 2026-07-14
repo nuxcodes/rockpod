@@ -57,27 +57,46 @@
 #include <string.h>
 #include <stdio.h>
 
-/* Simple profiling — writes CSV to /video_perf.log */
+/* Comprehensive profiling — writes CSV to /video_perf.log */
 static int perf_fd = -1;
 static uint32_t perf_frames;
+static uint32_t perf_decode_start, perf_display_start, perf_wait_start;
+static uint32_t perf_decode_us, perf_display_us, perf_wait_us;
 
 static void perf_open(void)
 {
     perf_fd = open("/video_perf.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     perf_frames = 0;
-    if (perf_fd >= 0)
-        write(perf_fd, "frame,ring,cpu_mhz,comp,osd\n", 28);
+    if (perf_fd >= 0) {
+        const char *h = "frame,decode_us,display_us,wait_us,ring,cpu_mhz,"
+                        "comp,osd,drift_ms\n";
+        write(perf_fd, h, strlen(h));
+    }
 }
 
-static void perf_log(int ring_count, int ring_cap, bool comp, bool osd)
+static void perf_mark_decode_start(void) { perf_decode_start = USEC_TIMER; }
+static void perf_mark_decode_end(void) { perf_decode_us = USEC_TIMER - perf_decode_start; }
+static void perf_mark_display_start(void) { perf_display_start = USEC_TIMER; }
+static void perf_mark_display_end(void) { perf_display_us = USEC_TIMER - perf_display_start; }
+static void perf_mark_wait_start(void) { perf_wait_start = USEC_TIMER; }
+static void perf_mark_wait_end(void) { perf_wait_us = USEC_TIMER - perf_wait_start; }
+
+static void perf_log(int ring_count, int ring_cap, bool comp, bool osd,
+                     int32_t drift_ms)
 {
     if (perf_fd < 0) return;
-    if (perf_frames > 0 && (perf_frames % 30) != 0) { perf_frames++; return; }
-    char buf[80];
-    int n = snprintf(buf, sizeof(buf), "%lu,%d/%d,%ld,%d,%d\n",
-                     (unsigned long)perf_frames, ring_count, ring_cap,
+    if (perf_frames > 0 && (perf_frames % 10) != 0) { perf_frames++; return; }
+    char buf[128];
+    int n = snprintf(buf, sizeof(buf),
+                     "%lu,%lu,%lu,%lu,%d/%d,%ld,%d,%d,%ld\n",
+                     (unsigned long)perf_frames,
+                     (unsigned long)perf_decode_us,
+                     (unsigned long)perf_display_us,
+                     (unsigned long)perf_wait_us,
+                     ring_count, ring_cap,
                      cpu_frequency / 1000000,
-                     comp ? 1 : 0, osd ? 1 : 0);
+                     comp ? 1 : 0, osd ? 1 : 0,
+                     (long)drift_ms);
     if (n > 0) write(perf_fd, buf, (size_t)n);
     perf_frames++;
 }
@@ -1545,6 +1564,7 @@ static void button_loop(const char *filepath)
         if (ps.state == PB_PLAYING)
         {
             /* ---- DECODE PHASE: burst-fill the ring buffer ---- */
+            perf_mark_decode_start();
             if (ps.ring.count < ps.ring.capacity)
             {
                 int decoded = ring_burst_decode(BURST_MAX);
@@ -1572,8 +1592,10 @@ static void button_loop(const char *filepath)
                 else if (fill > 50)
                     media_boost_idle();
             }
+            perf_mark_decode_end();
 
             /* ---- DISPLAY PHASE: PTS-driven frame consumption ---- */
+            perf_mark_display_start();
             {
                 const struct ring_frame *frame = ring_peek();
                 uint32_t clock_ms;
@@ -1692,7 +1714,7 @@ static void button_loop(const char *filepath)
                         ring_consume();
                         perf_log(ps.ring.count, ps.ring.capacity,
                                  compositor_is_active(),
-                                 ps.osd_visible);
+                                 ps.osd_visible, drift);
                     }
                 }
                 else
@@ -1723,7 +1745,10 @@ static void button_loop(const char *filepath)
                 if (wait < 0) wait = 0;
                 if (wait > HZ) wait = HZ;
 
+                perf_mark_display_end();
+                perf_mark_wait_start();
                 btn = button_get_w_tmo(wait > 0 ? wait : 0);
+                perf_mark_wait_end();
             }
         }
         else
