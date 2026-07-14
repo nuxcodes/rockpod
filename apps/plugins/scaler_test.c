@@ -217,10 +217,18 @@ enum plugin_status plugin_start(const void *parameter)
     while(!(LCD_STATUS&0x2));
     LR(0x80)=0;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LCD_CON=0x81100DA8;
+    LCD_CON=0x80100DA8;  /* P18: WD=1, bits[4:3]=01 */
     LR(0x70)=1;push_frame();
-    vlog("P18: CON=0x%08lx (expect 0x81100DA8)",(unsigned long)LCD_CON);
-    busywait_us(4000000);
+    vlog("P18a: CON=0x%08lx (wrote 0x80100DA8)",(unsigned long)LCD_CON);
+    busywait_us(2000000);
+
+    /* Also try without WD bit */
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LR(0x70)=0;
+    LCD_CON=0x80000DA8;  /* P18: WD=0, bits[4:3]=01 (driver's P18 value) */
+    LR(0x70)=1;push_frame();
+    vlog("P18b: CON=0x%08lx (wrote 0x80000DA8)",(unsigned long)LCD_CON);
+    busywait_us(2000000);
 
     /* Restore P16 */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
