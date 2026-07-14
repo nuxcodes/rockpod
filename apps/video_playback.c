@@ -84,9 +84,32 @@ extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
 #define RESUME_PATH      ROCKBOX_DIR "/video_resume.dat"
 #define MAX_RESUME       64
 
+/* Ring buffer */
+#define RING_MAX_FRAMES   8
+#define RING_SMALL_FRAMES 4
+#define BURST_MAX         4
+
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
 /* ------------------------------------------------------------------ */
+
+struct ring_frame {
+    uint8_t *y;
+    uint8_t *cb;
+    uint8_t *cr;
+    uint32_t pts_ms;
+    int w, h;
+};
+
+struct frame_ring {
+    struct ring_frame frames[RING_MAX_FRAMES];
+    int capacity;
+    int head;
+    int tail;
+    int count;
+    int frame_y_size;
+    int frame_c_size;
+};
 
 enum playback_state {
     PB_STOPPED = 0,
@@ -164,8 +187,11 @@ static struct {
 
     /* Audio */
     bool has_audio;
-    bool audio_clock_lost; /* audio EOF/error: fell back to tick pacing */
+    bool audio_clock_lost;
     uint32_t audio_sample_rate;
+
+    /* Frame ring buffer */
+    struct frame_ring ring;
 } ps;
 
 /* Tiny buffers for initial metadata-only demux pass */
@@ -613,6 +639,156 @@ static void update_frame_time(void)
 
     if (ps.demux->timescale > 0)
         ps.curr_time_ms = (uint32_t)(ticks * 1000 / ps.demux->timescale);
+}
+
+/* ------------------------------------------------------------------ */
+/* Ring buffer                                                        */
+/* ------------------------------------------------------------------ */
+
+static void ring_init(int vid_w, int vid_h, uint8_t *pool)
+{
+    struct frame_ring *r = &ps.ring;
+    int y_sz = vid_w * vid_h;
+    int c_sz = (vid_w / 2) * (vid_h / 2);
+    int i;
+    uint8_t *p = pool;
+
+    memset(r, 0, sizeof(*r));
+    r->capacity = (vid_w <= 320 && vid_h <= 240)
+                ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
+    r->frame_y_size = y_sz;
+    r->frame_c_size = c_sz;
+
+    for (i = 0; i < r->capacity; i++)
+    {
+        r->frames[i].y  = p; p += y_sz;
+        r->frames[i].cb = p; p += c_sz;
+        r->frames[i].cr = p; p += c_sz;
+    }
+}
+
+static uint32_t sample_to_pts_ms(uint32_t sample_idx)
+{
+    uint64_t ticks = 0;
+    uint32_t remaining = sample_idx;
+    uint32_t i;
+
+    for (i = 0; i < ps.demux->num_stts && remaining > 0; i++)
+    {
+        uint32_t count = ps.demux->stts[i].sample_count;
+        if (remaining <= count)
+        {
+            ticks += (uint64_t)remaining * ps.demux->stts[i].sample_delta;
+            break;
+        }
+        ticks += (uint64_t)count * ps.demux->stts[i].sample_delta;
+        remaining -= count;
+    }
+
+    if (ps.demux->timescale > 0)
+        return (uint32_t)(ticks * 1000 / ps.demux->timescale);
+    return 0;
+}
+
+static int ring_decode_one(void)
+{
+    struct frame_ring *r = &ps.ring;
+    struct ring_frame *slot;
+    uint32_t offset, size;
+    int pos, ret;
+    uint32_t pts;
+
+    if (r->count >= r->capacity)
+        return 0;
+    if (ps.cur_sample >= ps.num_samples)
+        return -1;
+
+    pts = sample_to_pts_ms(ps.cur_sample);
+
+    if (mp4v_get_sample_offset(ps.demux, ps.cur_sample, &offset, &size) < 0)
+        return -1;
+    if ((int)size > ps.read_buf_size)
+        size = (uint32_t)ps.read_buf_size;
+
+    lseek(ps.vid_fd, offset, SEEK_SET);
+    if (read(ps.vid_fd, ps.read_buf, size) != (ssize_t)size)
+        return -1;
+
+    ps.cur_sample++;
+
+    pos = 0;
+    while (pos + (int)ps.nalu_len_size <= (int)size)
+    {
+        uint32_t nalu_len = 0;
+        int i;
+        for (i = 0; i < (int)ps.nalu_len_size; i++)
+            nalu_len = (nalu_len << 8) | ps.read_buf[pos + i];
+        pos += ps.nalu_len_size;
+
+        if (nalu_len == 0 || pos + (int)nalu_len > (int)size)
+            break;
+
+        ret = vpu_h264_decode_nalu(ps.decoder, ps.read_buf + pos, nalu_len);
+        pos += nalu_len;
+
+        if (ret == 1)
+        {
+            const uint8_t *y, *cb, *cr;
+            int w, h;
+            vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+
+            slot = &r->frames[r->head];
+            memcpy(slot->y,  y,  r->frame_y_size);
+            memcpy(slot->cb, cb, r->frame_c_size);
+            memcpy(slot->cr, cr, r->frame_c_size);
+            slot->pts_ms = pts;
+            slot->w = w;
+            slot->h = h;
+
+            r->head = (r->head + 1) % r->capacity;
+            r->count++;
+            return 1;
+        }
+        else if (ret < 0)
+            return -1;
+    }
+    return 0;
+}
+
+static int ring_burst_decode(int max_frames)
+{
+    int decoded = 0;
+    int retries = 0;
+
+    while (decoded < max_frames && ps.ring.count < ps.ring.capacity)
+    {
+        int ret = ring_decode_one();
+        if (ret == 1) { decoded++; retries = 0; }
+        else if (ret == 0) { if (++retries > 16) break; }
+        else break;
+    }
+    return decoded;
+}
+
+static const struct ring_frame *ring_peek(void)
+{
+    if (ps.ring.count == 0) return NULL;
+    return &ps.ring.frames[ps.ring.tail];
+}
+
+static void ring_consume(void)
+{
+    struct frame_ring *r = &ps.ring;
+    if (r->count == 0) return;
+    r->tail = (r->tail + 1) % r->capacity;
+    r->count--;
+}
+
+static void ring_flush(void)
+{
+    ps.ring.head = 0;
+    ps.ring.tail = 0;
+    ps.ring.count = 0;
 }
 
 /* ------------------------------------------------------------------ */
