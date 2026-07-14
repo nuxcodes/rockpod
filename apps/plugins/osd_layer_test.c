@@ -170,7 +170,7 @@ enum plugin_status plugin_start(const void *parameter)
     LCD_CON=0x81100DB9;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x00F00140;
     while(!(LCD_STATUS&0x2));
-    LCD_CON=(LCD_CON&0x80000007)|0x01000C20;
+    LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
