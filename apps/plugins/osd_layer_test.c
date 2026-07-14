@@ -34,6 +34,9 @@ static void ili_data(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
 static void push_frame(void) {
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
     LR(0x80)=0;
 }
 
@@ -63,7 +66,7 @@ static void comp_hw_init(void) {
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F;c[0x024/4]=0x00FFFFFF;
+    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;c[0x024/4]=0x00FFFFFF;
 }
 
 /* Layer enable bits (ROM-verified, reversed order) */
@@ -163,19 +166,19 @@ enum plugin_status plugin_start(const void *parameter)
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
-    CR(0x054)=0x00F00140;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
-    CR(0x040)=0;CR(0x044)=PH(cbo);CR(0x3AC)=0x04004003;CR(0x0D4)=1;
+    CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
+    CR(0x040)=0;CR(0x044)=PH(cbo);CR(0x3AC)=0;CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
-    LCD_CON=0x81100DB9;LR(0x88)=0x01000000;LR(0x20)=0x33;
-    LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x00F00140;
+    LCD_CON=0x80100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
     while(!(LCD_STATUS&0x2));
     LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB9;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
     CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
     push_frame();
 
