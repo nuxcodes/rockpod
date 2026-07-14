@@ -87,7 +87,6 @@ static const uint8_t lcd_awake_seq_01[] =
 #if defined(HAVE_LCD_SLEEP) || defined(BOOTLOADER)
 /* init sequences */
 
-#if 0 /* ILI9326 init — unused, type 2/3 now use lcd_init_seq_dcs23 */
 static const uint16_t lcd_init_seq_23[] =
 {
 #ifdef HAVE_LCD_SLEEP
@@ -143,45 +142,6 @@ static const uint16_t lcd_init_seq_23[] =
     MREG16(1),  0x007, 0x0072,
     SLEEP16(15),
     MREG16(1),  0x007, 0x0173,
-    END
-};
-#endif /* ILI9326 init */
-
-/* DCS init for type 2/3 panels — from Apple ROM table A at 0x9F05CA
- * Panel IS ILI9326 — DCS commands do not work (no DCS decoder).
- * COLMOD changed from Apple's 0x06 (18-bit) to 0x05 (16-bit RGB565)
- * to match Rockbox's P16 DMA pixel format.
- * Compiled for both BOOTLOADER and main firmware — main firmware needs
- * this to override ILI9326 state left by old bootloaders. */
-static const uint8_t lcd_init_seq_dcs23[] =
-{
-    CMD,   0x11,  0,                    /* Sleep Out */
-    SLEEP, 15,                          /* 150 ms (datasheet min 120, +25% margin) */
-    CMD,   0xEF,  1, 0x80,             /* Extended access */
-    CMD,   0xC0,  1, 0x06,             /* Power Control 1 */
-    CMD,   0xC1,  1, 0x03,             /* Power Control 2 */
-    CMD,   0xC2,  2, 0x12, 0x00,       /* Power Control 3 */
-    CMD,   0xC3,  2, 0x12, 0x00,       /* Power Control 4 */
-    CMD,   0xC4,  2, 0x12, 0x00,       /* Power Control 5 */
-    CMD,   0xC5,  2, 0x40, 0x38,       /* VCOM Control */
-    CMD,   0xB1,  2, 0x5F, 0x3F,       /* Frame Rate Control 1 */
-    CMD,   0xB2,  2, 0x5F, 0x3F,       /* Frame Rate Control 2 */
-    CMD,   0xB3,  2, 0x5F, 0x3F,       /* Frame Rate Control 3 */
-    CMD,   0xB4,  1, 0x02,             /* Display Inversion Control */
-    CMD,   0xB6,  2, 0x12, 0x02,       /* Display Function Control */
-    CMD,   0x35,  1, 0x00,             /* Tearing Effect Line On */
-    CMD,   0x26,  1, 0x10,             /* Gamma Set */
-    CMD,   0xFE,  1, 0x00,             /* Extended command access */
-    CMD,   0xE0, 11, 0x0F,0x70,0x47,0x03,0x02,0x02,0xA0,0x94,0x05,0x00,0x0E, /* Positive Gamma */
-    CMD,   0xE1, 11, 0x02,0x43,0x77,0x00,0x0F,0x05,0x49,0x0A,0x02,0x0E,0x00, /* Negative Gamma */
-    CMD,   0xE2, 11, 0x2F,0x63,0x20,0x50,0x00,0x07,0xD1,0x13,0x00,0x00,0x0E,
-    CMD,   0xE3, 11, 0x50,0x20,0x60,0x23,0x0F,0x00,0x31,0x1D,0x07,0x0E,0x00,
-    CMD,   0xE4, 11, 0x5E,0x50,0x65,0x27,0x00,0x0B,0xDF,0xF1,0x01,0x00,0x0E,
-    CMD,   0xE5, 11, 0x20,0x67,0x55,0x50,0x0E,0x01,0x1F,0xFD,0x0B,0x0E,0x00,
-    CMD,   0x3a,  1, 0x05,             /* Pixel Format = RGB565 (16-bit for P16 DMA) */
-    CMD,   0x36,  1, 0x60,             /* MADCTL = MV+MX (landscape, standard scan) */
-    CMD,   0x13,  0,                   /* Normal Mode On */
-    CMD,   0x29,  0,                   /* Display On */
     END
 };
 
@@ -280,7 +240,7 @@ static struct lcd_info_rec lcd_info_list[] =
         .seq_awake  = (void*) lcd_awake_seq_01,  /* DCS wake */
     #endif
     #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-        .seq_init   = (void*) lcd_init_seq_dcs23,  /* DCS init (sent via temp P8 bit24) */
+        .seq_init   = (void*) lcd_init_seq_23,  /* DCS init (sent via temp P8 bit24) */
     #endif
     },
 
@@ -295,7 +255,7 @@ static struct lcd_info_rec lcd_info_list[] =
         .seq_awake  = (void*) lcd_awake_seq_01,
     #endif
     #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
-        .seq_init   = (void*) lcd_init_seq_dcs23,  /* Same DCS init as type 2 */
+        .seq_init   = (void*) lcd_init_seq_23,  /* Same DCS init as type 2 */
     #endif
     },
 };

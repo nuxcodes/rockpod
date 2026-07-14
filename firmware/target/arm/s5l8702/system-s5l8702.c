@@ -480,11 +480,7 @@ static void syscon_preinit(void)
     soc_set_hsdiv(1);
 
 #if CONFIG_CPU == S5L8702
-#ifdef IPOD_6G
-    /* BEFORE PWRCON_AHB — iBoot clocks are all ON */
-    *(volatile uint32_t *)(0x38300070) = 0;  /* disable passthrough */
-
-    /* NOW gate everything except IRAM + compositor */
+#if defined(IPOD_6G) && !defined(BOOTLOADER)
     PWRCON_AHB = ~((1 << CLOCKGATE_SMx) | (1 << CLOCKGATE_SM1) |
                    (1 << 7) | (1 << 13));
 #else
