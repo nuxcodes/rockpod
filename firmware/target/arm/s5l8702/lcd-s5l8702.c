@@ -248,6 +248,37 @@ static void s5l_lcd_recv_cmd8(uint8_t cmd, int len, uint8_t *buf)
 #define s5l_lcd_set_command_mode()  s5l_lcd_write_config(lcd_cmd_mode)
 #define s5l_lcd_set_frame_mode()    s5l_lcd_write_config(lcd_frame_mode)
 
+/* DCS sequence runner for PAR18 type 2/3 panels via P8 bit24.
+ * Apple enters/exits command mode for EACH command (ROM 0x0B0BFC-0x0B0C38).
+ * Without per-command LCD_CON toggle, commands are dropped by the FIFO. */
+static void s5l_lcd_run_seq8_dcs(void *seq8)
+{
+    uint8_t *seq = seq8;
+
+    while (1) switch (*seq++)
+    {
+        case CMD:
+        {
+            uint8_t cmd = *seq++;
+            int len = *seq++;
+            s5l_lcd_write_config(0x81000C21);
+            udelay(2);
+            s5l_lcd_send_cmd8(cmd, len, seq);
+            while (!(LCD_STATUS & 0x2));
+            udelay(2);
+            s5l_lcd_write_config(lcd_frame_mode);
+            seq += len;
+            break;
+        }
+        case SLEEP:
+            sleep(*seq++);
+            break;
+        case END:
+        default:
+            return;
+    }
+}
+
 
 static void s5l_lcd_run_seq8(void *seq8)
 {
@@ -620,7 +651,13 @@ void lcd_init_device(void)
 
 #if defined(BOOTLOADER) || defined(HAVE_LCD_SLEEP)
     if (lcd_info->seq_init) {
-        lcd_run_seq(lcd_info->seq_init);
+        if (lcd_info->lcd_type >= 2 && lcd_info->mpuiface == LCD_MPUIFACE_PAR18) {
+            /* Type 2/3: panel is ILI9326 (no DCS decoder).
+             * DCS init is useless — skip it. ILI9326 register init
+             * was already done by the bootloader. */
+        } else {
+            lcd_run_seq(lcd_info->seq_init);
+        }
     }
 #endif
 

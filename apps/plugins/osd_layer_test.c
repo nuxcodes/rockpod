@@ -36,23 +36,6 @@ static void push_frame(void) {
     LR(0x80)=0;
 }
 
-static uint32_t gram_sample(void) {
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LR(0x70)=0; LR(0x80)=1;
-    while(!(LCD_STATUS&0x2));
-    {volatile int d=0;while(d++<200);}
-    LCD_CON=0x80000DA9;
-    while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
-    uint32_t g=LCD_DBUFF & 0x3FFFF;
-    LCD_CON=0x81100DB0; LR(0x80)=0; LR(0x70)=1;
-    push_frame();
-    return g;
-}
-
 static void busywait_us(uint32_t us) {
     uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
 }
@@ -150,12 +133,12 @@ enum plugin_status plugin_start(const void *parameter)
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
     for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
-    for(int o=0x04C;o<=0x054;o+=4)CR(o)=0;
+    for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004002;CR(0x0D4)=1;
+    CR(0x3AC)=0;CR(0x0D4)=1;
     rb->commit_discard_dcache();
     LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
@@ -169,7 +152,6 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();
     vlog("Video baseline 2s");
     busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
 
     /* Fill overlay FB with RED */
     for(int i=0;i<320*240;i++) ovl[i]=0xF800;
@@ -190,7 +172,6 @@ enum plugin_status plugin_start(const void *parameter)
             vlog("T%d: 3AC=0x%08lx L0only fmt=RGB565",
                  test++, (unsigned long)ac_vals[a]);
             busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
             /* restore L5 */
             {uint32_t v=CR(0x008);v|=0x080;CR(0x008)=v;}
         }
@@ -206,7 +187,6 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: bit8=0 (CSC all) L0only RGB565", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
         /* restore */
         {uint32_t v=CR(0x008);v|=0x100;v|=0x080;v&=~0x040;CR(0x008)=v;}
     }
@@ -243,7 +223,6 @@ enum plugin_status plugin_start(const void *parameter)
             push_frame();
             vlog("T%d: %s L0only", test++, fdesc[f]);
             busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
             {uint32_t v=CR(0x008);v|=0x080;v&=~0x040;CR(0x008)=v;}
         }
     }
@@ -264,7 +243,6 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: Layer1 RED L5off", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
         {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
     }
 
@@ -281,7 +259,6 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: Layer4 RED L5off", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
         {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     }
 
@@ -297,14 +274,12 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: L0+L5 3AC=0x04004003", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
 
         CR(0x3AC)=0;
         CR(0x024)=1;
         push_frame();
         vlog("T%d: L0+L5 3AC=0", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
 
         {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
     }
@@ -321,7 +296,6 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: PWRCON bits14-16+18 enabled, L0only GREEN", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
 
         /* L0+L5 */
         {uint32_t v=CR(0x008);v|=0x080;CR(0x008)=v;}
@@ -329,7 +303,6 @@ enum plugin_status plugin_start(const void *parameter)
         push_frame();
         vlog("T%d: PWRCON bits14-16+18 L0+L5 GREEN", test++);
         busywait_us(2000000);
-            {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx",(unsigned long)g);}
 
         {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
     }

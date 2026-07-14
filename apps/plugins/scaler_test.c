@@ -40,27 +40,6 @@ static void push_frame(void)
     LR(0x80) = 0;
 }
 
-static uint32_t gram_sample(void) {
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LR(0x70)=0; LR(0x80)=1;
-    while(!(LCD_STATUS&0x2));
-    {volatile int d=0;while(d++<200);}
-    LCD_CON=0x80000DA9;
-    while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
-    uint32_t g=LCD_DBUFF & 0x3FFFF;
-    LCD_CON=0x81100DB0; LR(0x80)=0; LR(0x70)=1;
-    push_frame();
-    return g;
-}
-
-static void busywait_us(uint32_t us) {
-    uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
-}
-
 static void comp_hw_init(void)
 {
     volatile uint32_t *c = (volatile uint32_t*)COMP;
@@ -105,7 +84,7 @@ static void comp_start(int fw, int fh,
     CR(0x054)=0x014000F0;
     CR(0x038)=PH(y); CR(0x03C)=PH(cr);
     CR(0x040)=0;     CR(0x044)=PH(cb);
-    CR(0x3AC)=0;
+    CR(0x3AC)=0x04004002;
     CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
@@ -244,7 +223,7 @@ enum plugin_status plugin_start(const void *parameter)
             ovl[i] = 0xF800;
         rb->commit_discard_dcache();
 
-        CR(0x058) = 320;  /* half_stride = (2*320)/2 for fullscreen */
+        CR(0x058) = 160;
         CR(0x05C) = 0x10010100;
         CR(0x060) = PH(ovl);
         CR(0x064) = 240|(320U<<16);
@@ -267,55 +246,6 @@ enum plugin_status plugin_start(const void *parameter)
         {uint32_t v=CR(0x008);v&=~0x040;v|=0x080;CR(0x008)=v;}
         CR(0x024) = 1;
         push_frame();
-    }
-
-    /* === COLOR TEST: Layer 1 with YCbCr-encoded RED === */
-    vlog("=== COLOR TEST ===");
-    {
-        size_t dec_size = vpu_h264_buf_size(640, 480);
-        uint8_t *ovl_p = ab + dec_size + 512*1024 + fw*fh*2;
-        ovl_p = (uint8_t*)(((uintptr_t)ovl_p+31)&~31UL);
-        uint16_t *ovl = (uint16_t*)ovl_p;
-
-        /* Test A: RGB RED (0xF800) on Layer 1 */
-        for(int i=0;i<320*240;i++) ovl[i]=0xF800;
-        rb->commit_discard_dcache();
-        {uint32_t v=CR(0x008);v&=~0x080;v|=0x020;CR(0x008)=v;}
-        CR(0x070)=320;CR(0x074)=0x10010100;CR(0x078)=PH(ovl);
-        CR(0x07C)=240|(320U<<16);CR(0x080)=80;CR(0x084)=0;
-        CR(0x024)=1;push_frame();
-        vlog("  CA: L1 RGB RED (0xF800)");
-        busywait_us(2000000);
-        {uint32_t g=gram_sample();
-         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
-              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-              (unsigned long)(g&0x3F));}
-
-        /* Test B: YCbCr-encoded RED (0x52DE) on Layer 1 */
-        for(int i=0;i<320*240;i++) ovl[i]=0x52DE;
-        rb->commit_discard_dcache();
-        CR(0x078)=PH(ovl);CR(0x024)=1;push_frame();
-        vlog("  CB: L1 YCbCr RED (0x52DE)");
-        busywait_us(2000000);
-        {uint32_t g=gram_sample();
-         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
-              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-              (unsigned long)(g&0x3F));}
-
-        /* Test C: RGB GREEN (0x07E0) on Layer 1 */
-        for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
-        rb->commit_discard_dcache();
-        CR(0x078)=PH(ovl);CR(0x024)=1;push_frame();
-        vlog("  CC: L1 RGB GREEN (0x07E0)");
-        busywait_us(2000000);
-        {uint32_t g=gram_sample();
-         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
-              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-              (unsigned long)(g&0x3F));}
-
-        /* Restore */
-        {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
-        CR(0x024)=1;push_frame();
     }
 
     /* === P18 TEST === */

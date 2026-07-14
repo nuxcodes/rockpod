@@ -151,7 +151,7 @@ void compositor_start(int frame_w, int frame_h,
     /* Layer 5 — YUV420 planes at native resolution */
     /* Clear Layer 5 registers (skip 0x024 — ROM data table value 0x7D) */
     for (int o = 0x028; o <= 0x044; o += 4) CR(o) = 0;
-    for (int o = 0x04C; o <= 0x054; o += 4) CR(o) = 0;
+    for (int o = 0x04C; o <= 0x058; o += 4) CR(o) = 0;
     CR(0x050) = ((uint32_t)disp_x << 16) | (uint32_t)disp_y;
     CR(0x028) = 0x100;
     CR(0x02C) = frame_w | ((frame_w/2) << 16);
@@ -162,7 +162,7 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0x04004002;    /* pipeline ON — required for overlay layers */
+    CR(0x3AC) = 0;                /* no pipeline — proven tear-free */
     CR(0x0D4) = 1;
     /* bit 8 SET = CSC for Layer 5 only. Layers 0-4 pass through as RGB. */
     { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
