@@ -33,6 +33,9 @@
 #define CPUFREQ_NORMAL  54000000
 
 void set_ahb_boost(bool on);
+void set_media_boost(bool on);
+void media_boost_active(void);
+void media_boost_idle(void);
 
 #elif (CONFIG_CPU == S5L8720)
 #define CPUFREQ_MAX     266000000

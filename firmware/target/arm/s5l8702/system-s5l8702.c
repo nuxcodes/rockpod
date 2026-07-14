@@ -112,6 +112,7 @@ static const struct clocking_mode clk_modes[] =
     { 1,    2,    2,     4 },        /* 216   108   54    27      42  */
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
     { 2,    2,    2,     4 },        /* 108   108   54    27          */
+    { 2,    4,    2,     2 },        /* 108   54    27    27          */
     { 4,    4,    2,     2 },        /* 54    54    27    27      21  */
 #endif
 };
@@ -121,6 +122,7 @@ enum {
     CLK_BOOST = 0,
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
     CLK_USB = 1,
+    CLK_MEDIA = 2,
 #endif
     CLK_UNBOOST = N_CLK_MODES - 1,
 };
@@ -278,6 +280,16 @@ int system_memory_guard(int newmode)
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
 static bool ahb_boost_flag = false;
+static bool media_boost_flag = false;
+
+static int unboosted_level(void)
+{
+    if (ahb_boost_flag)
+        return CLK_USB;
+    if (media_boost_flag)
+        return CLK_MEDIA;
+    return CLK_UNBOOST;
+}
 
 void set_ahb_boost(bool on)
 {
@@ -291,9 +303,46 @@ void set_ahb_boost(bool on)
         }
         else
         {
+            set_clocking_level(unboosted_level());
+            if (!media_boost_flag)
+                pmu_set_cpu_voltage(false);
+        }
+    }
+}
+
+void set_media_boost(bool on)
+{
+    media_boost_flag = on;
+    if (cpu_frequency != CPUFREQ_MAX && !ahb_boost_flag)
+    {
+        if (on)
+        {
+            pmu_set_cpu_voltage(true);
+            set_clocking_level(CLK_MEDIA);
+        }
+        else
+        {
             set_clocking_level(CLK_UNBOOST);
             pmu_set_cpu_voltage(false);
         }
+    }
+}
+
+void media_boost_active(void)
+{
+    if (media_boost_flag && cpu_frequency != CPUFREQ_MAX && !ahb_boost_flag)
+    {
+        pmu_set_cpu_voltage(true);
+        set_clocking_level(CLK_MEDIA);
+    }
+}
+
+void media_boost_idle(void)
+{
+    if (media_boost_flag && cpu_frequency != CPUFREQ_MAX && !ahb_boost_flag)
+    {
+        set_clocking_level(CLK_UNBOOST);
+        pmu_set_cpu_voltage(false);
     }
 }
 
@@ -309,8 +358,9 @@ void set_cpu_frequency(long frequency)
     }
     else
     {
-        set_clocking_level(ahb_boost_flag ? CLK_USB : CLK_UNBOOST);
-        if (!ahb_boost_flag)
+        int level = unboosted_level();
+        set_clocking_level(level);
+        if (level == CLK_UNBOOST)
             pmu_set_cpu_voltage(false); /* low */
     }
 

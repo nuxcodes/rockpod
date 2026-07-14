@@ -76,6 +76,10 @@ long button_get(bool block);
 long button_get_w_tmo(int ticks);
 intptr_t button_get_data(void);
 
+#ifdef HAVE_ADJUSTABLE_CPU_FREQ
+void button_boost_set_inhibit(bool inhibit);
+#endif
+
 #ifdef HAVE_HEADPHONE_DETECTION
 bool headphones_inserted(void);
 #endif

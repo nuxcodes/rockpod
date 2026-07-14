@@ -34,11 +34,25 @@ static intptr_t button_data; /* data value from last message dequeued */
 
 #ifdef HAVE_ADJUSTABLE_CPU_FREQ
 static bool button_boosted = false;
+static bool button_boost_inhibited = false;
 static long button_unboost_tick;
 #define BUTTON_UNBOOST_TMO HZ
 
+void button_boost_set_inhibit(bool inhibit)
+{
+    button_boost_inhibited = inhibit;
+    if (inhibit && button_boosted)
+    {
+        button_boosted = false;
+        cpu_boost(false);
+    }
+}
+
 static void button_boost(bool state)
 {
+    if (button_boost_inhibited)
+        return;
+
     if (state)
     {
         /* update the unboost time each button_boost(true) call */

@@ -31,6 +31,7 @@
 #ifdef IPOD_6G
 
 #include "system.h"
+#include "system-target.h"
 #include "lcd.h"
 #include "font.h"
 #include "button.h"
@@ -1533,6 +1534,15 @@ static void button_loop(const char *filepath)
                 }
             }
 
+            /* DVFS based on ring fill level */
+            {
+                int fill = ps.ring.count * 100 / ps.ring.capacity;
+                if (fill < 25)
+                    media_boost_active();
+                else if (fill > 50)
+                    media_boost_idle();
+            }
+
             /* ---- DISPLAY PHASE: PTS-driven frame consumption ---- */
             {
                 const struct ring_frame *frame = ring_peek();
@@ -2159,6 +2169,10 @@ void video_playback_start(const char *filepath, const char *title)
     /* Initialize ring buffer for decode-ahead */
     ring_init(max_w, max_h, ring_pool);
 
+    /* Enable media DVFS and suppress button boost interference */
+    set_media_boost(true);
+    button_boost_set_inhibit(true);
+
     /* Pre-fill ring buffer — show first frame while audio pre-fills */
     ring_burst_decode(BURST_MAX);
     {
@@ -2194,6 +2208,8 @@ void video_playback_start(const char *filepath, const char *title)
     button_loop(filepath);
 
 cleanup:
+    set_media_boost(false);
+    button_boost_set_inhibit(false);
     cpu_boost(false);
     ring_flush();
     if (compositor_is_active()) compositor_stop();
