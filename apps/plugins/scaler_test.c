@@ -42,7 +42,7 @@ static void gram_read(int x, int y, const char *label)
     LR(0x70)=0; LR(0x80)=1;
     while(!(LCD_STATUS&0x2));
     {volatile int d=0;while(d++<100);}
-    LCD_CON=(LCD_CON&0x80000007)|0x01000C20;
+    LCD_CON=0x80000DA9;
     while(!(LCD_STATUS&0x2));
     ili_cmd(0x200);ili_data(x);ili_cmd(0x201);ili_data(y);ili_cmd(0x202);
     while(!(LCD_STATUS&0x2));
@@ -117,9 +117,9 @@ static void comp_start(int fw, int fh,
     LR(0x78)=0x000A000A;
     LR(0x74)=0x00F00140;     /* portrait — Apple ROM value */
 
-    /* ILI9326 GRAM setup via P18 — preserve PINMAP=1 from P9 */
+    /* ILI9326 GRAM setup via P18 — standard P18, PINMAP irrelevant for 18-bit */
     while(!(LCD_STATUS&0x2));
-    LCD_CON=0x81000DA9;       /* P18 cmd mode with PINMAP=1 preserved */
+    LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
