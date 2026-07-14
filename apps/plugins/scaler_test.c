@@ -76,7 +76,7 @@ static void comp_start(int fw, int fh,
     comp_hw_init();
 
     for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
-    for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
+    for(int o=0x04C;o<=0x054;o+=4)CR(o)=0;
     CR(0x028)=0x100;
     CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);
