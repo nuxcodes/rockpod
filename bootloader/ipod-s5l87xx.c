@@ -777,8 +777,6 @@ void main(void)
 
     usec_timer_init();
 
-    /* diagnostic capture removed */
-
 #ifdef S5L87XX_DEVELOPMENT_BOOTLOADER
     piezo_seq(alive);
 #endif
@@ -790,56 +788,7 @@ void main(void)
         rc = launch_onb(1); /* 27/2 = 13.5 MHz. */
     }
 
-    /* VPP register snapshot: capture key state BEFORE system_preinit.
-     * Uses ONLY stack variables — no writes to DRAM/IRAM/MMIO.
-     * After warm-reset from RetailOS video playback, VPP clocks may
-     * still be enabled, giving us Apple's working configuration. */
-#ifdef IPOD_6G
-#define VPP_SNAP_SIZE 48
-    uint32_t vpp_snap[VPP_SNAP_SIZE];
-    int vpp_n = 0;
-    uint32_t pwrcon0_before = PWRCON(0);
-    vpp_snap[vpp_n++] = 0x56505044;     /* "VPPD" magic */
-    vpp_snap[vpp_n++] = pwrcon0_before;
-    vpp_snap[vpp_n++] = PWRCON(1);
-    vpp_snap[vpp_n++] = *(volatile uint32_t *)(0x3C500008); /* CG16 */
-
-    int vpp_on = !(pwrcon0_before & 0x1C000);
-    vpp_snap[vpp_n++] = vpp_on;
-    if (vpp_on) {
-        volatile uint32_t *c = (volatile uint32_t *)0x39100000;
-        vpp_snap[vpp_n++] = c[0x000/4]; /* CLCD_CTRL */
-        vpp_snap[vpp_n++] = c[0x014/4]; /* VP_IMG_SIZE_Y */
-        vpp_snap[vpp_n++] = c[0x018/4]; /* VP_IMG_SIZE_C */
-        vpp_snap[vpp_n++] = c[0x028/4]; /* Y buf */
-        vpp_snap[vpp_n++] = c[0x02C/4]; /* Cb buf */
-        vpp_snap[vpp_n++] = c[0x030/4]; /* (NV12 CbCr) */
-        vpp_snap[vpp_n++] = c[0x034/4]; /* Y+stride */
-        vpp_snap[vpp_n++] = c[0x038/4]; /* Cb+stride */
-        vpp_snap[vpp_n++] = c[0x03C/4]; /* src_w */
-        vpp_snap[vpp_n++] = c[0x040/4]; /* src_h */
-        vpp_snap[vpp_n++] = c[0x044/4]; /* src_h_pos */
-        vpp_snap[vpp_n++] = c[0x3C0/4]; /* planar mode */
-        vpp_snap[vpp_n++] = c[0x3C4/4]; /* Y stride */
-        vpp_snap[vpp_n++] = c[0x3C8/4]; /* C stride */
-        vpp_snap[vpp_n++] = c[0x3CC/4]; /* endian */
-        c = (volatile uint32_t *)0x39200000;
-        vpp_snap[vpp_n++] = c[0x000/4]; /* MIXER_CTRL */
-        vpp_snap[vpp_n++] = c[0x004/4]; /* MIXER_CFG */
-        vpp_snap[vpp_n++] = c[0x00C/4]; /* MIXER format */
-        c = (volatile uint32_t *)0x39300000;
-        vpp_snap[vpp_n++] = c[0x000/4]; /* DISP_CTRL */
-        vpp_snap[vpp_n++] = c[0x008/4]; /* DISP_MODE */
-    }
-    vpp_snap[vpp_n++] = 0xDEADDEAD;
-#endif
-
     system_preinit();
-
-#ifdef IPOD_6G
-    uint32_t pwrcon0_after = PWRCON(0);
-#endif
-
     memory_init();
     /*
      * XXX: BSS is initialized here, do not use .bss before this line
@@ -884,15 +833,6 @@ void main(void)
     font_init();
     lcd_setfont(FONT_SYSFIXED);
 
-#ifdef IPOD_6G
-    /* VPP diagnostic */
-    lcd_putsf(0, 10, "PWR0 %08lx->%08lx VPP:%s",
-              (unsigned long)pwrcon0_before, (unsigned long)pwrcon0_after,
-              vpp_on ? "ON" : "off");
-    lcd_update();
-    sleep(HZ);
-#endif
-
     // TODO: see if removing this causes the nano3g LCD to initialize properly
 #ifdef S5L87XX_DEVELOPMENT_BOOTLOADER
     sleep(HZ);
@@ -909,8 +849,6 @@ void main(void)
 
     printf("Rockbox boot loader");
     printf("Version: %s", rbversion);
-
-    /* diagnostic display removed */
 
     backlight_init(); /* Turns on the backlight */
 
@@ -1029,20 +967,6 @@ void main(void)
         }
         fatal_error(ERR_RB);
     }
-
-    /* comp_timing.bin save removed */
-
-#ifdef IPOD_6G
-    /* Write VPP register snapshot to file (after disk_mount_all) */
-    if (vpp_snap[0] == 0x56505044) {
-        int fd = open("/vpp_dump.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-        if (fd >= 0) {
-            write(fd, vpp_snap, vpp_n * 4);
-            close(fd);
-            printf("VPP dump: %d regs, clk=%s", vpp_n, vpp_on ? "ON" : "off");
-        }
-    }
-#endif
 
 #ifdef IPOD_6G
     {
