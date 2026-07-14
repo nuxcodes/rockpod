@@ -308,7 +308,6 @@ void compositor_stop(void)
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
     lcd_set_inhibit(false);
-    lcd_update();
 
     comp_active = false;
 }
