@@ -827,7 +827,7 @@ int list_do_action_timeout(struct gui_synclist *lists, int timeout)
             timeout = fade_timeout;
     }
 #endif
-    current_lists = NULL;
+    current_lists = lists;
     add_event_ex(GUI_EVENT_NEED_UI_UPDATE, true, _lists_uiviewport_update_callback, NULL);
     if(lists->scheduled_talk_tick)
     {
