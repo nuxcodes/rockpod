@@ -223,7 +223,7 @@ enum plugin_status plugin_start(const void *parameter)
             ovl[i] = 0xF800;
         rb->commit_discard_dcache();
 
-        CR(0x058) = 160;
+        CR(0x058) = 320;  /* half_stride = (2*320)/2 for fullscreen */
         CR(0x05C) = 0x10010100;
         CR(0x060) = PH(ovl);
         CR(0x064) = 240|(320U<<16);
