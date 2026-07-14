@@ -1,6 +1,5 @@
-/* OSD Layer Test — tests RGB overlay layers 0-4 on top of Layer 5 video.
- * Uses EXACT compositor_start() sequence from the working driver.
- * Auto-runs all tests, USEC_TIMER busy-wait (no yield).
+/* OSD Sweep — brute-force test of overlay layer configurations.
+ * Tests many combinations rapidly. User watches for non-black.
  * Copyright (C) 2025 Nux Li */
 #include "plugin.h"
 #ifdef IPOD_6G
@@ -16,9 +15,6 @@
 #define CR(o) (*(volatile uint32_t*)(COMP+(o)))
 #define LR(o) (*(volatile uint32_t*)(LCD_BASE+(o)))
 #define PH(x) ((uint32_t)((uintptr_t)(x)&0x7FFFFFFF))
-
-#define OVL_W 160
-#define OVL_H 40
 
 static int log_fd = -1;
 static void vlog(const char *fmt, ...) {
@@ -38,23 +34,6 @@ static void push_frame(void) {
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
     while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     LR(0x80)=0;
-}
-
-static uint32_t gram_sample(void) {
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LR(0x70)=0; LR(0x80)=1;
-    while(!(LCD_STATUS&0x2));
-    {volatile int d=0;while(d++<200);}
-    LCD_CON=0x80000DA9;
-    while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
-    uint32_t g=LCD_DBUFF & 0x3FFFF;
-    LCD_CON=0x81100DB0; LR(0x80)=0; LR(0x70)=1;
-    push_frame();
-    return g;
 }
 
 static void busywait_us(uint32_t us) {
@@ -83,31 +62,7 @@ static void comp_hw_init(void) {
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;c[0x024/4]=0x00FFFFFF;
-}
-
-/* Layer enable bits (ROM-verified, reversed order) */
-static const uint32_t layer_bits[]={0x040,0x020,0x010,0x008,0x004};
-
-static void layer_show(int n, uint16_t *fb, int w, int h, int x, int y) {
-    uint32_t base=0x058+(unsigned)n*0x18;
-    uint32_t fmt=(n<=1)?0x10010100:0x00010100;
-    int hw_y=240-h-y; if(hw_y<0)hw_y=0;
-    CR(base+0x00)=(2*w)/2;
-    CR(base+0x04)=fmt;
-    CR(base+0x08)=PH(fb);
-    CR(base+0x0C)=h|((uint32_t)w<<16);
-    CR(base+0x10)=(2*w)/8;
-    CR(base+0x14)=x|((uint32_t)hw_y<<16);
-    if(n<5){uint32_t v=CR(0x008);v|=layer_bits[n];CR(0x008)=v;}
-    vlog("L%d: fmt=0x%08lx fb=0x%08lx %dx%d@(%d,%d) hw_y=%d ctrl=0x%08lx",
-         n,(unsigned long)fmt,(unsigned long)PH(fb),w,h,x,y,hw_y,
-         (unsigned long)CR(0x008));
-}
-
-static void layer_hide(int n) {
-    CR(0x058+(unsigned)n*0x18+0x04)=0;
-    if(n<5){uint32_t v=CR(0x008);v&=~layer_bits[n];CR(0x008)=v;}
+    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
 }
 
 static int fsc(const uint8_t*b,int l,int*s){
@@ -115,13 +70,23 @@ static int fsc(const uint8_t*b,int l,int*s){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
 
+static void setup_l0(uint16_t *fb, int w, int h, uint32_t fmt) {
+    CR(0x058) = (2*w)/2;
+    CR(0x05C) = fmt;
+    CR(0x060) = PH(fb);
+    CR(0x064) = h|((uint32_t)w<<16);
+    CR(0x068) = ((2*w)+7)/8;
+    CR(0x06C) = 0;
+    {uint32_t v=CR(0x008);v|=0x040;CR(0x008)=v;}
+}
+
 enum plugin_status plugin_start(const void *parameter)
 {
     const char*path=parameter?(const char*)parameter:"/test_iframe.264";
     if(!*path)return PLUGIN_ERROR;
     rb->cpu_boost(true);rb->audio_stop();
-    log_fd=rb->open("/osd_layer_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== OSD Layer Test ===");
+    log_fd=rb->open("/osd_sweep.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
+    vlog("=== OSD SWEEP TEST ===");
 
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
@@ -147,36 +112,24 @@ enum plugin_status plugin_start(const void *parameter)
             else vlog("Decoded %dx%d",fw,fh);
         } else rb->close(fd);
     }
-    if(!yo){
-        fw=320;fh=240;
-        uint8_t*ty=ab,*tcb=ab+fw*fh,*tcr=tcb+(fw/2)*(fh/2);
-        for(int r=0;r<fh;r++)for(int c=0;c<fw;c++){
-            int i=r*fw+c;
-            if(c<fw/3)ty[i]=81;else if(c<2*fw/3)ty[i]=145;else ty[i]=41;}
-        for(int r=0;r<fh/2;r++)for(int c=0;c<fw/2;c++){
-            int i=r*(fw/2)+c;
-            if(c<fw/6){tcb[i]=90;tcr[i]=240;}
-            else if(c<fw/3){tcb[i]=54;tcr[i]=34;}
-            else{tcb[i]=240;tcr[i]=110;}}
-        yo=ty;cbo=tcb;cro=tcr;
-        vlog("Test pattern %dx%d",fw,fh);
-    }
+    if(!yo){fw=320;fh=240;
+        uint8_t*ty=ab;rb->memset(ty,145,fw*fh);
+        rb->memset(ty+fw*fh,54,(fw/2)*(fh/2));
+        rb->memset(ty+fw*fh+(fw/2)*(fh/2),34,(fw/2)*(fh/2));
+        yo=ty;cbo=ty+fw*fh;cro=cbo+(fw/2)*(fh/2);}
 
     uint32_t s_con=LCD_CON,s_7c=LR(0x7C),s_88=LR(0x88);
     uint32_t s_20=LR(0x20),s_74=LR(0x74),s_78=LR(0x78);
 
-    /* OSD framebuffer — 32-byte aligned */
-    uint16_t *ovl_fb;
-    {
-        size_t ds=vpu_h264_buf_size(640,480);
-        uintptr_t p=(uintptr_t)(ab+ds+fw*fh*2+4096);
-        ovl_fb=(uint16_t*)((p+31)&~(uintptr_t)31);
-    }
-    rb->memset(ovl_fb,0,OVL_W*OVL_H*2*4);
+    /* Overlay FB */
+    uint16_t *ovl;
+    {size_t ds=vpu_h264_buf_size(640,480);
+     uintptr_t p=(uintptr_t)(ab+ds+fw*fh*2+4096);
+     ovl=(uint16_t*)((p+31)&~(uintptr_t)31);}
 
-    /* Start compositor — EXACT compositor_start() */
+    /* Start compositor with L5 video */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    PWRCON(0)&=~(0x2080|(7<<14));  /* compositor core + overlay DMA clocks */
+    PWRCON(0)&=~(0x2080|(7<<14));
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
     for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
@@ -185,15 +138,11 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004002;
-    CR(0x0D4)=1;
-    /* bit 8 SET = CSC for Layer 5 only, RGB passthrough for overlays */
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    CR(0x3AC)=0;CR(0x0D4)=1;
     rb->commit_discard_dcache();
     LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
@@ -201,40 +150,166 @@ enum plugin_status plugin_start(const void *parameter)
     while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
     push_frame();
-
-    vlog("Video baseline active, holding 2s");
-    vlog("  008=0x%08lx 3AC=0x%08lx", (unsigned long)CR(0x008), (unsigned long)CR(0x3AC));
+    vlog("Video baseline 2s");
     busywait_us(2000000);
 
-    /* ONE DEFINITIVE TEST: fullscreen RED, L0 only, no video */
-    /* Fill 320x240 RED */
-    for(int i=0;i<320*240;i++) ovl_fb[i]=0xF800;
+    /* Fill overlay FB with RED */
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
     rb->commit_discard_dcache();
 
-    /* Disable L5, enable L0 */
-    {uint32_t v=CR(0x008);v&=~0x080;v|=0x040;CR(0x008)=v;}
-    CR(0x058)=160; CR(0x05C)=0x10010100; CR(0x060)=PH(ovl_fb);
-    CR(0x064)=240|(320U<<16); CR(0x068)=80; CR(0x06C)=0;
-    CR(0x024)=1;
-    push_frame();
-    vlog("T0: FULLSCREEN RED L0only. 008=0x%08lx fb=0x%08lx",
-         (unsigned long)CR(0x008), (unsigned long)PH(ovl_fb));
-    busywait_us(3000000);
-    {uint32_t g=gram_sample();
-     uint32_t r6=(g>>12)&0x3F, g6=(g>>6)&0x3F, b6=g&0x3F;
-     vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu %s",
-          (unsigned long)g, (unsigned long)r6, (unsigned long)g6,
-          (unsigned long)b6, (g==0)?"BLACK":(r6>20)?"RED":"other");}
+    int test = 0;
 
-    /* Restore L5, disable L0 */
-    {uint32_t v=CR(0x008);v|=0x080;v&=~0x040;CR(0x008)=v;}
-    push_frame();
-    busywait_us(1000000);
+    /* Sweep 1: comp+0x3AC values with L0 overlay */
+    {
+        static const uint32_t ac_vals[] = {0, 0x04004002, 0x04004003, 0x04004000};
+        for(int a=0;a<4;a++) {
+            CR(0x3AC) = ac_vals[a];
+            /* L0 only (L5 off) */
+            {uint32_t v=CR(0x008);v&=~0x080;v|=0x040;CR(0x008)=v;}
+            setup_l0(ovl, 320, 240, 0x10010100);
+            CR(0x024)=1;
+            push_frame();
+            vlog("T%d: 3AC=0x%08lx L0only fmt=RGB565",
+                 test++, (unsigned long)ac_vals[a]);
+            busywait_us(2000000);
+            /* restore L5 */
+            {uint32_t v=CR(0x008);v|=0x080;CR(0x008)=v;}
+        }
+        CR(0x3AC)=0;
+    }
 
-    vlog("=== DONE ===");
+    /* Sweep 2: bit 8 (CSC scope) */
+    {
+        /* bit8=0 (CSC for all) + L0 only */
+        {uint32_t v=CR(0x008);v&=~0x100;v&=~0x080;v|=0x040;CR(0x008)=v;}
+        setup_l0(ovl, 320, 240, 0x10010100);
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: bit8=0 (CSC all) L0only RGB565", test++);
+        busywait_us(2000000);
+        /* restore */
+        {uint32_t v=CR(0x008);v|=0x100;v|=0x080;v&=~0x040;CR(0x008)=v;}
+    }
+
+    /* Sweep 3: different format codes for L0 */
+    {
+        static const uint32_t fmts[] = {
+            0x10010000, /* fmt 0: 8bpp indexed */
+            0x10010100, /* fmt 1: RGB565 */
+            0x10010200, /* fmt 2: ARGB8888 */
+            0x10010400, /* fmt 4: ARGB with alpha */
+            0x00000100, /* fmt 1 bare (no bit28/16) */
+            0x00010100, /* fmt 1 L2-4 style */
+        };
+        static const char *fdesc[] = {
+            "fmt0-8bpp", "fmt1-RGB565", "fmt2-ARGB",
+            "fmt4-ARGBa", "fmt1-bare", "fmt1-L24"
+        };
+        /* Fill ARGB version too */
+        {uint32_t *o32=(uint32_t*)ovl;
+         for(int i=0;i<320*240;i++)o32[i]=0xFFFF0000;}
+        rb->commit_discard_dcache();
+
+        for(int f=0;f<6;f++) {
+            {uint32_t v=CR(0x008);v&=~0x080;v|=0x040;CR(0x008)=v;}
+            int bpp = (f>=2 && f<=3) ? 4 : 2;
+            CR(0x058) = (bpp*320)/2;
+            CR(0x05C) = fmts[f];
+            CR(0x060) = PH(ovl);
+            CR(0x064) = 240|(320U<<16);
+            CR(0x068) = ((bpp*320)+7)/8;
+            CR(0x06C) = 0;
+            CR(0x024)=1;
+            push_frame();
+            vlog("T%d: %s L0only", test++, fdesc[f]);
+            busywait_us(2000000);
+            {uint32_t v=CR(0x008);v|=0x080;v&=~0x040;CR(0x008)=v;}
+        }
+    }
+
+    /* Sweep 4: Layer 1 instead of Layer 0 */
+    {
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+        rb->commit_discard_dcache();
+        /* Use Layer 1 (bit 5, regs at 0x070) */
+        {uint32_t v=CR(0x008);v&=~0x080;v|=0x020;CR(0x008)=v;}
+        CR(0x070) = 160;
+        CR(0x074) = 0x10010100;
+        CR(0x078) = PH(ovl);
+        CR(0x07C) = 240|(320U<<16);
+        CR(0x080) = 80;
+        CR(0x084) = 0;
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: Layer1 RED L5off", test++);
+        busywait_us(2000000);
+        {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
+    }
+
+    /* Sweep 5: Layer 4 (topmost) */
+    {
+        {uint32_t v=CR(0x008);v&=~0x080;v|=0x004;CR(0x008)=v;}
+        CR(0x0B8) = 160;
+        CR(0x0BC) = 0x00010100; /* no bit28 for L4 */
+        CR(0x0C0) = PH(ovl);
+        CR(0x0C4) = 240|(320U<<16);
+        CR(0x0C8) = 80;
+        CR(0x0CC) = 0;
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: Layer4 RED L5off", test++);
+        busywait_us(2000000);
+        {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    }
+
+    /* Sweep 6: L0+L5 together with different 3AC */
+    {
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+        rb->commit_discard_dcache();
+        {uint32_t v=CR(0x008);v|=0x040;CR(0x008)=v;} /* L0+L5 */
+        setup_l0(ovl, 320, 240, 0x10010100);
+
+        CR(0x3AC)=0x04004003;
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: L0+L5 3AC=0x04004003", test++);
+        busywait_us(2000000);
+
+        CR(0x3AC)=0;
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: L0+L5 3AC=0", test++);
+        busywait_us(2000000);
+
+        {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
+    }
+
+    /* Sweep 7: Enable PWRCON bits 14-16 (EV0/EV1/EV2 — possible overlay DMA) */
+    {
+        PWRCON(0) &= ~((7 << 14) | (1 << 18)); /* same as jpeg_hw.c */
+        for(int i=0;i<320*240;i++) ovl[i]=0x07E0; /* GREEN */
+        rb->commit_discard_dcache();
+
+        {uint32_t v=CR(0x008);v&=~0x080;v|=0x040;CR(0x008)=v;}
+        setup_l0(ovl, 320, 240, 0x10010100);
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: PWRCON bits14-16+18 enabled, L0only GREEN", test++);
+        busywait_us(2000000);
+
+        /* L0+L5 */
+        {uint32_t v=CR(0x008);v|=0x080;CR(0x008)=v;}
+        CR(0x024)=1;
+        push_frame();
+        vlog("T%d: PWRCON bits14-16+18 L0+L5 GREEN", test++);
+        busywait_us(2000000);
+
+        {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
+    }
+
+    vlog("=== DONE (%d tests) ===", test);
 
     /* Cleanup */
-    layer_hide(0);layer_hide(1);layer_hide(2);
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x0230);
