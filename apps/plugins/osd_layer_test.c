@@ -36,8 +36,25 @@ static void push_frame(void) {
     LR(0x80)=1;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     LR(0x80)=0;
+}
+
+static uint32_t gram_sample(void) {
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LR(0x70)=0; LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));
+    {volatile int d=0;while(d++<200);}
+    LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2));
+    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+    uint32_t g=LCD_DBUFF & 0x3FFFF;
+    LCD_CON=0x81100DB0; LR(0x80)=0; LR(0x70)=1;
+    push_frame();
+    return g;
 }
 
 static void busywait_us(uint32_t us) {
@@ -172,7 +189,7 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
-    LCD_CON=0x80100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
     while(!(LCD_STATUS&0x2));
     LCD_CON=0x80000DA9;
@@ -180,7 +197,7 @@ enum plugin_status plugin_start(const void *parameter)
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
     push_frame();
 
@@ -194,6 +211,7 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();
     vlog("T0: RED overlay");
     busywait_us(2000000);
+    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
 
     /* T1: Green */
     for(int i=0;i<OVL_W*OVL_H;i++) ovl_fb[i]=0x83E0; /* A=1 R=0 G=31 B=0 */
@@ -202,6 +220,7 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();
     vlog("T1: GREEN overlay");
     busywait_us(2000000);
+    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
 
     /* T2: White (all bits set = max visibility test) */
     for(int i=0;i<OVL_W*OVL_H;i++) ovl_fb[i]=0xFFFF;
@@ -210,6 +229,7 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();
     vlog("T2: WHITE overlay");
     busywait_us(2000000);
+    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
 
     /* T3: Hide layer */
     layer_hide(0);

@@ -1566,6 +1566,15 @@ static void button_loop(const char *filepath)
 
         if (ps.state == PB_PLAYING)
         {
+            /* DVFS: boost BEFORE decode so memcpy runs at 108MHz */
+            {
+                int fill = ps.ring.count * 100 / ps.ring.capacity;
+                if (fill < 25)
+                    media_boost_active();
+                else if (fill > 50)
+                    media_boost_idle();
+            }
+
             /* ---- DECODE PHASE: burst-fill the ring buffer ---- */
             perf_mark_decode_start();
             if (ps.ring.count < ps.ring.capacity)
@@ -1585,15 +1594,6 @@ static void button_loop(const char *filepath)
                     osd_show();
                     goto handle_buttons;
                 }
-            }
-
-            /* DVFS based on ring fill level */
-            {
-                int fill = ps.ring.count * 100 / ps.ring.capacity;
-                if (fill < 25)
-                    media_boost_active();
-                else if (fill > 50)
-                    media_boost_idle();
             }
             perf_mark_decode_end();
 
