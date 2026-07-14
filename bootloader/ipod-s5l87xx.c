@@ -1044,6 +1044,21 @@ void main(void)
     }
 #endif
 
+#ifdef IPOD_6G
+    {
+        unsigned char *lb = (unsigned char *)DRAM_ORIG;
+        int fwrc = load_raw_firmware(lb, "/retailos.bin", 12*1024*1024);
+        if (fwrc > 0) {
+            printf("Patched OF: %d bytes", fwrc);
+            sleep(HZ/2);
+            disable_irq();
+            commit_discard_idcache();
+            ((void (*)(void))lb)();
+            while (1);
+        }
+    }
+#endif
+
     printf("Loading Rockbox...");
     unsigned char *loadbuffer = (unsigned char *)DRAM_ORIG;
     rc = load_firmware(loadbuffer, BOOTFILE, MAX_LOADSIZE);
