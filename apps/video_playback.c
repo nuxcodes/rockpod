@@ -595,7 +595,7 @@ static void blit_last_frame_fb(void)
 /* Decode: update current time from sample position                   */
 /* ------------------------------------------------------------------ */
 
-static void update_frame_time(void)
+static void __attribute__((unused)) update_frame_time(void)
 {
     uint64_t ticks = 0;
     uint32_t remaining = ps.cur_sample > 0 ? ps.cur_sample - 1 : 0;
@@ -1286,6 +1286,7 @@ static void play_pause(void)
         {
             ps.curr_time_ms = 0;
             ps.cur_sample = 0;
+            ring_flush();
             if (ps.has_audio)
             {
                 video_audio_seek(0);
@@ -1319,6 +1320,7 @@ static void do_seek(int delta_ms)
     if ((uint32_t)t > ps.duration_ms) t = (int32_t)ps.duration_ms;
 
     cpu_boost(true);
+    ring_flush();
     if (ps.has_audio)
     {
         /* Pause PCM during seek to prevent audio from running ahead
@@ -1337,6 +1339,7 @@ static void do_seek(int delta_ms)
         seek_to_time((uint32_t)t);
     }
     cpu_boost(false);
+    ring_burst_decode(BURST_MAX);
     osd_show();
 }
 
@@ -1503,92 +1506,55 @@ static int resume_dialog(uint32_t resume_ms)
 static void button_loop(const char *filepath)
 {
     bool exit_loop = false;
-    int no_frame_count = 0;
 
     while (!exit_loop)
     {
-        long btn;
+        long btn = BUTTON_NONE;
 
         if (ps.state == PB_PLAYING)
         {
-            /* Decode and display one frame */
-            int ret = decode_one_frame(true);
-
-            if (ret < 0)
+            /* ---- DECODE PHASE: burst-fill the ring buffer ---- */
+            if (ps.ring.count < ps.ring.capacity)
             {
-                ps.state = PB_STOPPED;
-                if (ps.has_audio)
+                int decoded = ring_burst_decode(BURST_MAX);
+                if (decoded == 0 && ps.ring.count == 0
+                    && ps.cur_sample >= ps.num_samples)
                 {
-                    video_audio_pause();
-                    video_pcm_pause(true);
-                }
-                ps.curr_time_ms = ps.duration_ms;
-                osd_show();
-            }
-            else if (ret == 0)
-            {
-                /* SPS/PPS consumed, no frame yet — decode next immediately.
-                 * Limit retries to prevent infinite loop on malformed files. */
-                if (++no_frame_count > 16)
-                {
-                    no_frame_count = 0;
-                    yield();
-                }
-                else
-                {
-                    continue;
+                    /* EOF and ring empty — stop playback */
+                    ps.state = PB_STOPPED;
+                    if (ps.has_audio)
+                    {
+                        video_audio_pause();
+                        video_pcm_pause(true);
+                    }
+                    ps.curr_time_ms = ps.duration_ms;
+                    osd_show();
+                    goto handle_buttons;
                 }
             }
-            else
-            {
-                update_frame_time();
-                no_frame_count = 0;
-            }
 
-            /* OSD overlay: video is already in framebuffer (from
-             * scale_and_blit_fb in decode_one_frame). Draw bars on top
-             * and push entire composited frame via lcd_update(). */
-            if (ps.osd_visible)
+            /* ---- DISPLAY PHASE: PTS-driven frame consumption ---- */
             {
-                if (ret != 1)
-                    blit_last_frame_fb();
-                osd_draw();
-                ps.need_osd_redraw = false;
-            }
-            else if (ps.vol_show_until
-                     && TIME_BEFORE(current_tick, ps.vol_show_until))
-            {
-                /* Volume visible without OSD: video already in FB
-                 * from scale_and_blit_fb. Composite overlay + push. */
-                if (ret != 1)
-                    blit_last_frame_fb();
-                draw_volume_overlay();
-                lcd_update();
-            }
+                const struct ring_frame *frame = ring_peek();
+                uint32_t clock_ms;
+                long wait = 0;
 
-            /* Frame pacing: audio-master clock when available,
-             * system-tick based otherwise. */
-            {
-                long wait;
-
+                /* Get reference clock */
                 if (ps.has_audio && !ps.audio_clock_lost
                     && video_audio_is_active())
                 {
                     /* Audio clock = ground truth */
-                    uint32_t audio_ms = video_pcm_get_clock_ms();
-                    int32_t drift;
+                    clock_ms = video_pcm_get_clock_ms();
 
                     /* Detect frozen audio clock: no PCM consumed for
-                     * 500ms means FAAD errors or no data written.
-                     * Without this, drift grows → main thread sleeps
-                     * progressively longer → fps drops to 2-3. */
+                     * 500ms means FAAD errors or no data written. */
                     {
                         static uint32_t last_audio_ms;
                         static long last_audio_change_tick;
 
-                        if (audio_ms != last_audio_ms)
+                        if (clock_ms != last_audio_ms)
                         {
-                            last_audio_ms = audio_ms;
+                            last_audio_ms = clock_ms;
                             last_audio_change_tick = current_tick;
                         }
                         else if (last_audio_change_tick != 0
@@ -1601,12 +1567,32 @@ static void button_loop(const char *filepath)
                             ps.audio_clock_lost = true;
                         }
                     }
+                }
+                else
+                {
+                    /* Audio finished/failed/absent: tick-based pacing.
+                     * Re-anchor tick clock on first entry after audio
+                     * loss. */
+                    if (ps.has_audio && !ps.audio_clock_lost)
+                    {
+                        ps.play_start_tick = current_tick;
+                        ps.play_start_time = ps.curr_time_ms;
+                        ps.audio_clock_lost = true;
+                    }
+                    clock_ms = ps.play_start_time +
+                        (uint32_t)((uint64_t)(current_tick
+                                              - ps.play_start_tick)
+                                   * 1000 / HZ);
+                }
 
-                    drift = (int32_t)(ps.curr_time_ms - audio_ms);
+                if (frame)
+                {
+                    int32_t drift = (int32_t)(frame->pts_ms - clock_ms);
 
                     if (drift > 200)
                     {
-                        /* Audio can't keep up — abandon sync, use tick pacing */
+                        /* Huge drift — abandon audio sync,
+                         * use tick pacing */
                         ps.play_start_tick = current_tick;
                         ps.play_start_time = ps.curr_time_ms;
                         ps.audio_clock_lost = true;
@@ -1614,62 +1600,81 @@ static void button_loop(const char *filepath)
                     }
                     else if (drift > 10)
                     {
-                        /* Video ahead: wait, but cap to prevent FPS collapse */
+                        /* Frame not due yet — wait, cap at 40ms */
                         wait = (long)(drift * HZ / 1000);
                         if (wait > HZ / 25) wait = HZ / 25;
                     }
                     else if (drift < -66)
                     {
-                        /* Video behind audio: skip frames */
-                        int skipped = 0;
-                        while (skipped < 3 && drift < -33)
+                        /* Behind schedule — drop late frames
+                         * (zero cost: just advance ring tail) */
+                        while (ps.ring.count > 1)
                         {
-                            int sr = decode_one_frame(false);
-                            if (sr <= 0) break;
-                            update_frame_time();
-                            skipped++;
-                            audio_ms = video_pcm_get_clock_ms();
-                            drift = (int32_t)(ps.curr_time_ms - audio_ms);
+                            const struct ring_frame *next;
+                            ring_consume();
+                            next = ring_peek();
+                            if (!next) break;
+                            drift = (int32_t)(next->pts_ms - clock_ms);
+                            if (drift > -33) break;
                         }
+                        frame = ring_peek();
                         wait = 0;
                     }
                     else
                     {
                         wait = 0; /* close enough */
                     }
+
+                    /* Display frame if it's due */
+                    if (wait == 0 && frame)
+                    {
+                        ps.curr_time_ms = frame->pts_ms;
+
+                        if (ps.osd_visible || ps.vol_show_until)
+                        {
+                            if (compositor_is_active())
+                                compositor_stop();
+                            scale_and_blit_fb(frame->y, frame->cb,
+                                              frame->cr,
+                                              frame->w, frame->h);
+                        }
+                        else
+                        {
+                            if (!compositor_is_active())
+                                compositor_start(frame->w, frame->h,
+                                                 frame->y, frame->cb,
+                                                 frame->cr);
+                            else
+                                compositor_update(frame->y, frame->cb,
+                                                  frame->cr);
+                        }
+
+                        ring_consume();
+                    }
                 }
                 else
                 {
-                    /* Audio finished/failed/absent: tick-based pacing.
-                     * Re-anchor tick clock on first entry after audio loss. */
-                    if (ps.has_audio && !ps.audio_clock_lost)
-                    {
-                        ps.play_start_tick = current_tick;
-                        ps.play_start_time = ps.curr_time_ms;
-                        ps.audio_clock_lost = true;
-                    }
-                    /* No audio: tick-based pacing (original logic) */
-                    long target_tick = ps.play_start_tick +
-                        (long)((uint64_t)(ps.curr_time_ms - ps.play_start_time)
-                               * HZ / 1000);
-                    wait = target_tick - current_tick;
+                    /* Ring empty but not EOF — will decode more
+                     * next iteration */
+                    wait = 0;
+                }
 
-                    if (wait < -(long)(HZ / 15))
-                    {
-                        int skipped = 0;
-                        while (skipped < 3 && wait < 0)
-                        {
-                            int sr = decode_one_frame(false);
-                            if (sr <= 0) break;
-                            update_frame_time();
-                            skipped++;
-                            target_tick = ps.play_start_tick +
-                                (long)((uint64_t)(ps.curr_time_ms
-                                                  - ps.play_start_time)
-                                       * HZ / 1000);
-                            wait = target_tick - current_tick;
-                        }
-                    }
+                /* OSD overlay compositing */
+                if (ps.osd_visible)
+                {
+                    if (wait != 0)
+                        blit_last_frame_fb();
+                    osd_draw();
+                    ps.need_osd_redraw = false;
+                }
+                else if (ps.vol_show_until
+                         && TIME_BEFORE(current_tick,
+                                        ps.vol_show_until))
+                {
+                    if (wait != 0)
+                        blit_last_frame_fb();
+                    draw_volume_overlay();
+                    lcd_update();
                 }
 
                 if (wait < 0) wait = 0;
@@ -1683,6 +1688,8 @@ static void button_loop(const char *filepath)
             /* Paused or stopped — ~180ms animation, 10Hz idle */
             btn = button_get_w_tmo(ps.osd_anim_step > 0 ? 3 : HZ / 10);
         }
+
+    handle_buttons:
 
         /* Auto-hide OSD (guard: don't re-trigger during fly-out) */
         if (ps.osd_visible && ps.osd_anim_step == 0
@@ -1795,7 +1802,7 @@ static void button_loop(const char *filepath)
         else if (ps.need_full_redraw)
         {
             /* During PB_PLAYING, skip full_redraw — the next iteration's
-             * decode_one_frame will render via lcd_blit_yuv (OSD now hidden).
+             * ring-buffer display will render (OSD now hidden).
              * Calling full_redraw here would redundantly re-blit the same
              * frame (2-4 extra DMA transfers), causing a frame drop. */
             if (ps.state != PB_PLAYING)
@@ -1839,6 +1846,7 @@ void video_playback_start(const char *filepath, const char *title)
     uint32_t vid_samples, vid_chunks, aud_samples, aud_chunks;
     uint32_t vid_stsc, aud_stsc;
     uint8_t *dec_buf;
+    uint8_t *ring_pool;
 
     if (!filepath)
         return;
@@ -1919,6 +1927,10 @@ void video_playback_start(const char *filepath, const char *title)
 
     {
         size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
+        int ring_cap_est = (max_w <= 320 && max_h <= 240)
+                         ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
+        size_t ring_pool_size = (size_t)max_w * max_h * 3 / 2
+                              * ring_cap_est;
 
         alloc_size = vid_samples * sizeof(uint32_t) + 32  /* video stsz */
                    + vid_chunks * sizeof(uint32_t) + 32   /* video stco */
@@ -1928,7 +1940,8 @@ void video_playback_start(const char *filepath, const char *title)
                    + aud_stsc * sizeof(struct mp4v_stsc_entry) + 32
                    + dec_size + 4096
                    + 256 * 1024 + 32
-                   + scale_size;
+                   + scale_size
+                   + ring_pool_size + 32;
     }
 
     mem_handle = core_alloc(alloc_size);
@@ -1977,6 +1990,15 @@ void video_playback_start(const char *filepath, const char *title)
         p = ps.scale_cb + (sw / 2) * (sh / 2);
         ps.scale_cr = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
         p = ps.scale_cr + (sw / 2) * (sh / 2);
+    }
+
+    /* Allocate ring buffer frame pool */
+    {
+        int ring_cap = (max_w <= 320 && max_h <= 240)
+                     ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
+        size_t ring_frame_sz = (size_t)max_w * max_h * 3 / 2;
+        ring_pool = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+        p = ring_pool + ring_frame_sz * ring_cap;
     }
 
     /* Step 2: Re-parse MP4 with full sample tables (video + audio) */
@@ -2134,13 +2156,18 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Show first video frame immediately while audio pre-fills.
-     * Without this, the screen stays black during the 50-200ms pre-fill. */
+    /* Initialize ring buffer for decode-ahead */
+    ring_init(max_w, max_h, ring_pool);
+
+    /* Pre-fill ring buffer — show first frame while audio pre-fills */
+    ring_burst_decode(BURST_MAX);
     {
-        int first = decode_one_frame(true);
-        if (first == 1)
+        const struct ring_frame *first = ring_peek();
+        if (first)
         {
-            update_frame_time();
+            ps.curr_time_ms = first->pts_ms;
+            scale_and_blit(first->y, first->cb, first->cr,
+                           first->w, first->h);
             clear_letterbox_bars(true);
         }
     }
@@ -2168,6 +2195,7 @@ void video_playback_start(const char *filepath, const char *title)
 
 cleanup:
     cpu_boost(false);
+    ring_flush();
     if (compositor_is_active()) compositor_stop();
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
