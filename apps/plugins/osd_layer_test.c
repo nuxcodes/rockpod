@@ -195,17 +195,34 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x024)=1;push_frame();busywait_us(2000000);
     gram_log(test++,"L1 RED + L5 video");
 
-    /* T3: Layer 1 with mode=00/00/00 (test color fix) */
-    {uint32_t v=CR(0x008);v&=~0x03330000;CR(0x008)=v;}
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED mode=00/00/00");
-
-    /* T4: Restore mode 01/01/01 + BLUE (0x001F) to test rotation */
-    {uint32_t v=CR(0x008);v|=0x01110000;CR(0x008)=v;}
-    for(int i=0;i<320*240;i++) ovl[i]=0x001F;
+    /* T3: comp+0x204=0 (test RGB output format) */
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
     rb->commit_discard_dcache();
-    CR(0x078)=PH(ovl);CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 BLUE(0x001F) mode=01/01/01 (expect RED after rotation)");
+    CR(0x078)=PH(ovl);
+    CR(0x204)=0;CR(0x20C)=0;
+    CR(0x024)=1;push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED 204=0 20C=0");
+
+    /* T4: comp+0x204=1 */
+    CR(0x204)=1;CR(0x20C)=1;
+    CR(0x024)=1;push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED 204=1 20C=1");
+
+    /* T5: restore 204=2,20C=2 + clear 200 bit 7 */
+    CR(0x204)=2;CR(0x20C)=2;
+    {uint32_t v=CR(0x200);v&=~0x80;CR(0x200)=v;}
+    CR(0x024)=1;push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED 200 bit7=0");
+
+    /* T6: restore 200 bit 7, try Layer 4 (no bit 28) for comparison */
+    {uint32_t v=CR(0x200);v|=0x80;CR(0x200)=v;}
+    {uint32_t v=CR(0x008);v&=~0x020;v|=0x004;CR(0x008)=v;}
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+    rb->commit_discard_dcache();
+    CR(0x0B8)=(2*320)/2;CR(0x0BC)=0x00010100;CR(0x0C0)=PH(ovl);
+    CR(0x0C4)=240|(320U<<16);CR(0x0C8)=((2*320)+7)/8;CR(0x0CC)=0;
+    CR(0x024)=1;push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED (no bit28) for comparison");
 
     /* Cleanup */
     {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
