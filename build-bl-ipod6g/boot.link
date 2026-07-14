@@ -1,0 +1,63 @@
+ENTRY(start)
+OUTPUT_FORMAT(elf32-littlearm)
+OUTPUT_ARCH(arm)
+STARTUP(target/arm/s5l8702/crt0.o)
+MEMORY
+{
+    DRAM : ORIGIN = 0x08000000, LENGTH = (64 * 0x100000)
+    IRAM : ORIGIN = 0x22000000, LENGTH = (0x20000 + 0x20000)
+    VECT_AREA : ORIGIN = 0, LENGTH = 1K
+    MOVE_AREA : ORIGIN = (0x22000000 + 0x20000) + 0x800,
+                LENGTH = 0x20000 - 0x800
+    BSS_AREA : ORIGIN = 0x08000000 + 8M,
+                LENGTH = (64 * 0x100000) - 8M - 0x4000
+}
+SECTIONS
+{
+  _movestart = LOADADDR(.text) ;
+  _moveend = LOADADDR(.data) + SIZEOF(.data) ;
+  .text : {
+    *(.intvect)
+    *(.init.text)
+    *(.text*)
+    *(.glue_7*)
+  } > MOVE_AREA
+  .rodata : {
+    *(.rodata*)
+    . = ALIGN(0x4);
+  } > MOVE_AREA
+  .data : {
+    _datastart = . ;
+    *(.irodata*)
+    *(.icode*)
+    *(.idata*)
+    *(.data*)
+    *(.ncdata*);
+    . = ALIGN(0x20);
+    _dataend = . ;
+  } > MOVE_AREA
+  .stack (NOLOAD) :
+  {
+     *(.stack)
+     _stackbegin = .;
+     stackbegin = .;
+     . += 0x2000;
+     _stackend = .;
+     stackend = .;
+     _irqstackbegin = .;
+     . += 0x400;
+     _irqstackend = .;
+     _fiqstackbegin = .;
+     . += 0x400;
+     _fiqstackend = .;
+  } > MOVE_AREA
+  .bss (NOLOAD) : {
+     _edata = .;
+     *(.bss*);
+     *(.ibss*);
+     *(.ncbss*);
+     *(COMMON);
+    . = ALIGN(0x20);
+     _end = .;
+  } > BSS_AREA
+}

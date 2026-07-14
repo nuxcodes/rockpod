@@ -123,6 +123,7 @@ void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
     struct viewport *vp = list->parent[screen];
     int line_height = font_get(vp->font)->height;
 #ifdef HAVE_TOUCHSCREEN
+    /* the 4/12 factor is designed for reasonable item size on a 160dpi screen */
     if (global_settings.list_line_padding == -1)
         line_height = MAX(lcd_get_dpi()*4/12, line_height);
     else
@@ -837,8 +838,8 @@ int list_do_action_timeout(struct gui_synclist *lists, int timeout)
             timeout = fade_timeout;
     }
 #endif
-    add_event_ex(GUI_EVENT_NEED_UI_UPDATE, true, _lists_uiviewport_update_callback, NULL);
     current_lists = lists;
+    add_event_ex(GUI_EVENT_NEED_UI_UPDATE, true, _lists_uiviewport_update_callback, NULL);
     if(lists->scheduled_talk_tick)
     {
         long delay = lists->scheduled_talk_tick -current_tick +1;
@@ -860,7 +861,9 @@ bool list_do_action(int context, int timeout,
 {
     timeout = list_do_action_timeout(lists, timeout);
     keyclick_set_callback(gui_synclist_keyclick_callback, lists);
+    skin_render_inhibit_flush(true);
     *action = get_action(context, timeout);
+    skin_render_inhibit_flush(false);
     return gui_synclist_do_button(lists, action);
 }
 

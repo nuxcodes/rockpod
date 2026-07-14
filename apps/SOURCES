@@ -59,6 +59,7 @@ mp4_demux.c
 video_thumb.c
 video_playback.c
 vpu_h264.c
+vpu_mpeg4.c
 faad_alloc.c
 video_pcm.c
 video_audio.c

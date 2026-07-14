@@ -27,9 +27,17 @@ void compositor_start(int frame_w, int frame_h,
                       int disp_w, int disp_h, int disp_x, int disp_y,
                       const uint8_t *y, const uint8_t *cb, const uint8_t *cr);
 
-/* Update compositor with new frame: changes YUV plane pointers
- * and retrigggers the compositor GO bit. Call after each decoded frame. */
+/* Update compositor with new frame: changes YUV plane pointers,
+ * strobes the commit register, and pushes to LCD. */
 void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr);
+
+/* OSD overlay layer API (layers 0-4, RGB565).
+ * Layers render ON TOP of the video (Layer 5).
+ * Z-order: Layer 5 (back) -> Layer 0 -> ... -> Layer 4 (front). */
+void compositor_layer_setup(int layer, int x, int y, int w, int h,
+                            const uint16_t *fb);
+void compositor_layer_show(int layer);
+void compositor_layer_hide(int layer);
 
 /* Stop compositor: disables passthrough, restores landscape MADCTL,
  * restores all LCD registers to pre-compositor state, and refreshes

@@ -238,6 +238,52 @@ static bool read_chunk_stsd_video(struct mp4_parse_ctx *ctx, size_t chunk_len)
             if (entry_remaining > 0)
                 stream_skip(&ctx->stream, entry_remaining);
         }
+        else if (format == MAKEFOURCC('m','p','4','v'))
+        {
+            ctx->res->format = format;
+
+            stream_skip(&ctx->stream, 8);
+            entry_remaining -= 8;
+            stream_skip(&ctx->stream, 16);
+            entry_remaining -= 16;
+
+            ctx->res->width = stream_read_uint16(&ctx->stream);
+            ctx->res->height = stream_read_uint16(&ctx->stream);
+            entry_remaining -= 4;
+
+            stream_skip(&ctx->stream, 50);
+            entry_remaining -= 50;
+
+            while (entry_remaining > 8)
+            {
+                uint32_t sub_len = stream_read_uint32(&ctx->stream);
+                uint32_t sub_id  = stream_read_uint32(&ctx->stream);
+
+                if (sub_len <= 8 || sub_len > entry_remaining)
+                    break;
+
+                if (sub_id == MAKEFOURCC('e','s','d','s'))
+                {
+                    uint32_t esds_data = sub_len - 8;
+                    if (esds_data > sizeof(ctx->res->codecdata))
+                        esds_data = sizeof(ctx->res->codecdata);
+                    stream_read(&ctx->stream, ctx->res->codecdata,
+                                esds_data);
+                    ctx->res->codecdata_len = esds_data;
+                    if (sub_len - 8 > esds_data)
+                        stream_skip(&ctx->stream, sub_len - 8 - esds_data);
+                }
+                else
+                {
+                    stream_skip(&ctx->stream, sub_len - 8);
+                }
+
+                entry_remaining -= sub_len;
+            }
+
+            if (entry_remaining > 0)
+                stream_skip(&ctx->stream, entry_remaining);
+        }
         else
         {
             /* Unknown video format, skip */

@@ -1,0 +1,16 @@
+Target: ipod6g
+Target id: 71
+Target define: -DIPOD_6G
+Memory: 64
+CPU: arm
+Manufacturer: s5l8702
+Version: 24c7645212M-260712
+Binary: bootloader-ipod6g.ipod
+Binary size: 97896
+Voice format: 
+Actual size: 97888
+RAM usage: 143299680
+gcc: arm-elf-eabi-gcc (GCC) 9.5.0
+ld: GNU ld (GNU Binutils) 2.38
+Host gcc: Apple clang version 17.0.0 (clang-1700.4.4.1)
+Host system: Darwin

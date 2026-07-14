@@ -1,5 +1,5 @@
-/* Compositor scaler test — replicates EXACT compositor_start() sequence,
- * then tests different comp+0x04C scale values.
+/* Compositor test — flip test + overlay test + P18.
+ * Matches compositor-s5l8702.c driver init exactly.
  * Copyright (C) 2025 Nux Li */
 #include "plugin.h"
 #ifdef IPOD_6G
@@ -27,41 +27,39 @@ static void vlog(const char *fmt, ...) {
 static void ili_cmd(uint16_t c){while(LCD_STATUS&0x10);LCD_WCMD=c;}
 static void ili_data(uint16_t d){while(LCD_STATUS&0x10);LCD_WDATA=d;}
 
-/* push_frame — Apple ROM pattern: just LR(0x80) bracket, NO LCD_CON toggle */
-static void push_frame(void)
-{
+static void push_frame(void) {
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LR(0x80) = 1;
-    LR(0x80) = 0;
+    LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
+    LR(0x80)=0;
 }
 
-/* GRAM readback — preserves PINMAP via Apple cmd mode formula */
-static void gram_read(int x, int y, const char *label)
-{
+static uint32_t gram_sample(void) {
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     LR(0x70)=0; LR(0x80)=1;
     while(!(LCD_STATUS&0x2));
-    {volatile int d=0;while(d++<100);}
+    {volatile int d=0;while(d++<200);}
     LCD_CON=0x80000DA9;
     while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(x);ili_cmd(0x201);ili_data(y);ili_cmd(0x202);
+    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
     while(!(LCD_STATUS&0x2));
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
-    uint32_t g=LCD_DBUFF;
-    uint32_t r6=(g>>12)&0x3F,g6=(g>>6)&0x3F,b6=g&0x3F;
-    vlog("  %s (%d,%d) R=%lu G=%lu B=%lu raw=0x%06lx",
-         label,x,y,(unsigned long)r6,(unsigned long)g6,(unsigned long)b6,
-         (unsigned long)(g&0x3FFFF));
-    LCD_CON=0x81100DB9; LR(0x80)=0; LR(0x70)=1;
+    uint32_t g=LCD_DBUFF & 0x3FFFF;
+    LCD_CON=0x81100DB0; LR(0x80)=0; LR(0x70)=1;
     push_frame();
+    return g;
 }
 
-/* EXACT comp_hw_init from compositor-s5l8702.c */
-static void comp_hw_init(void)
-{
-    volatile uint32_t *c = (volatile uint32_t*)COMP;
-    c[0x200/4] &= ~1; c[0x004/4] = 1; c[0x020/4] = 1;
+static void busywait_us(uint32_t us) {
+    uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
+}
+
+static void comp_hw_init(void) {
+    volatile uint32_t *c=(volatile uint32_t*)COMP;
+    c[0x200/4]&=~1;c[0x004/4]=1;c[0x020/4]=1;
     for(int i=0;i<256;i++){c[0x400/4+i]=i*4;c[0x800/4+i]=i*4;c[0xC00/4+i]=i*4;}
     {volatile uint32_t *s=(volatile uint32_t*)0x0890D2DC;
      uint32_t t[5];for(int i=0;i<5;i++)t[i]=s[i];
@@ -69,8 +67,7 @@ static void comp_hw_init(void)
          for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=t[i];
      else{uint32_t h[]={0x0C,0x26,0x10,0x82,0x4E};
           for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=h[i];}}
-    c[0x0D8/4]=0x1000;c[0x0DC/4]=0;
-    c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
+    c[0x0D8/4]=0x1000;c[0x0DC/4]=0;c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
     c[0x0E8/4]=0x1000;c[0x0EC/4]=0;
     {uint32_t v=c[0x008/4];v&=~0x20000000;v&=~0x10000000;
      v&=~0x03000000;v|=0x01000000;v&=~0x00300000;v|=0x00100000;
@@ -82,54 +79,7 @@ static void comp_hw_init(void)
     {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
-    c[0x210/4]=0x00010110;c[0x214/4]=0x00EF013F; /* portrait viewport */
-    c[0x024/4]=0x00FFFFFF;
-}
-
-/* EXACT compositor_start sequence — copy-paste from compositor-s5l8702.c */
-static void comp_start(int fw, int fh,
-    const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
-{
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    PWRCON(0) &= ~(0x2080|(7<<14));
-    {volatile int d=0;while(d++<10000);}
-    comp_hw_init();
-
-    for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
-    for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
-    CR(0x028)=0x100;
-    CR(0x02C)=fw|((fw/2)<<16);
-    CR(0x034)=fh|((uint32_t)fw<<16);
-    CR(0x04C)=0x10001000;
-    CR(0x054)=0x00F00140;    /* portrait output */
-    CR(0x038)=PH(y); CR(0x03C)=PH(cr);
-    CR(0x040)=0;     CR(0x044)=PH(cb);
-    CR(0x3AC)=0x04004003;    /* rotation ON (Apple always uses this) */
-    CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
-    rb->commit_discard_dcache();
-
-    /* P9 passthrough — Apple ROM values */
-    LCD_CON=0x81100DB9;      /* P9 mode */
-    LR(0x88)=0x01000000;
-    LR(0x20)=0x33;
-    LR(0x7C)=0x00000402;
-    LR(0x78)=0x000A000A;
-    LR(0x74)=0x00F00140;     /* portrait — Apple ROM value */
-
-    /* ILI9326 GRAM setup via P18 — standard P18, PINMAP irrelevant for 18-bit */
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x80000DA9;
-    ili_cmd(0x003);ili_data(0x1238);
-    ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
-    ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
-    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_CON=0x81100DB9;      /* restore P9 */
-
-    CR(0x000)=1;
-    LR(0x70)=1; LR(0x80)=0;
-    push_frame();
+    c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
 }
 
 static int fsc(const uint8_t*b,int l,int*s){
@@ -139,17 +89,16 @@ static int fsc(const uint8_t*b,int l,int*s){
 
 enum plugin_status plugin_start(const void *parameter)
 {
-    const char *path = parameter?(const char*)parameter:"/test_iframe.264";
-    if(!*path) return PLUGIN_ERROR;
-    rb->cpu_boost(true); rb->audio_stop();
-
+    const char *path=parameter?(const char*)parameter:"/test_iframe.264";
+    if(!*path)return PLUGIN_ERROR;
+    rb->cpu_boost(true);rb->audio_stop();
     log_fd=rb->open("/scaler_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== Compositor Scaler Test ===");
+    vlog("=== Compositor Test ===");
 
-    uint8_t *ab; size_t as;
-    ab = rb->plugin_get_audio_buffer(&as);
-    const uint8_t *yo=NULL, *cbo=NULL, *cro=NULL;
-    int fw=0, fh=0;
+    uint8_t *ab;size_t as;
+    ab=rb->plugin_get_audio_buffer(&as);
+    const uint8_t *yo=NULL,*cbo=NULL,*cro=NULL;
+    int fw=0,fh=0;
 
     int fd=rb->open(path,O_RDONLY);
     if(fd>=0){
@@ -166,94 +115,137 @@ enum plugin_status plugin_start(const void *parameter)
                     vpu_h264_get_frame(dec,&yo,&cbo,&cro,&fw,&fh);
                 pos=ns+nl;
             }
-            if(!yo){vpu_h264_close(dec);}
+            if(!yo)vpu_h264_close(dec);
             else vlog("Decoded %dx%d",fw,fh);
-        } else rb->close(fd);
+        }else rb->close(fd);
     }
-
     if(!yo){
         fw=320;fh=240;
-        uint8_t*ty=ab,*tcb=ab+fw*fh,*tcr=tcb+(fw/2)*(fh/2);
-        for(int r=0;r<fh;r++)for(int c=0;c<fw;c++){
-            int i=r*fw+c;
-            if(c<fw/3)ty[i]=81;else if(c<2*fw/3)ty[i]=145;else ty[i]=41;
-        }
-        for(int r=0;r<fh/2;r++)for(int c=0;c<fw/2;c++){
-            int i=r*(fw/2)+c;
-            if(c<fw/6){tcb[i]=90;tcr[i]=240;}
-            else if(c<fw/3){tcb[i]=54;tcr[i]=34;}
-            else{tcb[i]=240;tcr[i]=110;}
-        }
-        yo=ty;cbo=tcb;cro=tcr;
-        vlog("Test pattern %dx%d",fw,fh);
+        uint8_t*ty=ab;
+        rb->memset(ty,145,fw*fh);
+        rb->memset(ty+fw*fh,54,(fw/2)*(fh/2));
+        rb->memset(ty+fw*fh+(fw/2)*(fh/2),34,(fw/2)*(fh/2));
+        yo=ty;cbo=ty+fw*fh;cro=cbo+(fw/2)*(fh/2);
     }
 
-    uint32_t saved_con=LCD_CON, saved_7c=LR(0x7C), saved_88=LR(0x88);
-    uint32_t saved_20=LR(0x20), saved_74=LR(0x74), saved_78=LR(0x78);
+    uint32_t s_con=LCD_CON,s_7c=LR(0x7C),s_88=LR(0x88);
+    uint32_t s_20=LR(0x20),s_74=LR(0x74),s_78=LR(0x78);
 
-    /* Start compositor — EXACT copy of compositor_start() */
-    comp_start(fw, fh, yo, cbo, cro);
-    vlog("Compositor active, holding 3s");
-    vlog("  008=0x%08lx 04C=0x%08lx 054=0x%08lx 3AC=0x%08lx 074=0x%08lx",
-         (unsigned long)CR(0x008),(unsigned long)CR(0x04C),
-         (unsigned long)CR(0x054),(unsigned long)CR(0x3AC),
-         (unsigned long)LR(0x74));
+    /* Start compositor — matches driver exactly */
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    PWRCON(0)&=~(0x2080|(7<<14));
+    {volatile int d=0;while(d++<10000);}
+    comp_hw_init();
+    for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
+    for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
+    CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
+    CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
+    CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
+    CR(0x040)=0;CR(0x044)=PH(cbo);
+    CR(0x3AC)=0;CR(0x0D4)=1;
+    /* bit 8 SET = CSC for Layer 5 only, RGB passthrough for overlays */
+    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
+    rb->commit_discard_dcache();
+    LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    ili_cmd(0x003);ili_data(0x1238);
+    ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
+    ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
+    CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
+    push_frame();
 
-    /* Hold 3s — busy-wait, no yield */
-    {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<3000000)rb->backlight_on();}
+    vlog("Video active. PWRCON0=0x%08lx 008=0x%08lx 3AC=0x%08lx CON=0x%08lx",
+         (unsigned long)PWRCON(0),(unsigned long)CR(0x008),
+         (unsigned long)CR(0x3AC),(unsigned long)LCD_CON);
+    busywait_us(2000000);
 
-    /* LCD+0x7C sweep — test transfer count per pixel */
-    vlog("=== LCD+0x7C TEST (P9 transfer count) ===");
-    static const uint32_t lcd7c_vals[] = {0x402, 0x403, 0x400, 0x401};
-    static const char *lcd7c_names[] = {"0x402(2xfr)", "0x403(3xfr)", "0x400(0)", "0x401(1xfr)"};
-    for(int i=0;i<4;i++){
-        LR(0x7C) = lcd7c_vals[i];
+    /* === OVERLAY TEST === */
+    vlog("=== OVERLAY TEST ===");
+    {
+        size_t ds=vpu_h264_buf_size(640,480);
+        uint8_t *ovl_p=ab+ds+512*1024+fw*fh*2;
+        ovl_p=(uint8_t*)(((uintptr_t)ovl_p+31)&~31UL);
+        uint16_t *ovl=(uint16_t*)ovl_p;
+
+        /* RED fullscreen L0+L5 */
+        for(int i=0;i<320*240;i++)ovl[i]=0xF800;
+        rb->commit_discard_dcache();
+        CR(0x058)=160;CR(0x05C)=0x10010100;CR(0x060)=PH(ovl);
+        CR(0x064)=240|(320U<<16);CR(0x068)=80;CR(0x06C)=0;
+        {uint32_t v=CR(0x008);v|=0x040;CR(0x008)=v;}
+        CR(0x024)=1;
         push_frame();
-        vlog("[7C-%d] 0x%03lx %s", i, (unsigned long)lcd7c_vals[i], lcd7c_names[i]);
-        gram_read(160,120,lcd7c_names[i]);
-        {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<2000000)rb->backlight_on();}
-    }
-    LR(0x7C) = 0x402;
-    vlog("=== LCD+0x7C TEST DONE ===");
+        vlog("O1: RED L0+L5. 008=0x%08lx", (unsigned long)CR(0x008));
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx %s",(unsigned long)g,g>0x100?"VISIBLE":"black");}
 
-    /* Baseline GRAM readback */
-    gram_read(160,120,"baseline-center");
-    gram_read(10,10,"baseline-TL");
-    gram_read(310,230,"baseline-BR");
+        /* L0 only */
+        {uint32_t v=CR(0x008);v&=~0x080;CR(0x008)=v;}
+        CR(0x024)=1;push_frame();
+        vlog("O2: RED L0only. 008=0x%08lx",(unsigned long)CR(0x008));
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx %s",(unsigned long)g,g>0x100?"VISIBLE":"black");}
 
-    /* Scaler test — change ONLY comp+0x04C */
-    static const uint32_t scales[] = {
-        0x10001000, 0x08000800, 0x20002000, 0x0C000C00, 0x04000400
-    };
-    static const char *names[] = {
-        "unity", "0800", "2000", "0C00", "0400"
-    };
-    for(int i=0;i<5;i++){
-        CR(0x04C) = scales[i];
-        push_frame();
-        vlog("[S%d] 04C=0x%08lx %s",i,(unsigned long)scales[i],names[i]);
-        {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<1000000)rb->backlight_on();}
-        gram_read(160,120,names[i]);
-        gram_read(80,60,names[i]);
-        gram_read(240,180,names[i]);
+        /* GREEN small bar */
+        for(int i=0;i<160*30;i++)ovl[i]=0x07E0;
+        rb->commit_discard_dcache();
+        {uint32_t v=CR(0x008);v|=0x0C0;CR(0x008)=v;}
+        CR(0x058)=160;CR(0x05C)=0x10010100;CR(0x060)=PH(ovl);
+        CR(0x064)=30|(160U<<16);CR(0x068)=40;
+        CR(0x06C)=80|((uint32_t)(240-30)<<16);
+        CR(0x024)=1;push_frame();
+        vlog("O3: GREEN bar L0+L5");
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();vlog("  GRAM=0x%06lx %s",(unsigned long)g,g>0x100?"VISIBLE":"black");}
+
+        /* Cleanup */
+        {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
+        CR(0x024)=1;push_frame();
     }
+
+    /* === P18 TEST === */
+    vlog("=== P18 262K ===");
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LR(0x70)=0;LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2));
+    ili_cmd(0x003);ili_data(0x5238);
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));
+    LR(0x80)=0;
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LCD_CON=0x81100DA8;
+    LR(0x70)=1;push_frame();
+    vlog("P18: CON=0x%08lx (expect 0x81100DA8)",(unsigned long)LCD_CON);
+    busywait_us(4000000);
+
+    /* Restore P16 */
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LR(0x70)=0;LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    while(!(LCD_STATUS&0x2));
+    ili_cmd(0x003);ili_data(0x1238);
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));
+    LR(0x80)=0;
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LCD_CON=0x81100DB0;
+    LR(0x70)=1;push_frame();
+    vlog("P16 restored: CON=0x%08lx",(unsigned long)LCD_CON);
 
     vlog("=== DONE ===");
-
-    /* Cleanup */
-    LR(0x70)=0; LR(0x80)=0; CR(0x000)=0;
-    while(!(LCD_STATUS&0x2)); LCD_CON=0x80000DA9;
+    LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x0230);
     while(!(LCD_STATUS&0x2));
-    LCD_CON=saved_con;
-    LR(0x88)=saved_88;LR(0x20)=saved_20;
-    LR(0x7C)=saved_7c;LR(0x74)=saved_74;LR(0x78)=saved_78;
+    LCD_CON=s_con;LR(0x88)=s_88;LR(0x20)=s_20;
+    LR(0x7C)=s_7c;LR(0x74)=s_74;LR(0x78)=s_78;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    rb->close(log_fd);
-    rb->cpu_boost(false);
-    rb->lcd_set_viewport(NULL);
-    rb->lcd_clear_display();
-    rb->lcd_update();
+    rb->close(log_fd);rb->cpu_boost(false);
+    rb->lcd_set_viewport(NULL);rb->lcd_clear_display();rb->lcd_update();
     return PLUGIN_OK;
 }
 #else

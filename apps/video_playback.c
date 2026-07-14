@@ -44,6 +44,7 @@
 #include "mp4_demux.h"
 #include "video_playback.h"
 #include "vpu_h264.h"
+#include "vpu_mpeg4.h"
 #include "compositor-s5l8702.h"
 #include "core_alloc.h"
 #include "audio.h"
@@ -135,18 +136,18 @@ extern void lcd_write_yuv420_lines(unsigned char const * const src[3],
 #define MAX_RESUME       64
 
 /* Ring buffer */
-#define RING_MAX_FRAMES   8
-#define RING_SMALL_FRAMES 4
-#define BURST_MAX         4
+#define RING_MAX_FRAMES   3
+#define RING_SMALL_FRAMES 2
+#define BURST_MAX         2
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
 /* ------------------------------------------------------------------ */
 
 struct ring_frame {
-    uint8_t *y;
-    uint8_t *cb;
-    uint8_t *cr;
+    const uint8_t *y;
+    const uint8_t *cb;
+    const uint8_t *cr;
     uint32_t pts_ms;
     int w, h;
 };
@@ -198,7 +199,9 @@ static struct {
     uint32_t play_start_time;
 
     /* Decode state */
+    enum { CODEC_H264, CODEC_MPEG4 } codec_type;
     struct vpu_h264 *decoder;
+    struct vpu_mpeg4 *decoder_m4;
     int vid_fd;
     uint32_t cur_sample;
     uint32_t num_samples;
@@ -212,6 +215,10 @@ static struct {
     long osd_hide_tick;
     bool need_full_redraw;
     bool need_osd_redraw;
+
+    /* HW OSD overlay (compositor Layer 0) */
+    uint16_t *osd_fb;
+    int osd_fb_w, osd_fb_h;
 
     /* OSD layout (computed from font metrics at init) */
     int osd_font_id;
@@ -561,7 +568,24 @@ static int decode_one_frame(bool display)
 
     ps.cur_sample++;
 
-    /* Each MP4 sample contains 1+ length-prefixed NALUs */
+    if (ps.codec_type == CODEC_MPEG4)
+    {
+        ret = vpu_mpeg4_decode_vop(ps.decoder_m4, ps.read_buf, (int)size);
+        if (ret == 1 && display)
+        {
+            const uint8_t *y, *cb, *cr;
+            int w, h;
+            vpu_mpeg4_get_frame(ps.decoder_m4, &y, &cb, &cr, &w, &h);
+            if (!compositor_is_active())
+                compositor_start(w, h, ps.disp_w, ps.disp_h,
+                                 ps.disp_x, ps.disp_y, y, cb, cr);
+            else
+                compositor_update(y, cb, cr);
+        }
+        return (ret == 1) ? 1 : (ret < 0) ? -1 : 0;
+    }
+
+    /* H.264: each MP4 sample contains 1+ length-prefixed NALUs */
     pos = 0;
     while (pos + (int)ps.nalu_len_size <= (int)size)
     {
@@ -585,21 +609,14 @@ static int decode_one_frame(bool display)
                 int w, h;
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
-                if (ps.osd_visible || ps.vol_show_until) {
-                    /* OSD visible: SW compositing (cpu_boost active) */
-                    if (compositor_is_active())
-                        compositor_stop();
-                    scale_and_blit_fb(y, cb, cr, w, h);
-                } else {
-                    /* HW compositor path — handles all resolutions via scaler */
-                    if (!compositor_is_active())
-                        compositor_start(w, h,
-                                         ps.disp_w, ps.disp_h,
-                                         ps.disp_x, ps.disp_y,
-                                         y, cb, cr);
-                    else
-                        compositor_update(y, cb, cr);
-                }
+                /* Always use HW compositor */
+                if (!compositor_is_active())
+                    compositor_start(w, h,
+                                     ps.disp_w, ps.disp_h,
+                                     ps.disp_x, ps.disp_y,
+                                     y, cb, cr);
+                else
+                    compositor_update(y, cb, cr);
             }
             return 1;
         }
@@ -677,23 +694,13 @@ static void __attribute__((unused)) update_frame_time(void)
 static void ring_init(int vid_w, int vid_h, uint8_t *pool)
 {
     struct frame_ring *r = &ps.ring;
-    int y_sz = vid_w * vid_h;
-    int c_sz = (vid_w / 2) * (vid_h / 2);
-    int i;
-    uint8_t *p = pool;
+    (void)pool;
 
     memset(r, 0, sizeof(*r));
     r->capacity = (vid_w <= 320 && vid_h <= 240)
                 ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
-    r->frame_y_size = y_sz;
-    r->frame_c_size = c_sz;
-
-    for (i = 0; i < r->capacity; i++)
-    {
-        r->frames[i].y  = p; p += y_sz;
-        r->frames[i].cb = p; p += c_sz;
-        r->frames[i].cr = p; p += c_sz;
-    }
+    r->frame_y_size = vid_w * vid_h;
+    r->frame_c_size = (vid_w / 2) * (vid_h / 2);
 }
 
 static uint32_t sample_to_pts_ms(uint32_t sample_idx)
@@ -729,6 +736,15 @@ static int ring_decode_one(void)
 
     if (r->count >= r->capacity)
         return 0;
+
+    /* Zero-copy safety: ensure frame pool has room.
+     * H.264: MAX_DPB=5, need max_ref(1) + output(1) + display(1) + ring <= 5
+     * MPEG-4: MAX_REF=3, need ref(1) + output(1) + display(1) + ring <= 3 */
+    {
+        int max_pool = (ps.codec_type == CODEC_MPEG4) ? 3 : 5;
+        if (r->count + 3 >= max_pool)
+            return 0;
+    }
     if (ps.cur_sample >= ps.num_samples)
         return -1;
 
@@ -744,6 +760,30 @@ static int ring_decode_one(void)
         return -1;
 
     ps.cur_sample++;
+
+    if (ps.codec_type == CODEC_MPEG4)
+    {
+        ret = vpu_mpeg4_decode_vop(ps.decoder_m4, ps.read_buf, (int)size);
+        if (ret == 1)
+        {
+            const uint8_t *y, *cb, *cr;
+            int w, h;
+            vpu_mpeg4_get_frame(ps.decoder_m4, &y, &cb, &cr, &w, &h);
+
+            slot = &r->frames[r->head];
+            slot->y  = y;
+            slot->cb = cb;
+            slot->cr = cr;
+            slot->pts_ms = pts;
+            slot->w = w;
+            slot->h = h;
+
+            r->head = (r->head + 1) % r->capacity;
+            r->count++;
+            return 1;
+        }
+        return (ret < 0) ? -1 : 0;
+    }
 
     pos = 0;
     while (pos + (int)ps.nalu_len_size <= (int)size)
@@ -767,9 +807,9 @@ static int ring_decode_one(void)
             vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
 
             slot = &r->frames[r->head];
-            memcpy(slot->y,  y,  r->frame_y_size);
-            memcpy(slot->cb, cb, r->frame_c_size);
-            memcpy(slot->cr, cr, r->frame_c_size);
+            slot->y  = y;
+            slot->cb = cb;
+            slot->cr = cr;
             slot->pts_ms = pts;
             slot->w = w;
             slot->h = h;
@@ -1227,14 +1267,23 @@ static void osd_toggle(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* OSD: draw overlay (uses lcd_update_rect, not lcd_update)           */
+/* OSD: draw overlay via HW compositor Layer 0                         */
 /* ------------------------------------------------------------------ */
+
+static fb_data *osd_get_address(int x, int y)
+{
+    return (fb_data *)ps.osd_fb + y * LCD_WIDTH + x;
+}
+
+static struct frame_buffer_t osd_framebuffer;
+static struct viewport osd_vp;
 
 static void osd_draw(void)
 {
     int title_y = 0;
     int trans_y = LCD_HEIGHT - ps.transport_bar_h;
     int title_vis, trans_vis;
+    bool hw_mode = compositor_is_active() && ps.osd_fb;
 
     /* Compute animated positions if animation is active */
     if (ps.osd_anim_step > 0)
@@ -1252,13 +1301,34 @@ static void osd_draw(void)
     title_vis = ps.title_bar_h + title_y;
     trans_vis = LCD_HEIGHT - trans_y;
 
-    lcd_set_viewport(NULL);
+    if (hw_mode)
+    {
+        /* HW overlay: render to Layer 0 framebuffer */
+        osd_framebuffer.fb_ptr = (fb_data *)ps.osd_fb;
+        osd_framebuffer.get_address_fn = (void *(*)(int, int))osd_get_address;
+        osd_framebuffer.stride = STRIDE_MAIN(LCD_WIDTH, LCD_HEIGHT);
+        osd_framebuffer.elems = LCD_WIDTH * LCD_HEIGHT;
 
-    /* Composite: letterbox + bars + volume all to framebuffer,
-     * then push entire frame to LCD in a single DMA transfer.
-     * Video is already in the framebuffer (from scale_and_blit_fb
-     * or blit_last_frame_fb). */
-    clear_letterbox_bars(false);
+        memset(&osd_vp, 0, sizeof(osd_vp));
+        osd_vp.x = 0;
+        osd_vp.y = 0;
+        osd_vp.width = LCD_WIDTH;
+        osd_vp.height = LCD_HEIGHT;
+        osd_vp.buffer = &osd_framebuffer;
+        osd_vp.font = ps.osd_font_id;
+        osd_vp.drawmode = DRMODE_SOLID;
+        osd_vp.fg_pattern = LCD_WHITE;
+        osd_vp.bg_pattern = LCD_BLACK;
+
+        lcd_set_viewport(&osd_vp);
+        memset(ps.osd_fb, 0, (size_t)LCD_WIDTH * LCD_HEIGHT * 2);
+    }
+    else
+    {
+        /* SW mode: render to default LCD framebuffer */
+        lcd_set_viewport(NULL);
+        clear_letterbox_bars(false);
+    }
 
     if (title_vis > 0)
         draw_title_bar(title_y);
@@ -1268,7 +1338,19 @@ static void osd_draw(void)
     if (ps.vol_show_until && TIME_BEFORE(current_tick, ps.vol_show_until))
         draw_volume_overlay();
 
-    lcd_update();
+    /* Restore default viewport */
+    lcd_set_viewport(NULL);
+
+    if (hw_mode)
+    {
+        commit_discard_dcache();
+        compositor_layer_setup(0, 0, 0, LCD_WIDTH, LCD_HEIGHT, ps.osd_fb);
+        compositor_layer_show(0);
+    }
+    else
+    {
+        lcd_update();
+    }
 
     /* Advance animation */
     if (ps.osd_anim_step > 0)
@@ -1279,9 +1361,10 @@ static void osd_draw(void)
             ps.osd_anim_step = 0;
             if (!ps.osd_anim_show)
             {
-                /* Fly-out complete — unboost, compositor resumes */
+                /* Fly-out complete — hide overlay layer */
                 ps.osd_visible = false;
                 ps.need_full_redraw = true;
+                compositor_layer_hide(0);
                 cpu_boost(false);
             }
         }
@@ -1566,13 +1649,14 @@ static void button_loop(const char *filepath)
 
         if (ps.state == PB_PLAYING)
         {
-            /* DVFS: boost BEFORE decode so memcpy runs at 108MHz */
+            /* DVFS: boost AHB before decode — memcpy is DRAM-bandwidth-bound.
+             * CLK_USB (108/108/54) doubles AHB vs CLK_MEDIA (108/54/27). */
             {
                 int fill = ps.ring.count * 100 / ps.ring.capacity;
                 if (fill < 25)
-                    media_boost_active();
+                    set_ahb_boost(true);
                 else if (fill > 50)
-                    media_boost_idle();
+                    set_ahb_boost(false);
             }
 
             /* ---- DECODE PHASE: burst-fill the ring buffer ---- */
@@ -1697,6 +1781,7 @@ static void button_loop(const char *filepath)
 
                         if (ps.osd_visible || ps.vol_show_until)
                         {
+                            /* OSD visible: stop compositor once, use SW path */
                             if (compositor_is_active())
                                 compositor_stop();
                             scale_and_blit_fb(frame->y, frame->cb,
@@ -1705,6 +1790,7 @@ static void button_loop(const char *filepath)
                         }
                         else
                         {
+                            /* No OSD: use HW compositor */
                             if (!compositor_is_active())
                                 compositor_start(frame->w, frame->h,
                                                  ps.disp_w, ps.disp_h,
@@ -1729,22 +1815,28 @@ static void button_loop(const char *filepath)
                     wait = 0;
                 }
 
-                /* OSD overlay compositing */
+                /* OSD overlay drawing */
                 if (ps.osd_visible)
                 {
-                    if (wait != 0)
-                        blit_last_frame_fb();
-                    osd_draw();
+                    if (!compositor_is_active())
+                    {
+                        if (wait != 0)
+                            blit_last_frame_fb();
+                        osd_draw();
+                    }
                     ps.need_osd_redraw = false;
                 }
                 else if (ps.vol_show_until
                          && TIME_BEFORE(current_tick,
                                         ps.vol_show_until))
                 {
-                    if (wait != 0)
-                        blit_last_frame_fb();
-                    draw_volume_overlay();
-                    lcd_update();
+                    if (!compositor_is_active())
+                    {
+                        if (wait != 0)
+                            blit_last_frame_fb();
+                        draw_volume_overlay();
+                        lcd_update();
+                    }
                 }
 
                 if (wait < 0) wait = 0;
@@ -1976,7 +2068,11 @@ void video_playback_start(const char *filepath, const char *title)
         return;
     }
 
-    dec_size = vpu_h264_buf_size(max_w, max_h);
+    {
+        size_t h264_sz = vpu_h264_buf_size(max_w, max_h);
+        size_t m4_sz   = vpu_mpeg4_buf_size(max_w, max_h);
+        dec_size = (h264_sz > m4_sz) ? h264_sz : m4_sz;
+    }
 
     /* Stop audio playback to free core memory for decode buffers */
     audio_hard_stop();
@@ -2000,10 +2096,8 @@ void video_playback_start(const char *filepath, const char *title)
 
     {
         size_t scale_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 3 / 2 + 128;
-        int ring_cap_est = (max_w <= 320 && max_h <= 240)
-                         ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
-        size_t ring_pool_size = (size_t)max_w * max_h * 3 / 2
-                              * ring_cap_est;
+        size_t ring_pool_size = 0;  /* zero-copy: no frame data allocation */
+        size_t osd_fb_size = (size_t)LCD_WIDTH * LCD_HEIGHT * 2 + 64;
 
         alloc_size = vid_samples * sizeof(uint32_t) + 32  /* video stsz */
                    + vid_chunks * sizeof(uint32_t) + 32   /* video stco */
@@ -2014,7 +2108,8 @@ void video_playback_start(const char *filepath, const char *title)
                    + dec_size + 4096
                    + 256 * 1024 + 32
                    + scale_size
-                   + ring_pool_size + 32;
+                   + ring_pool_size + 32
+                   + osd_fb_size;
     }
 
     mem_handle = core_alloc(alloc_size);
@@ -2065,14 +2160,15 @@ void video_playback_start(const char *filepath, const char *title)
         p = ps.scale_cr + (sw / 2) * (sh / 2);
     }
 
-    /* Allocate ring buffer frame pool */
-    {
-        int ring_cap = (max_w <= 320 && max_h <= 240)
-                     ? RING_MAX_FRAMES : RING_SMALL_FRAMES;
-        size_t ring_frame_sz = (size_t)max_w * max_h * 3 / 2;
-        ring_pool = (uint8_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
-        p = ring_pool + ring_frame_sz * ring_cap;
-    }
+    /* Zero-copy ring — no frame pool needed, DPB pointers stored directly */
+    ring_pool = p;  /* unused, just keeps variable alive */
+
+    /* OSD framebuffer for HW compositor overlay (Layer 0) */
+    ps.osd_fb = (uint16_t *)(uintptr_t)ALIGN_UP((uintptr_t)p, 32);
+    ps.osd_fb_w = LCD_WIDTH;
+    ps.osd_fb_h = LCD_HEIGHT;
+    memset(ps.osd_fb, 0, (size_t)LCD_WIDTH * LCD_HEIGHT * 2);
+    p = (uint8_t *)ps.osd_fb + (size_t)LCD_WIDTH * LCD_HEIGHT * 2;
 
     /* Step 2: Re-parse MP4 with full sample tables (video + audio) */
     if (mp4v_demux_open(filepath, &demux,
@@ -2087,20 +2183,35 @@ void video_playback_start(const char *filepath, const char *title)
         goto cleanup;
     }
 
-    /* Open VPU decoder */
-    ps.decoder = vpu_h264_open(dec_buf, dec_size, max_w, max_h);
-    if (!ps.decoder)
+    /* Open decoder based on video format */
+    if (demux.format == MAKEFOURCC('m','p','4','v'))
     {
-        splashf(HZ * 2, "Decoder init failed");
-        goto cleanup;
+        ps.codec_type = CODEC_MPEG4;
+        ps.decoder_m4 = vpu_mpeg4_open(dec_buf, dec_size, max_w, max_h,
+                                        demux.codecdata,
+                                        (int)demux.codecdata_len);
+        if (!ps.decoder_m4)
+        {
+            splashf(HZ * 2, "MPEG-4 decoder init failed");
+            goto cleanup;
+        }
     }
-
-    /* Configure with avcC from MP4 */
-    if (vpu_h264_configure(ps.decoder, demux.codecdata,
-                            (int)demux.codecdata_len) < 0)
+    else
     {
-        splashf(HZ * 2, "avcC config failed");
-        goto cleanup;
+        ps.codec_type = CODEC_H264;
+        ps.decoder = vpu_h264_open(dec_buf, dec_size, max_w, max_h);
+        if (!ps.decoder)
+        {
+            splashf(HZ * 2, "Decoder init failed");
+            goto cleanup;
+        }
+
+        if (vpu_h264_configure(ps.decoder, demux.codecdata,
+                                (int)demux.codecdata_len) < 0)
+        {
+            splashf(HZ * 2, "avcC config failed");
+            goto cleanup;
+        }
     }
 
     /* Open file for sample reads */
@@ -2233,7 +2344,7 @@ void video_playback_start(const char *filepath, const char *title)
     ring_init(max_w, max_h, ring_pool);
 
     /* Enable media DVFS and suppress button boost interference */
-    set_media_boost(true);
+    set_ahb_boost(true);
     button_boost_set_inhibit(true);
     perf_open();
 
@@ -2273,13 +2384,14 @@ void video_playback_start(const char *filepath, const char *title)
 
 cleanup:
     perf_close();
-    set_media_boost(false);
+    set_ahb_boost(false);
     button_boost_set_inhibit(false);
     cpu_boost(false);
     ring_flush();
     if (compositor_is_active()) compositor_stop();
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
+    if (ps.decoder_m4) { vpu_mpeg4_close(ps.decoder_m4); ps.decoder_m4 = NULL; }
     if (ps.vid_fd >= 0) { close(ps.vid_fd); ps.vid_fd = -1; }
     ps.demux = NULL;
     if (mem_handle >= 0) { core_unpin(mem_handle); core_free(mem_handle); }
