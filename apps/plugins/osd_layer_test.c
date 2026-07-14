@@ -203,39 +203,32 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();
 
     vlog("Video baseline active, holding 2s");
+    vlog("  008=0x%08lx 3AC=0x%08lx", (unsigned long)CR(0x008), (unsigned long)CR(0x3AC));
     busywait_us(2000000);
 
-    /* T0: Red ARGB1555 overlay on Layer 0 */
-    for(int i=0;i<OVL_W*OVL_H;i++) ovl_fb[i]=0xFC00; /* A=1 R=31 G=0 B=0 */
+    /* ONE DEFINITIVE TEST: fullscreen RED, L0 only, no video */
+    /* Fill 320x240 RED */
+    for(int i=0;i<320*240;i++) ovl_fb[i]=0xF800;
     rb->commit_discard_dcache();
-    layer_show(0, ovl_fb, OVL_W, OVL_H, 80, 100);
-    push_frame();
-    vlog("T0: RED overlay");
-    busywait_us(2000000);
-    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
 
-    /* T1: Green */
-    for(int i=0;i<OVL_W*OVL_H;i++) ovl_fb[i]=0x83E0; /* A=1 R=0 G=31 B=0 */
-    rb->commit_discard_dcache();
-    layer_show(0, ovl_fb, OVL_W, OVL_H, 80, 100);
+    /* Disable L5, enable L0 */
+    {uint32_t v=CR(0x008);v&=~0x080;v|=0x040;CR(0x008)=v;}
+    CR(0x058)=160; CR(0x05C)=0x10010100; CR(0x060)=PH(ovl_fb);
+    CR(0x064)=240|(320U<<16); CR(0x068)=80; CR(0x06C)=0;
+    CR(0x024)=1;
     push_frame();
-    vlog("T1: GREEN overlay");
-    busywait_us(2000000);
-    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
+    vlog("T0: FULLSCREEN RED L0only. 008=0x%08lx fb=0x%08lx",
+         (unsigned long)CR(0x008), (unsigned long)PH(ovl_fb));
+    busywait_us(3000000);
+    {uint32_t g=gram_sample();
+     uint32_t r6=(g>>12)&0x3F, g6=(g>>6)&0x3F, b6=g&0x3F;
+     vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu %s",
+          (unsigned long)g, (unsigned long)r6, (unsigned long)g6,
+          (unsigned long)b6, (g==0)?"BLACK":(r6>20)?"RED":"other");}
 
-    /* T2: White (all bits set = max visibility test) */
-    for(int i=0;i<OVL_W*OVL_H;i++) ovl_fb[i]=0xFFFF;
-    rb->commit_discard_dcache();
-    layer_show(0, ovl_fb, OVL_W, OVL_H, 80, 100);
+    /* Restore L5, disable L0 */
+    {uint32_t v=CR(0x008);v|=0x080;v&=~0x040;CR(0x008)=v;}
     push_frame();
-    vlog("T2: WHITE overlay");
-    busywait_us(2000000);
-    {uint32_t g=gram_sample(); vlog("  GRAM=0x%06lx %s", (unsigned long)g, g>0x100?"VISIBLE":"black");}
-
-    /* T3: Hide layer */
-    layer_hide(0);
-    push_frame();
-    vlog("T3: Layer hidden");
     busywait_us(1000000);
 
     vlog("=== DONE ===");
