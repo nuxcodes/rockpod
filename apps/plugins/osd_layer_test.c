@@ -176,7 +176,7 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Start compositor — EXACT compositor_start() */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    PWRCON(0)&=~0x2080;
+    PWRCON(0)&=~(0x2080|(7<<14));  /* compositor core + overlay DMA clocks */
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
     for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
