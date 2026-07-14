@@ -536,40 +536,16 @@ static int decode_one_frame(bool display)
 
                 vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
                 if (ps.osd_visible || ps.vol_show_until) {
+                    /* OSD visible: SW compositing (cpu_boost active) */
                     if (compositor_is_active())
                         compositor_stop();
                     scale_and_blit_fb(y, cb, cr, w, h);
-                } else if (!ps.need_scale && w == 320 && h == 240) {
+                } else {
+                    /* HW compositor path — handles all resolutions via scaler */
                     if (!compositor_is_active())
                         compositor_start(w, h, y, cb, cr);
                     else
                         compositor_update(y, cb, cr);
-                } else if (ps.need_scale && ps.dst_w == 320 && ps.dst_h == 240) {
-                    int cdst_w = ps.dst_w / 2;
-                    int cdst_h = ps.dst_h / 2;
-                    if (cdst_w < 2) cdst_w = 2;
-                    if (cdst_h < 2) cdst_h = 2;
-                    if (w == ps.dst_w * 2 && h == ps.dst_h * 2) {
-                        scale_plane_box2x2(y, w, ps.scale_y, ps.dst_w, ps.dst_h);
-                        scale_plane_box2x2(cb, w/2, ps.scale_cb, cdst_w, cdst_h);
-                        scale_plane_box2x2(cr, w/2, ps.scale_cr, cdst_w, cdst_h);
-                    } else {
-                        scale_plane_downscale(y, w, h, w,
-                                              ps.scale_y, ps.dst_w, ps.dst_h);
-                        scale_plane_downscale(cb, w/2, h/2, w/2,
-                                              ps.scale_cb, cdst_w, cdst_h);
-                        scale_plane_downscale(cr, w/2, h/2, w/2,
-                                              ps.scale_cr, cdst_w, cdst_h);
-                    }
-                    if (!compositor_is_active())
-                        compositor_start(ps.dst_w, ps.dst_h,
-                                         ps.scale_y, ps.scale_cb, ps.scale_cr);
-                    else
-                        compositor_update(ps.scale_y, ps.scale_cb, ps.scale_cr);
-                } else {
-                    if (compositor_is_active())
-                        compositor_stop();
-                    scale_and_blit(y, cb, cr, w, h);
                 }
             }
             return 1;
@@ -1147,6 +1123,7 @@ static void osd_show(void)
 {
     if (!ps.osd_visible)
     {
+        cpu_boost(true);
         ps.osd_anim_step = 1;
         ps.osd_anim_show = true;
         ps.osd_visible = true;
@@ -1249,9 +1226,10 @@ static void osd_draw(void)
             ps.osd_anim_step = 0;
             if (!ps.osd_anim_show)
             {
-                /* Fly-out complete */
+                /* Fly-out complete — unboost, compositor resumes */
                 ps.osd_visible = false;
                 ps.need_full_redraw = true;
+                cpu_boost(false);
             }
         }
     }
