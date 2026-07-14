@@ -91,7 +91,7 @@ static void comp_start(int fw, int fh,
     const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
 {
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    PWRCON(0) &= ~0x2080;
+    PWRCON(0) &= ~(0x2080|(7<<14));
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
 

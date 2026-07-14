@@ -136,7 +136,8 @@ void compositor_start(int frame_w, int frame_h,
     saved_lcd_74 = LR(0x74);
     saved_lcd_78 = LR(0x78);
 
-    PWRCON(0) &= ~0x2080;
+    /* Enable compositor core (bits 7,13) + overlay DMA (bits 14-16) */
+    PWRCON(0) &= ~(0x2080 | (7 << 14));
     { volatile int d = 0; while (d++ < 10000); }
 
     comp_hw_init();
