@@ -850,7 +850,9 @@ bool list_do_action(int context, int timeout,
 {
     timeout = list_do_action_timeout(lists, timeout);
     keyclick_set_callback(gui_synclist_keyclick_callback, lists);
+    skin_render_inhibit_flush(true);
     *action = get_action(context, timeout);
+    skin_render_inhibit_flush(false);
     return gui_synclist_do_button(lists, action);
 }
 
