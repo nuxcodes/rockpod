@@ -56,6 +56,7 @@
 #include "i2c-s5l8702.h"
 #include "gpio-s5l8702.h"
 #include "pmu-target.h"
+#include "dma-s5l8702.h"
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
 #include "norboot-target.h"
 #endif
@@ -771,6 +772,108 @@ static void devel_menu(void)
 }
 #endif /* S5L87XX_DEVELOPMENT_BOOTLOADER */
 
+#ifdef IPOD_6G
+/*
+ * Full hardware cleanup and jump to RetailOS loaded at DRAM.
+ *
+ * Unlike launch_onb() which jumps to the ONB in IRAM (where it does
+ * its own full hardware reinit), RetailOS loaded from disk may not
+ * reinitialize everything. We must undo all hardware state that
+ * Rockbox set up: DMA, interrupts, timers, caches, and MMU.
+ */
+static void __attribute__((noreturn)) launch_retailos(void *entry)
+{
+    /* 1. Disable IRQ and FIQ at the CPU level immediately */
+    disable_irq();
+    asm volatile("msr cpsr_c, #0xd3");  /* SVC mode, IRQ+FIQ disabled */
+
+    /* 2. Stop all DMA channels on both PL080 controllers.
+     *    Disable each channel, wait for it to go inactive,
+     *    then disable the controller itself. */
+    for (int ch = 0; ch < DMAC_CH_COUNT; ch++) {
+        uint32_t chbase;
+
+        /* DMAC0 */
+        chbase = DMAC_CH_BASE(DMA0_BASE, ch);
+        DMACCxCONFIG(chbase) &= ~DMACCxCONFIG_E_BIT;
+        while (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT);
+
+        /* DMAC1 */
+        chbase = DMAC_CH_BASE(DMA1_BASE, ch);
+        DMACCxCONFIG(chbase) &= ~DMACCxCONFIG_E_BIT;
+        while (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT);
+    }
+    /* Clear pending DMA interrupts and disable controllers */
+    DMACINTTCCLR(DMA0_BASE) = 0xff;
+    DMACINTERRCLR(DMA0_BASE) = 0xff;
+    DMACCONFIG(DMA0_BASE) &= ~DMACCONFIG_E_BIT;
+    DMACINTTCCLR(DMA1_BASE) = 0xff;
+    DMACINTERRCLR(DMA1_BASE) = 0xff;
+    DMACCONFIG(DMA1_BASE) &= ~DMACCONFIG_E_BIT;
+
+    /* 3. Disable all interrupts on both VIC controllers */
+    VIC0INTENCLEAR = 0xffffffff;
+    VIC1INTENCLEAR = 0xffffffff;
+    VIC0SOFTINTCLEAR = 0xffffffff;
+    VIC1SOFTINTCLEAR = 0xffffffff;
+    VIC0ADDRESS = (void*)0;
+    VIC1ADDRESS = (void*)0;
+
+    /* 4. Disable all external interrupts (GPIOIC / EIC) */
+    eint_init();
+
+    /* 5. Stop all 16-bit timers (A, B, C, D) */
+    TACON = 0;   TACMD = (1 << 1);  /* clear timer A */
+    TBCON = 0;   TBCMD = (1 << 1);  /* clear timer B (tick timer) */
+    TCCON = 0;   TCCMD = (1 << 1);  /* clear timer C */
+    TDCON = 0;   TDCMD = (1 << 1);  /* clear timer D */
+
+    /* 6. Stop all 32-bit timers (E, F, G, H) */
+    TECON = 0;   TECMD = (1 << 1);  /* clear timer E (USEC_TIMER) */
+    TFCON = 0;   TFCMD = (1 << 1);  /* clear timer F */
+    TGCON = 0;   TGCMD = (1 << 1);  /* clear timer G */
+    THCON = 0;   THCMD = (1 << 1);  /* clear timer H */
+
+    /* 7. Flush and disable caches, then disable MMU.
+     *    Order matters: clean+invalidate dcache while MMU is still on
+     *    (so virtual-to-physical translations work), then disable
+     *    MMU+caches together. */
+    asm volatile(
+        /* Clean and invalidate entire dcache (test-and-clean loop) */
+        "1:                                 \n"
+        "mrc    p15, 0, r15, c7, c14, 3     \n" /* test, clean & invalidate */
+        "bne    1b                          \n"
+        /* Drain write buffer */
+        "mov    r0, #0                      \n"
+        "mcr    p15, 0, r0, c7, c10, 4      \n"
+        /* Invalidate icache */
+        "mcr    p15, 0, r0, c7, c5, 0       \n"
+        /* Disable MMU, dcache, icache, and protection unit */
+        "mrc    p15, 0, r0, c1, c0, 0       \n"
+        "bic    r0, r0, #(1 << 12)          \n" /* disable icache */
+        "bic    r0, r0, #(1 << 2)           \n" /* disable dcache */
+        "bic    r0, r0, #(1 << 0)           \n" /* disable MMU */
+        "mcr    p15, 0, r0, c1, c0, 0       \n"
+        /* Invalidate TLB */
+        "mov    r0, #0                      \n"
+        "mcr    p15, 0, r0, c8, c7, 0       \n"
+        ::: "r0", "memory", "cc"
+    );
+
+    /* 8. Jump to RetailOS entry point.
+     *    Use inline asm to load the address into r0 and branch
+     *    via mov pc, r0 -- ensures a clean, unconditional jump
+     *    with no stack or register dependencies. */
+    asm volatile(
+        "mov    r0, %0  \n"
+        "mov    pc, r0  \n"
+        :: "r"(entry)
+        : "r0"
+    );
+    __builtin_unreachable();
+}
+#endif /* IPOD_6G */
+
 void main(void)
 {
     int rc = 0;
@@ -970,15 +1073,20 @@ void main(void)
 
 #ifdef IPOD_6G
     {
-        unsigned char *lb = (unsigned char *)DRAM_ORIG;
-        int fwrc = load_raw_firmware(lb, "/retailos.bin", 12*1024*1024);
+        unsigned char *tmpbuf = (unsigned char *)(DRAM_ORIG + 0x2000000);
+        printf("Loading retailos.bin...");
+        int fwrc = load_raw_firmware(tmpbuf, "/retailos.bin", 12*1024*1024);
         if (fwrc > 0) {
-            printf("Patched OF: %d bytes", fwrc);
+            printf("RetailOS: %d bytes, copying...", fwrc);
+            unsigned char *lb = (unsigned char *)DRAM_ORIG;
+            memmove(lb, tmpbuf, fwrc);
+#if (CONFIG_STORAGE & STORAGE_ATA)
+            ata_sleepnow();
+#endif
+            printf("Launching RetailOS");
             sleep(HZ/2);
-            disable_irq();
-            commit_discard_idcache();
-            ((void (*)(void))lb)();
-            while (1);
+            launch_retailos(lb);
+            /* never returns */
         }
     }
 #endif
