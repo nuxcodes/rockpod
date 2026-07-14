@@ -18,12 +18,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Start compositor passthrough: switches LCD to portrait DCS mode,
- * initializes compositor with YUV420 plane addresses, enables
- * hardware BT.601 CSC, and starts passthrough to LCD.
- * frame_w/frame_h: decoded frame dimensions (must be <= 320x240).
- * y/cb/cr: pointers to YUV420 plane data in DRAM. */
+/* Start compositor passthrough with HW scaling and letterboxing.
+ * frame_w/frame_h: native VPU output dimensions.
+ * disp_w/disp_h: aspect-corrected display dimensions (<= 320x240).
+ * disp_x/disp_y: centering offset within LCD.
+ * y/cb/cr: YUV420 plane data in DRAM. */
 void compositor_start(int frame_w, int frame_h,
+                      int disp_w, int disp_h, int disp_x, int disp_y,
                       const uint8_t *y, const uint8_t *cb, const uint8_t *cr);
 
 /* Update compositor with new frame: changes YUV plane pointers

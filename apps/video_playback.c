@@ -593,7 +593,10 @@ static int decode_one_frame(bool display)
                 } else {
                     /* HW compositor path — handles all resolutions via scaler */
                     if (!compositor_is_active())
-                        compositor_start(w, h, y, cb, cr);
+                        compositor_start(w, h,
+                                         ps.disp_w, ps.disp_h,
+                                         ps.disp_x, ps.disp_y,
+                                         y, cb, cr);
                     else
                         compositor_update(y, cb, cr);
                 }
@@ -1704,6 +1707,8 @@ static void button_loop(const char *filepath)
                         {
                             if (!compositor_is_active())
                                 compositor_start(frame->w, frame->h,
+                                                 ps.disp_w, ps.disp_h,
+                                                 ps.disp_x, ps.disp_y,
                                                  frame->y, frame->cb,
                                                  frame->cr);
                             else

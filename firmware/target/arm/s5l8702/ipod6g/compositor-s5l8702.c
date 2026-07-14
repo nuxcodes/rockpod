@@ -113,10 +113,11 @@ static void comp_hw_init(void)
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;
     c[0x214/4] = 0x013F00EF;  /* landscape viewport */
-    c[0x024/4] = 0x00FFFFFF;
+    c[0x024/4] = 0x00000000;  /* black background for letterbox bars */
 }
 
 void compositor_start(int frame_w, int frame_h,
+                      int disp_w, int disp_h, int disp_x, int disp_y,
                       const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
 {
     uint32_t h_scale, v_scale;
@@ -140,15 +141,16 @@ void compositor_start(int frame_w, int frame_h,
 
     comp_hw_init();
 
-    /* HW scaler: step = (src << 12) / dst. 0x1000 = unity, 0x2000 = 2:1 downscale */
-    h_scale = ((uint32_t)frame_w << 12) / 320;
-    v_scale = ((uint32_t)frame_h << 12) / 240;
+    /* HW scaler: step = (src << 12) / dst. Scale to display rect, not full LCD */
+    h_scale = ((uint32_t)frame_w << 12) / (uint32_t)disp_w;
+    v_scale = ((uint32_t)frame_h << 12) / (uint32_t)disp_h;
     if (h_scale < 0x1000) h_scale = 0x1000;
     if (v_scale < 0x1000) v_scale = 0x1000;
 
     /* Layer 5 — YUV420 planes at native resolution */
     for (int o = 0x024; o <= 0x044; o += 4) CR(o) = 0;
     for (int o = 0x04C; o <= 0x058; o += 4) CR(o) = 0;
+    CR(0x050) = ((uint32_t)disp_x << 16) | (uint32_t)disp_y;
     CR(0x028) = 0x100;
     CR(0x02C) = frame_w | ((frame_w/2) << 16);
     CR(0x034) = frame_h | ((uint32_t)frame_w << 16);
