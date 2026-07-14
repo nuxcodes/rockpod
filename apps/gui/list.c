@@ -701,11 +701,19 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             return true;
 #endif
         case ACTION_STD_PREVREPEAT:
-            allow_wrap = false; /* Prevent list wraparound on repeating actions */
+            allow_wrap = false;
             /*Fallthrough*/
         case ACTION_STD_PREV:
-
+        {
+            int old_sel = lists->selected_item;
             gui_list_select_at_offset(lists, -next_item_modifier, allow_wrap);
+            if (lists->selected_item != old_sel)
+            {
+                int save = lists->selected_item;
+                lists->selected_item = -1;
+                gui_synclist_draw(lists);
+                lists->selected_item = save;
+            }
 #ifndef HAVE_WHEEL_ACCELERATION
             if (button_queue_count() < FRAMEDROP_TRIGGER)
 #endif
@@ -715,10 +723,19 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             return true;
 
         case ACTION_STD_NEXTREPEAT:
-            allow_wrap = false; /* Prevent list wraparound on repeating actions */
+            allow_wrap = false;
             /*Fallthrough*/
         case ACTION_STD_NEXT:
+        {
+            int old_sel = lists->selected_item;
             gui_list_select_at_offset(lists, next_item_modifier, allow_wrap);
+            if (lists->selected_item != old_sel)
+            {
+                int save = lists->selected_item;
+                lists->selected_item = -1;
+                gui_synclist_draw(lists);
+                lists->selected_item = save;
+            }
 #ifndef HAVE_WHEEL_ACCELERATION
             if (button_queue_count() < FRAMEDROP_TRIGGER)
 #endif
@@ -726,6 +743,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
             yield();
             *actionptr = ACTION_STD_NEXT;
             return true;
+        }
 
         case ACTION_TREE_PGRIGHT:
             gui_synclist_scroll_right(lists);
