@@ -278,11 +278,16 @@ enum plugin_status plugin_start(const void *parameter)
     while(!(LCD_STATUS&0x2));
     LR(0x80)=0;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LCD_CON=0x81100DA8;
+    LCD_CON=0x80100DA8;  /* P18 with WD */
     LR(0x70)=1;
-    push_frame();
-    vlog("  P18: LCD_CON=0x%08lx (expect 0x81100DA8)",
-         (unsigned long)LCD_CON);
+    /* P18-specific push: restore P18, not P16 */
+    {int t2=100000;while((LR(0x8C)&3)&&--t2>0);}
+    LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
+    ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DA8;  /* restore P18 */
+    LR(0x80)=0;
+    vlog("  P18: LCD_CON=0x%08lx (expect 0x80100DA8)",(unsigned long)LCD_CON);
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<4000000)rb->backlight_on();}
 
     /* Restore P16 */
