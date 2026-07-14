@@ -58,7 +58,7 @@ static void push_frame(void)
     ili_cmd(0x201); ili_data(0);
     ili_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80100DB0;
+    LCD_CON = 0x81100DB0;
 
     LR(0x80) = 0;
 }
@@ -149,7 +149,7 @@ void compositor_start(int frame_w, int frame_h,
     if (v_scale < 0x1000) v_scale = 0x1000;
 
     /* Layer 5 — YUV420 planes at native resolution */
-    for (int o = 0x024; o <= 0x044; o += 4) CR(o) = 0;
+    for (int o = 0x028; o <= 0x044; o += 4) CR(o) = 0;
     for (int o = 0x04C; o <= 0x058; o += 4) CR(o) = 0;
     CR(0x050) = ((uint32_t)disp_x << 16) | (uint32_t)disp_y;
     CR(0x028) = 0x100;
@@ -163,11 +163,12 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x044) = PH(cb);
     CR(0x3AC) = 0x04004002;   /* pipeline config ON, rotation OFF */
     CR(0x0D4) = 1;
-    { uint32_t v = CR(0x008); v &= ~0x100; CR(0x008) = v; }
+    /* bit 8 SET = CSC for Layer 5 only. Overlays pass through as RGB. */
+    { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
     commit_discard_dcache();
 
     /* P16 passthrough — confirmed working */
-    LCD_CON = 0x80100DB0;
+    LCD_CON = 0x81100DB0;
     LR(0x88) = 0x01000000;
     LR(0x20) = 0x33;
     LR(0x7C) = 0x00000402;
@@ -186,7 +187,7 @@ void compositor_start(int frame_w, int frame_h,
     ili_cmd(0x201); ili_data(0);
     ili_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80100DB0;
+    LCD_CON = 0x81100DB0;
 
     /* Compositor GO=1 then passthrough enable */
     CR(0x000) = 1;

@@ -179,15 +179,16 @@ enum plugin_status plugin_start(const void *parameter)
     PWRCON(0)&=~(0x2080|(7<<14));  /* compositor core + overlay DMA clocks */
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
-    for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
+    for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
     for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004002;  /* pipeline config ON, rotation OFF (bit 0 clear) */
+    CR(0x3AC)=0x04004002;
     CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    /* bit 8 SET = CSC for Layer 5 only, RGB passthrough for overlays */
+    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
     LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
