@@ -202,6 +202,20 @@ enum plugin_status plugin_start(const void *parameter)
     /* Hold 3s — busy-wait, no yield */
     {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<3000000)rb->backlight_on();}
 
+    /* LCD+0x7C sweep — test transfer count per pixel */
+    vlog("=== LCD+0x7C TEST (P9 transfer count) ===");
+    static const uint32_t lcd7c_vals[] = {0x402, 0x403, 0x400, 0x401};
+    static const char *lcd7c_names[] = {"0x402(2xfr)", "0x403(3xfr)", "0x400(0)", "0x401(1xfr)"};
+    for(int i=0;i<4;i++){
+        LR(0x7C) = lcd7c_vals[i];
+        push_frame();
+        vlog("[7C-%d] 0x%03lx %s", i, (unsigned long)lcd7c_vals[i], lcd7c_names[i]);
+        gram_read(160,120,lcd7c_names[i]);
+        {uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<2000000)rb->backlight_on();}
+    }
+    LR(0x7C) = 0x402;
+    vlog("=== LCD+0x7C TEST DONE ===");
+
     /* Baseline GRAM readback */
     gram_read(160,120,"baseline-center");
     gram_read(10,10,"baseline-TL");
