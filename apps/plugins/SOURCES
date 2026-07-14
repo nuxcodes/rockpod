@@ -248,3 +248,5 @@ test_touchscreen.c
 test_usb.c
 test_viewports.c
 #endif /* HAVE_TEST_PLUGINS */
+scaler_test.c
+osd_layer_test.c
