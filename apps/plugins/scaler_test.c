@@ -40,6 +40,24 @@ static void push_frame(void)
     LR(0x80) = 0;
 }
 
+static uint32_t gram_sample(void) {
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+    LR(0x70)=0;LR(0x80)=1;
+    while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
+    LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
+    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
+    while(!(LCD_STATUS&0x2));
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+    uint32_t g=LCD_DBUFF&0x3FFFF;
+    LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;
+    push_frame();return g;
+}
+
+static void busywait_us(uint32_t us) {
+    uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
+}
+
 static void comp_hw_init(void)
 {
     volatile uint32_t *c = (volatile uint32_t*)COMP;
@@ -282,6 +300,53 @@ enum plugin_status plugin_start(const void *parameter)
     LR(0x70)=1;
     push_frame();
     vlog("  P16 restored: LCD_CON=0x%08lx", (unsigned long)LCD_CON);
+
+    /* === MODE FIELD TEST: change bits 25:24,21:20,17:16 from 01/01/01 to 00/00/00 === */
+    vlog("=== MODE FIELD TEST ===");
+    {
+        size_t dec_size = vpu_h264_buf_size(640, 480);
+        uint8_t *ovl_p = ab + dec_size + 512*1024 + fw*fh*2;
+        ovl_p = (uint8_t*)(((uintptr_t)ovl_p+31)&~31UL);
+        uint16_t *ovl = (uint16_t*)ovl_p;
+
+        /* RED on Layer 1 with MODE=01/01/01 (current) */
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+        rb->commit_discard_dcache();
+        {uint32_t v=CR(0x008);v&=~0x080;v|=0x020;CR(0x008)=v;}
+        CR(0x070)=320;CR(0x074)=0x10010100;CR(0x078)=PH(ovl);
+        CR(0x07C)=240|(320U<<16);CR(0x080)=80;CR(0x084)=0;
+        CR(0x024)=1;push_frame();
+        vlog("  M1: L1 RED mode=01/01/01");
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();
+         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
+              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+              (unsigned long)(g&0x3F));}
+
+        /* Change mode to 00/00/00 */
+        {uint32_t v=CR(0x008);v&=~0x03030000;CR(0x008)=v;}
+        CR(0x024)=1;push_frame();
+        vlog("  M2: L1 RED mode=00/00/00 008=0x%08lx",(unsigned long)CR(0x008));
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();
+         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
+              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+              (unsigned long)(g&0x3F));}
+
+        /* Try mode 10/10/10 */
+        {uint32_t v=CR(0x008);v|=0x02020000;CR(0x008)=v;}
+        CR(0x024)=1;push_frame();
+        vlog("  M3: L1 RED mode=10/10/10 008=0x%08lx",(unsigned long)CR(0x008));
+        busywait_us(2000000);
+        {uint32_t g=gram_sample();
+         vlog("  GRAM=0x%06lx R=%lu G=%lu B=%lu",(unsigned long)g,
+              (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+              (unsigned long)(g&0x3F));}
+
+        /* Restore mode 01/01/01 and cleanup */
+        {uint32_t v=CR(0x008);v&=~0x03030000;v|=0x01010000;v&=~0x020;v|=0x080;CR(0x008)=v;}
+        CR(0x024)=1;push_frame();
+    }
 
     vlog("=== DONE ===");
 
