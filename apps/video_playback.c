@@ -1604,10 +1604,19 @@ static void button_loop(const char *filepath)
 
                     drift = (int32_t)(ps.curr_time_ms - audio_ms);
 
-                    if (drift > 10)
+                    if (drift > 200)
                     {
-                        /* Video ahead of audio: wait */
+                        /* Audio can't keep up — abandon sync, use tick pacing */
+                        ps.play_start_tick = current_tick;
+                        ps.play_start_time = ps.curr_time_ms;
+                        ps.audio_clock_lost = true;
+                        wait = 0;
+                    }
+                    else if (drift > 10)
+                    {
+                        /* Video ahead: wait, but cap to prevent FPS collapse */
                         wait = (long)(drift * HZ / 1000);
+                        if (wait > HZ / 25) wait = HZ / 25;
                     }
                     else if (drift < -66)
                     {
