@@ -167,7 +167,9 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
-    CR(0x040)=0;CR(0x044)=PH(cbo);CR(0x3AC)=0;CR(0x0D4)=1;
+    CR(0x040)=0;CR(0x044)=PH(cbo);
+    CR(0x3AC)=0x04004002;  /* pipeline config ON, rotation OFF (bit 0 clear) */
+    CR(0x0D4)=1;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
     LCD_CON=0x80100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
