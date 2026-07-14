@@ -162,7 +162,7 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0;                /* no pipeline — proven tear-free */
+    CR(0x3AC) = 0x04004002;    /* pipeline ON — required for overlay layers */
     CR(0x0D4) = 1;
     /* bit 8 SET = CSC for Layer 5 only. Layers 0-4 pass through as RGB. */
     { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
