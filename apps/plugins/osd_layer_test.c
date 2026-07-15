@@ -100,7 +100,12 @@ static void setup_layer(int n,uint16_t*fb,int w,int h,uint32_t fmt){
      CR(grp[n])=0x500040FF;}
     {uint32_t bits[]={0x040,0x020,0x010,0x008,0x004};
      uint32_t v=CR(0x008);v|=bits[n];CR(0x008)=v;}
-    CR(0x024)=1;
+    /* No comp+0x024 commit: Apple's own runtime layer-pointer dispatcher
+     * (ROM 0x0014d6b4) does a bare pointer store for layers 0-4 exactly
+     * like it does for layer 5 (already proven safe) — no commit write
+     * anywhere in that path. comp+0x024 has zero ROM precedent for any
+     * post-init write while the compositor is active; every call site
+     * here is followed by push_frame(), which is the actual latch. */
 }
 
 enum plugin_status plugin_start(const void *parameter)
