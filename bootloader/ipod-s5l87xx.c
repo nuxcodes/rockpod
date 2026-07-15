@@ -914,45 +914,6 @@ static void devel_menu(void)
 }
 #endif /* S5L87XX_DEVELOPMENT_BOOTLOADER */
 
-#ifdef IPOD_6G
-static void __attribute__((noreturn)) launch_patched_onb(void *fw_data, int fw_len)
-{
-    printf("Launching patched ONB...");
-    sleep(HZ/2);
-
-    /* Disable IRQ FIRST — im3_read overwrites the exception vector
-     * table at IRAM0 (0x22000000). Any interrupt during the SPI read
-     * would jump through garbage vectors and crash. */
-    disable_irq();
-
-    /* Load ONB from NOR to IRAM0 */
-    spi_clkdiv(SPI_PORT, 3);
-    struct Im3Info *hinfo = (struct Im3Info *)IRAM1_ORIG;
-    im3_read(NORBOOT_OFF + im3_nor_sz(hinfo), hinfo, (void *)IRAM0_ORIG);
-
-    /* Patch ONB: replace arg setup + step 10 BL at 0x105AE-0x105B9
-     * (12 bytes exactly). Do NOT touch 0x105BA+ (error exit path).
-     * Steps 7-9 (HOB init, MMU+cache, FV HOBs) run normally. */
-    uint8_t *onb = (uint8_t *)IRAM0_ORIG;
-    static const uint8_t patch[] = {
-        0x40, 0xF2, 0x00, 0x00,  /* movw r0, #0x0000 */
-        0xC0, 0xF6, 0x00, 0x00,  /* movt r0, #0x0800 */
-        0x00, 0x47,              /* bx   r0           */
-        0x00, 0xBF,              /* nop (pad to 12)   */
-    };
-    memcpy(onb + 0x105AE, patch, 12);
-
-    /* Copy firmware to DRAM_ORIG */
-    memmove((void *)DRAM_ORIG, fw_data, fw_len);
-
-    eint_init();
-    commit_discard_idcache();
-
-    asm volatile("mov pc, %0" :: "r"(IRAM0_ORIG));
-    while (1);
-}
-#endif
-
 void main(void)
 {
     int rc = 0;
@@ -1163,59 +1124,129 @@ void main(void)
         if (fwrc > 0) {
             printf("RetailOS: %d bytes", fwrc);
 
-            /* Compute checksum of patched firmware */
             uint32_t new_chksum = 0;
             for (int i = 0; i < fwrc; i++)
                 new_chksum += tmpbuf[i];
 
-            /* Read firmware partition directory to find osos */
-            struct storage_info si;
-            storage_get_info(0, &si);
-            struct partinfo pi;
-            disk_partinfo(0, &pi);
-            unsigned long fw_sect = pi.start;
+            /* Find firmware partition by reading raw MBR.
+             * iPod Classic: firmware partition is the FIRST MBR entry
+             * with a non-zero start sector. It typically has type 0x00
+             * but some tools change it. We identify it as the non-FAT
+             * partition (not type 0x0B/0x0C). */
+            unsigned char mbr[512];
+            storage_read_sectors(0, 1, mbr);
+            unsigned long fw_sect = 0;
+            for (int p = 0; p < 4; p++) {
+                unsigned char *ent = mbr + 0x1BE + p * 16;
+                uint8_t ptype = ent[4];
+                uint32_t start, size;
+                memcpy(&start, ent + 8, 4);
+                memcpy(&size, ent + 12, 4);
+                printf("P%d: type=0x%02x start=%lu sz=%lu",
+                       p, ptype, (unsigned long)start, (unsigned long)size);
+                if (start > 0 && ptype != 0x0B && ptype != 0x0C
+                              && ptype != 0x06 && ptype != 0x07) {
+                    if (!fw_sect) fw_sect = start;
+                }
+            }
+            if (!fw_sect) {
+                printf("ERR: no firmware partition");
+                goto boot_rockbox;
+            }
 
-            /* Read directory sector at partition + 0x4200/512 */
-            unsigned char dirbuf[512];
-            storage_read_sectors(fw_sect + 0x4200 / 512, 1, dirbuf);
+            /* Read firmware partition header */
+            unsigned char dirbuf[4096];
+            if (storage_read_sectors(fw_sect, 1, dirbuf) != 0) {
+                printf("ERR: header read failed");
+                goto boot_rockbox;
+            }
+            if (memcmp(dirbuf + 0x100, "]ih[", 4) != 0) {
+                printf("ERR: bad fw header (no ]ih[)");
+                goto boot_rockbox;
+            }
+            uint32_t dir_byte_off;
+            memcpy(&dir_byte_off, dirbuf + 0x104, 4);
+            dir_byte_off += 0x200;
 
-            /* Find osos entry (scan 40-byte entries) */
-            int osos_idx = -1;
-            for (int i = 0; i < 512 / 40; i++) {
+            /* Directory may not be sector-aligned */
+            unsigned int dir_align = dir_byte_off % 512;
+            unsigned long dir_sect = fw_sect + dir_byte_off / 512;
+            if (storage_read_sectors(dir_sect, 1, dirbuf) != 0) {
+                printf("ERR: dir read failed");
+                goto boot_rockbox;
+            }
+
+            /* Find osos entry (scan from alignment offset) */
+            int osos_off = -1;
+            for (int i = dir_align; i + 40 <= 512; i += 40) {
                 uint32_t id;
-                memcpy(&id, dirbuf + i * 40 + 4, 4);
-                if (id == 0x6F736F73) { /* "osos" LE */
-                    osos_idx = i;
+                memcpy(&id, dirbuf + i + 4, 4);
+                if (id == 0x6F736F73) {
+                    osos_off = i;
                     break;
                 }
             }
+            if (osos_off < 0) {
+                printf("ERR: osos not found");
+                goto boot_rockbox;
+            }
 
-            if (osos_idx >= 0) {
-                uint32_t old_chksum;
-                memcpy(&old_chksum, dirbuf + osos_idx * 40 + 28, 4);
+            uint32_t old_chksum, old_len, dev_off;
+            memcpy(&old_chksum, dirbuf + osos_off + 28, 4);
+            memcpy(&old_len, dirbuf + osos_off + 16, 4);
+            memcpy(&dev_off, dirbuf + osos_off + 12, 4);
+            unsigned long img_sect = fw_sect + 1 + dev_off / 512;
 
-                if (old_chksum != new_chksum) {
-                    printf("Flashing patched osos...");
-
-                    /* Get devOffset from directory */
-                    uint32_t dev_off;
-                    memcpy(&dev_off, dirbuf + osos_idx * 40 + 12, 4);
-                    unsigned long img_sect = fw_sect + dev_off / 512;
-
-                    /* Write firmware to osos slot */
-                    int nsect = (fwrc + 511) / 512;
-                    storage_write_sectors(img_sect, nsect, tmpbuf);
-
-                    /* Update directory: len + checksum */
-                    uint32_t new_len = fwrc;
-                    memcpy(dirbuf + osos_idx * 40 + 16, &new_len, 4);
-                    memcpy(dirbuf + osos_idx * 40 + 28, &new_chksum, 4);
-                    storage_write_sectors(fw_sect + 0x4200 / 512, 1, dirbuf);
-
-                    printf("Done. Booting OF...");
+            if (old_chksum != new_chksum) {
+                /* Backup original osos to FAT32 (one-time) */
+                int probe = open("/retailos_backup.bin", O_RDONLY);
+                if (probe < 0) {
+                    printf("Backing up original osos...");
+                    unsigned char *bkbuf = tmpbuf + 12*1024*1024;
+                    int bk_sect = (old_len + 511) / 512;
+                    if (storage_read_sectors(img_sect, bk_sect, bkbuf) == 0) {
+                        int fd = open("/retailos_backup.bin",
+                                      O_WRONLY|O_CREAT|O_TRUNC, 0666);
+                        if (fd >= 0) {
+                            write(fd, bkbuf, old_len);
+                            close(fd);
+                        }
+                    }
                 } else {
-                    printf("osos up to date.");
+                    close(probe);
                 }
+
+                printf("Writing patched osos...");
+                int nsect = (fwrc + 511) / 512;
+                int wrc = storage_write_sectors(img_sect, nsect, tmpbuf);
+                if (wrc != 0) {
+                    printf("ERR: write failed (%d)!", wrc);
+                    printf("Restoring backup...");
+                    /* Attempt restore from backup */
+                    int bfd = open("/retailos_backup.bin", O_RDONLY);
+                    if (bfd >= 0) {
+                        unsigned char *bkbuf = tmpbuf + 12*1024*1024;
+                        int bklen = filesize(bfd);
+                        read(bfd, bkbuf, bklen);
+                        close(bfd);
+                        storage_write_sectors(img_sect,
+                                              (bklen + 511) / 512, bkbuf);
+                    }
+                    goto boot_rockbox;
+                }
+
+                /* Update directory only after successful write */
+                uint32_t new_len = fwrc;
+                memcpy(dirbuf + osos_off + 16, &new_len, 4);
+                memcpy(dirbuf + osos_off + 28, &new_chksum, 4);
+                if (storage_write_sectors(dir_sect,
+                                          1, dirbuf) != 0) {
+                    printf("ERR: dir update failed!");
+                    goto boot_rockbox;
+                }
+                printf("Done.");
+            } else {
+                printf("osos up to date.");
             }
 
             /* Boot via ONB — full Apple boot chain */
@@ -1225,6 +1256,7 @@ void main(void)
             kernel_launch_onb();
         }
     }
+boot_rockbox:
 #endif
 
     printf("Loading Rockbox...");
