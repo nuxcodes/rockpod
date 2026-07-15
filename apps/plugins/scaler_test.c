@@ -185,10 +185,10 @@ enum plugin_status plugin_start(const void *parameter)
         uint32_t g_after=gram_sample();
         vlog("comp024-burst: AFTER 20x burst (no recovery frame) GRAM=0x%06lx",(unsigned long)g_after);
         vlog("  comp024-burst verdict: %s",
-             (g_after==0x000980)
-                 ?"MATCHES KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
-                 :(g_after==g_before)
-                     ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
+             (g_after==g_before)
+                 ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
+                 :(g_after==0x000980)
+                     ?"CHANGED TO KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
                      :"CHANGED (not the known-bad signature) -- likely normal frame variation, inconclusive from a single sample");
     }
 
