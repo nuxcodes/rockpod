@@ -66,8 +66,8 @@ static void comp_hw_init(void){
          for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=t[i];
      else{uint32_t h[]={0x0C,0x26,0x10,0x82,0x4E};
           for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=h[i];}}
-    c[0x0D8/4]=0x1000;c[0x0DC/4]=0;c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
-    c[0x0E8/4]=0x1000;c[0x0EC/4]=0;
+    c[0x0D8/4]=0x10FF;c[0x0DC/4]=0;c[0x0E0/4]=0x10FF;c[0x0E4/4]=0;
+    c[0x0E8/4]=0x10FF;c[0x0EC/4]=0;
     {uint32_t v=c[0x008/4];v&=~0xFC;
      v&=~0x20000000;v&=~0x10000000;
      v&=~0x03000000;v|=0x01000000;v&=~0x00300000;v|=0x00100000;
@@ -95,6 +95,9 @@ static void setup_layer(int n,uint16_t*fb,int w,int h,uint32_t fmt){
     CR(base+0x0C)=h|((uint32_t)w<<16);
     CR(base+0x10)=((2*w)+7)/8;
     CR(base+0x14)=0;
+    /* Apple's overlay blend: ONE_MINUS_SRC_ALPHA/SRC_ALPHA + alpha=0xFF */
+    {static const uint16_t grp[]={0x0D8,0x0E0,0x0E0,0x0E0,0x0E8};
+     CR(grp[n])=0x500040FF;}
     {uint32_t bits[]={0x040,0x020,0x010,0x008,0x004};
      uint32_t v=CR(0x008);v|=bits[n];CR(0x008)=v;}
     CR(0x024)=1;
@@ -226,11 +229,82 @@ enum plugin_status plugin_start(const void *parameter)
     gram_log(test++,"L4 RED bit8=0 + GO cycle");
     {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
 
+    /* T5: Layer 4 RED, format 0x00011100 (bits 15:12=1 = blend mode 1) */
+    CR(0x0BC)=0x00011100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x00011100 (blend=1)");
+
+    /* T6: Layer 4 RED, format 0x10011100 (blend=0: bits31:28=1,15:12=0 + blend=1 combined) */
+    CR(0x0BC)=0x10011100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x10011100 (blend0+1)");
+
+    /* T7: Layer 4 RED, format 0x90011100 (blend=3: bits31:28=9,15:12=8) */
+    CR(0x0BC)=0x90018100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x90018100 (blend=3)");
+
+    /* T8: Layer 4 RED, format 0xB001A100 (blend=4: Layer 4 special) */
+    CR(0x0BC)=0xB001A100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0xB001A100 (blend=4 special)");
+
     /* Disable L4, re-enable L5 */
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T5: Layer 4 GREEN for color matrix */
+    /* T9: ARGB8888 RED on Layer 4 — format code 2 */
+    {
+        uint32_t *ovl32 = (uint32_t*)ovl;
+        for(int i=0;i<320*240;i++) ovl32[i]=0xFFFF0000;
+        rb->commit_discard_dcache();
+        CR(0x0B8)=(4*320)/2;
+        CR(0x0BC)=0x00010200;
+        CR(0x0C0)=PH(ovl);
+        CR(0x0C4)=240|(320U<<16);
+        CR(0x0C8)=((4*320)+7)/8;
+        CR(0x0CC)=0;
+        {uint32_t v=CR(0x008);v|=0x004;CR(0x008)=v;}
+        CR(0x024)=1;
+        push_frame();busywait_us(2000000);
+        gram_log(test++,"L4 ARGB8888 RED 0xFFFF0000 fmt=0x200");
+    }
+
+    /* T10: ARGB8888 GREEN */
+    {
+        uint32_t *ovl32 = (uint32_t*)ovl;
+        for(int i=0;i<320*240;i++) ovl32[i]=0xFF00FF00;
+        rb->commit_discard_dcache();
+        CR(0x0C0)=PH(ovl);CR(0x024)=1;
+        push_frame();busywait_us(2000000);
+        gram_log(test++,"L4 ARGB8888 GREEN 0xFF00FF00 fmt=0x200");
+    }
+
+    /* T11: comp+0x00C sweep — try disabling pipeline stages */
+    CR(0x0BC)=0x00010100;
+    CR(0x0B8)=(2*320)/2;
+    CR(0x0C8)=((2*320)+7)/8;
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+    rb->commit_discard_dcache();
+    CR(0x0C0)=PH(ovl);CR(0x024)=1;
+
+    {volatile uint32_t *c=(volatile uint32_t*)0x38900000;
+     c[0x00C/4]=0x00000000;} /* zero all pipeline stages */
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED 00C=0x00000000");
+
+    {volatile uint32_t *c=(volatile uint32_t*)0x38900000;
+     c[0x00C/4]=0x000F0F0F;} /* restore */
+
+    /* Disable L4 */
+    {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
+
+    /* T12: Layer 4 GREEN for color matrix */
     for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
     rb->commit_discard_dcache();
     setup_layer(4,ovl,320,240,0x00010100);
@@ -253,6 +327,37 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* Disable L4 */
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
+
+    /* T13-T16: Layer 0 — never tested with proven setup_layer() methodology.
+     * grp[0]=0x0D8 (L0's dedicated blend reg), bits[0]=0x040 (L0 enable) —
+     * identical code path already proven correct for L4. */
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+    rb->commit_discard_dcache();
+    setup_layer(0,ovl,320,240,0x00010100);
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L0 RED 0xF800");
+
+    for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
+    rb->commit_discard_dcache();
+    CR(0x060)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L0 GREEN 0x07E0");
+
+    for(int i=0;i<320*240;i++) ovl[i]=0x001F;
+    rb->commit_discard_dcache();
+    CR(0x060)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L0 BLUE 0x001F");
+
+    for(int i=0;i<320*240;i++) ovl[i]=0xFFFF;
+    rb->commit_discard_dcache();
+    CR(0x060)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L0 WHITE 0xFFFF");
+
+    /* Disable L0 */
+    {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
     CR(0x024)=1;
 
     vlog("=== DONE (%d tests) ===",test);
