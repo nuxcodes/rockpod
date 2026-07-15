@@ -66,8 +66,8 @@ static void comp_hw_init(void){
          for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=t[i];
      else{uint32_t h[]={0x0C,0x26,0x10,0x82,0x4E};
           for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=h[i];}}
-    c[0x0D8/4]=0x1000;c[0x0DC/4]=0;c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
-    c[0x0E8/4]=0x1000;c[0x0EC/4]=0;
+    c[0x0D8/4]=0x10FF;c[0x0DC/4]=0;c[0x0E0/4]=0x10FF;c[0x0E4/4]=0;
+    c[0x0E8/4]=0x10FF;c[0x0EC/4]=0;
     {uint32_t v=c[0x008/4];v&=~0xFC;
      v&=~0x20000000;v&=~0x10000000;
      v&=~0x03000000;v|=0x01000000;v&=~0x00300000;v|=0x00100000;
@@ -80,6 +80,7 @@ static void comp_hw_init(void){
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
     c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
+    c[0x024/4]=0x00000000;
 }
 
 static int fsc(const uint8_t*b,int l,int*s){
@@ -196,7 +197,7 @@ enum plugin_status plugin_start(const void *parameter)
     LR(0x80)=1;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DA8;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA8;
     LR(0x80)=0;
     vlog("  CON=0x%08lx",(unsigned long)LCD_CON);
 
@@ -222,7 +223,7 @@ enum plugin_status plugin_start(const void *parameter)
             LR(0x80)=1;
             while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
             ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-            while(!(LCD_STATUS&0x2));LCD_CON=0x80100DA8;
+            while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA8;
             LR(0x80)=0;
             vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu",
                  px[i],py[i],(unsigned long)g,
