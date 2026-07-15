@@ -55,6 +55,15 @@ static void gram_log(int t,const char*desc){
          (unsigned long)g,(unsigned long)((g>>12)&0x3F),
          (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F));
 }
+/* Like gram_log but also returns the raw GRAM value for numeric
+ * comparison between two samples (equivalence/disturbance tests). */
+static uint32_t gram_log_r(int t,const char*desc){
+    uint32_t g=gram_sample();
+    vlog("T%d: %s GRAM=0x%06lx R=%lu G=%lu B=%lu",t,desc,
+         (unsigned long)g,(unsigned long)((g>>12)&0x3F),
+         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F));
+    return g;
+}
 
 static void comp_hw_init(void){
     volatile uint32_t *c=(volatile uint32_t*)COMP;
@@ -114,7 +123,7 @@ enum plugin_status plugin_start(const void *parameter)
     if(!*path)return PLUGIN_ERROR;
     rb->cpu_boost(true);rb->audio_stop();
     log_fd=rb->open("/osd_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== OSD Overlay Test v2 ===");
+    vlog("=== OSD Overlay Test v3 ===");
 
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
@@ -188,7 +197,7 @@ enum plugin_status plugin_start(const void *parameter)
     rb->commit_discard_dcache();
     int test=0;
 
-    /* T0: Layer 4 RED BEFORE zeroing filter/CSC banks */
+    /* Layer 4 RED BEFORE zeroing filter/CSC banks */
     setup_layer(4,ovl,320,240,0x00010100);
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED BEFORE zero banks");
@@ -202,31 +211,31 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x3C4)=0; CR(0x3C8)=0;
     vlog("Zeroed filter/CSC banks 0F0-17C, 180-1C4, 31C-360, 364-3A8, 3C4-3C8");
 
-    /* T1: Layer 4 RED AFTER zeroing — if colors change, stale banks were the cause */
+    /* Layer 4 RED AFTER zeroing — if colors change, stale banks were the cause */
     {uint32_t v=CR(0x008);v|=0x004;CR(0x008)=v;} /* re-enable L4 */
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED AFTER zero banks");
 
-    /* T2: Layer 4 RED, format 0x00000100 (bits 23:16 = 0x00) */
+    /* Layer 4 RED, format 0x00000100 (bits 23:16 = 0x00) */
     CR(0x0BC)=0x00000100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x00000100 (byte2=0)");
 
-    /* T2: Layer 4 RED, format 0x00020100 (bits 23:16 = 0x02) */
+    /* Layer 4 RED, format 0x00020100 (bits 23:16 = 0x02) */
     CR(0x0BC)=0x00020100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x00020100 (byte2=2)");
 
-    /* T3: Layer 4 RED, format 0x00030100 (bits 23:16 = 0x03) */
+    /* Layer 4 RED, format 0x00030100 (bits 23:16 = 0x03) */
     CR(0x0BC)=0x00030100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x00030100 (byte2=3)");
 
-    /* T4: Layer 4 RED, bit 8 CLEARED + GO cycle (test CSC latch) */
+    /* Layer 4 RED, bit 8 CLEARED + GO cycle (test CSC latch) */
     CR(0x0BC)=0x00010100;
     {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     CR(0x000)=0;{volatile int d=0;while(d++<5000);}CR(0x000)=1;
@@ -234,25 +243,25 @@ enum plugin_status plugin_start(const void *parameter)
     gram_log(test++,"L4 RED bit8=0 + GO cycle");
     {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
 
-    /* T5: Layer 4 RED, format 0x00011100 (bits 15:12=1 = blend mode 1) */
+    /* Layer 4 RED, format 0x00011100 (bits 15:12=1 = blend mode 1) */
     CR(0x0BC)=0x00011100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x00011100 (blend=1)");
 
-    /* T6: Layer 4 RED, format 0x10011100 (blend=0: bits31:28=1,15:12=0 + blend=1 combined) */
+    /* Layer 4 RED, format 0x10011100 (blend=0: bits31:28=1,15:12=0 + blend=1 combined) */
     CR(0x0BC)=0x10011100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x10011100 (blend0+1)");
 
-    /* T7: Layer 4 RED, format 0x90011100 (blend=3: bits31:28=9,15:12=8) */
+    /* Layer 4 RED, format 0x90011100 (blend=3: bits31:28=9,15:12=8) */
     CR(0x0BC)=0x90018100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 RED fmt=0x90018100 (blend=3)");
 
-    /* T8: Layer 4 RED, format 0xB001A100 (blend=4: Layer 4 special) */
+    /* Layer 4 RED, format 0xB001A100 (blend=4: Layer 4 special) */
     CR(0x0BC)=0xB001A100;
     CR(0x024)=1;
     push_frame();busywait_us(2000000);
@@ -262,16 +271,17 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T9-T12: 4bpp format-ID sweep on Layer 4, ISOLATED from Layer 5.
-     * Prior "ARGB8888=fmt2" T9/T10 conflated 3 variables at once: L5 was
-     * still actively blending underneath (contaminating readback), T10
-     * only rewrote the FB pointer instead of the full block, and "fmt2 =
-     * ARGB8888" turned out to be a mislabel borrowed from the unrelated
-     * MIXER block (0x39200000) — on THIS block (compositor 0x38900000)
-     * format ID 2 has zero precedent anywhere in Apple's ROM. Sweep the
-     * whole 4-bytes/pixel ID group (2/3/4/5, the dispatcher's shared
-     * jump target for bpp=4) one at a time, full block rewrite each,
-     * with L5 off, to isolate which value (if any) is real RGB. */
+    /* 4bpp format-ID sweep on Layer 4, ISOLATED from Layer 5.
+     * Prior "ARGB8888=fmt2" test conflated 3 variables at once: L5 was
+     * still actively blending underneath (contaminating readback), the
+     * second sample only rewrote the FB pointer instead of the full
+     * block, and "fmt2 = ARGB8888" turned out to be a mislabel borrowed
+     * from the unrelated MIXER block (0x39200000) — on THIS block
+     * (compositor 0x38900000) format ID 2 has zero precedent anywhere
+     * in Apple's ROM. Sweep the whole 4-bytes/pixel ID group (2/3/4/5,
+     * the dispatcher's shared jump target for bpp=4) one at a time,
+     * full block rewrite each, with L5 off, to isolate which value
+     * (if any) is real RGB. */
     {uint32_t v=CR(0x008);v&=~0x080;CR(0x008)=v;} /* L5 off: isolate L4 */
     {
         static const uint32_t fmt_ids[]={2,3,4,5};
@@ -296,11 +306,11 @@ enum plugin_status plugin_start(const void *parameter)
                   (unsigned long)(g&0x3F));}
         }
     }
-    /* Restore: L4 disabled, L5 re-enabled — matches state T11 expects */
+    /* Restore: L4 disabled, L5 re-enabled */
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T11: comp+0x00C sweep — try disabling pipeline stages */
+    /* comp+0x00C sweep — try disabling pipeline stages */
     CR(0x0BC)=0x00010100;
     CR(0x0B8)=(2*320)/2;
     CR(0x0C8)=((2*320)+7)/8;
@@ -320,21 +330,21 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T12: Layer 4 GREEN for color matrix */
+    /* Layer 4 GREEN for color matrix */
     for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
     rb->commit_discard_dcache();
     setup_layer(4,ovl,320,240,0x00010100);
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 GREEN 0x07E0");
 
-    /* T6: Layer 4 BLUE for color matrix */
+    /* Layer 4 BLUE for color matrix */
     for(int i=0;i<320*240;i++) ovl[i]=0x001F;
     rb->commit_discard_dcache();
     CR(0x0C0)=PH(ovl);CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 BLUE 0x001F");
 
-    /* T7: Layer 4 WHITE */
+    /* Layer 4 WHITE */
     for(int i=0;i<320*240;i++) ovl[i]=0xFFFF;
     rb->commit_discard_dcache();
     CR(0x0C0)=PH(ovl);CR(0x024)=1;
@@ -345,9 +355,111 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T13-T16: Layer 0 — never tested with proven setup_layer() methodology.
-     * grp[0]=0x0D8 (L0's dedicated blend reg), bits[0]=0x040 (L0 enable) —
-     * identical code path already proven correct for L4. */
+    /* === CSC-bypass-bit isolation test =========================
+     * Does comp+0x008 bit 8 affect Layer 4 (RGB) output at all, or
+     * does it only affect Layer 5 (YCbCr) as the existing driver
+     * comment assumes? ROM evidence could not settle this (bit 8 is
+     * never read back/tested anywhere in Apple's static ROM). This
+     * is the live HW test that resolves it: isolate L5 off, L4 solid
+     * RED, toggle bit 8, compare GRAM. Identical readback confirms
+     * the existing "RGB layers pass through" assumption; a different
+     * readback means CSC leaks into RGB overlays and explains the
+     * still-open "overlay colors wrong" bug directly. */
+    {
+        uint32_t v;
+        v=CR(0x008); v&=~0x080; CR(0x008)=v; /* L5 off: isolate L4 */
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800; /* RED */
+        rb->commit_discard_dcache();
+        setup_layer(4,ovl,320,240,0x00010100);
+        push_frame();busywait_us(1000000);
+        uint32_t g_bit8_set=gram_log_r(test++,"CSC-isolation: L4 RED, bit8=1 (CSC on)");
+
+        v=CR(0x008); v&=~0x100; CR(0x008)=v; /* CSC bypass bit CLEAR */
+        push_frame();busywait_us(1000000);
+        uint32_t g_bit8_clear=gram_log_r(test++,"CSC-isolation: L4 RED, bit8=0 (CSC off)");
+
+        vlog("  CSC-isolation verdict: %s (0x%06lx vs 0x%06lx)",
+             (g_bit8_set==g_bit8_clear)
+                 ?"IDENTICAL -- bit8 has no effect on L4, RGB isolation CONFIRMED"
+                 :"DIFFERENT -- bit8 changes L4 output, CSC LEAKS into RGB overlays",
+             (unsigned long)g_bit8_set,(unsigned long)g_bit8_clear);
+
+        v=CR(0x008); v|=0x100; CR(0x008)=v; /* restore bit8=1 default */
+        v=CR(0x008); v&=~0x004; v|=0x080; CR(0x008)=v; /* L4 off, L5 back on */
+        CR(0x024)=1;
+    }
+
+    /* === Blend-mode equivalence test ===========================
+     * comp+0xE8 is shared by Layer 4 and Layer 5 — only 3 physical
+     * blend registers exist for 6 logical layers. setup_layer()
+     * overwrites it to mode2 (A=5,B=4) for Layer 4, silently changing
+     * Layer 5's blend mode too (Layer 5's own resting value from
+     * comp_hw_init is mode1: A=0,B=1, both alpha=0xFF). ROM has no
+     * dispatch table anywhere that resolves whether these two modes
+     * are equivalent at alpha=0xFF — this is the live HW test.
+     * Identical GRAM under both modes means Layer 4 never needs to
+     * touch this shared register at all, eliminating the conflict
+     * entirely with zero further design work needed. */
+    {
+        uint32_t v;
+        v=CR(0x008); v|=0x080; CR(0x008)=v; /* ensure L5 on as backdrop */
+        for(int i=0;i<320*240;i++) ovl[i]=0x07E0; /* GREEN, distinguishable from L5 video */
+        rb->commit_discard_dcache();
+        setup_layer(4,ovl,320,240,0x00010100); /* uses mode2=0x500040FF internally */
+        push_frame();busywait_us(1000000);
+        uint32_t g_mode2=gram_log_r(test++,"blend-equiv: L4 GREEN mode2(A5,B4) alpha=FF over L5");
+
+        CR(0x0E8)=0x000010FF; /* mode1: A=0,B=1, alpha=FF -- L5's own resting value */
+        push_frame();busywait_us(1000000);
+        uint32_t g_mode1=gram_log_r(test++,"blend-equiv: L4 GREEN mode1(A0,B1) alpha=FF over L5");
+
+        vlog("  blend-equiv verdict: %s (0x%06lx vs 0x%06lx)",
+             (g_mode1==g_mode2)
+                 ?"IDENTICAL -- mode1==mode2 at alpha=FF, safe to drop setup_layer's blend override"
+                 :"DIFFERENT -- modes are not equivalent, L4/L5 must keep separate blend handling",
+             (unsigned long)g_mode1,(unsigned long)g_mode2);
+
+        CR(0x0E8)=0x500040FF; /* restore L4's mode2 for consistency with rest of file */
+        v=CR(0x008); v&=~0x004; CR(0x008)=v; /* L4 off */
+        CR(0x024)=1;
+    }
+
+    /* === comp+0x024-write-while-DMA-active disturbance test ====
+     * Apple's ROM never writes comp+0x024 while the compositor GO
+     * bit is set (the only write site in the entire ROM happens once
+     * at init, immediately BEFORE GO is asserted). This is a known,
+     * flagged risk in the protected driver's compositor_layer_show()/
+     * hide() (both write comp+0x024=1 while Layer 5 DMA is actively
+     * streaming, for OSD show/hide during live playback). Empirically
+     * check whether a BURST of writes (simulating rapid toggling)
+     * visibly disturbs Layer 5's live video: L4 off so the GRAM
+     * sample point is pure L5 video, sample before and immediately
+     * after the burst with no recovery frame in between, and compare
+     * against the EXACT known green-screen signature (0x000980,
+     * confirmed elsewhere this session as the compositor-disabled
+     * failure mode) for a hard, evidence-backed verdict rather than a
+     * guess about normal frame-to-frame video variation. */
+    {
+        push_frame();busywait_us(500000);
+        uint32_t g_before=gram_log_r(test++,"comp024-burst: L5 baseline BEFORE burst");
+
+        for(int i=0;i<20;i++) CR(0x024)=1; /* burst, no frame push between writes */
+
+        uint32_t g_after=gram_log_r(test++,"comp024-burst: L5 AFTER 20x burst (no recovery frame)");
+
+        vlog("  comp024-burst verdict: %s (0x%06lx vs baseline 0x%06lx)",
+             (g_after==0x000980)
+                 ?"MATCHES KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
+                 :(g_after==g_before)
+                     ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
+                     :"CHANGED (not the known-bad signature) -- likely normal frame variation, inconclusive from a single sample",
+             (unsigned long)g_after,(unsigned long)g_before);
+    }
+
+    /* Layer 0 — never tested with proven setup_layer() methodology
+     * until this session. grp[0]=0x0D8 (L0's dedicated blend reg),
+     * bits[0]=0x040 (L0 enable) -- identical code path already proven
+     * correct for L4. */
     for(int i=0;i<320*240;i++) ovl[i]=0xF800;
     rb->commit_discard_dcache();
     setup_layer(0,ovl,320,240,0x00010100);
@@ -371,6 +483,20 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x060)=PH(ovl);CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L0 WHITE 0xFFFF");
+
+    /* Full Layer 0 register dump — unconditional, for maximum
+     * diagnostic value if Layer 0 is still black on this run. Layer 0
+     * root cause has been exhaustively ruled out on both the
+     * Apple-ROM side (zero index-0 special-casing anywhere) and the
+     * Rockbox-runtime side (osd_draw()'s color packing/framebuffer/
+     * draw-dispatch path all checked clean) -- see osd-overlay-
+     * findings.md. This captures every register this project knows
+     * is relevant, in one shot, so a still-black result doesn't
+     * require another round-trip to gather basic diagnostic data. */
+    vlog("L0 full register dump: 008=0x%08lx 058=0x%08lx 05C=0x%08lx 060=0x%08lx 064=0x%08lx 068=0x%08lx 06C=0x%08lx 070=0x%08lx 0D8=0x%08lx",
+         (unsigned long)CR(0x008),(unsigned long)CR(0x058),(unsigned long)CR(0x05C),
+         (unsigned long)CR(0x060),(unsigned long)CR(0x064),(unsigned long)CR(0x068),
+         (unsigned long)CR(0x06C),(unsigned long)CR(0x070),(unsigned long)CR(0x0D8));
 
     /* Disable L0 */
     {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}

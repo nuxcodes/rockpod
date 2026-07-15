@@ -164,6 +164,34 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Video 008=0x%08lx 3AC=0x%08lx",(unsigned long)CR(0x008),(unsigned long)CR(0x3AC));
     busywait_us(2000000);
 
+    /* === comp+0x024-write-while-DMA-active disturbance test =====
+     * Apple's ROM never writes comp+0x024 while the compositor GO bit
+     * is set (the only write site in the entire ROM happens once at
+     * init, immediately BEFORE GO is asserted). This is a known, flagged
+     * risk in the protected driver's compositor_layer_show()/hide()
+     * (both write comp+0x024=1 while Layer 5 DMA is actively streaming).
+     * Checked here in the cleanest possible environment (pure Layer 5
+     * video, no overlay layers active) so a positive result is
+     * unambiguous: sample before and immediately after a write burst
+     * with no recovery frame, compare against the exact known
+     * green-screen signature (0x000980) for a hard, evidence-backed
+     * verdict rather than a guess about normal frame-to-frame variation. */
+    {
+        uint32_t g_before=gram_sample();
+        vlog("comp024-burst: baseline BEFORE burst GRAM=0x%06lx",(unsigned long)g_before);
+
+        for(int i=0;i<20;i++) CR(0x024)=1; /* burst, no frame push between writes */
+
+        uint32_t g_after=gram_sample();
+        vlog("comp024-burst: AFTER 20x burst (no recovery frame) GRAM=0x%06lx",(unsigned long)g_after);
+        vlog("  comp024-burst verdict: %s",
+             (g_after==0x000980)
+                 ?"MATCHES KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
+                 :(g_after==g_before)
+                     ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
+                     :"CHANGED (not the known-bad signature) -- likely normal frame variation, inconclusive from a single sample");
+    }
+
     /* === FLIP TEST === */
     vlog("=== FLIP ===");
     {
