@@ -46,6 +46,7 @@
 #include "vpu_h264.h"
 #include "vpu_mpeg4.h"
 #include "compositor-s5l8702.h"
+#include "lcd-s5l8702.h"
 #include "core_alloc.h"
 #include "audio.h"
 #include "video_audio.h"
@@ -652,6 +653,7 @@ static void blit_last_frame(void)
     if (compositor_is_active())
         compositor_stop();
     scale_and_blit(y, cb, cr, w, h);
+    lcd_set_inhibit(false);
 }
 
 /* Like blit_last_frame() but writes to framebuffer for compositing */
@@ -1837,6 +1839,7 @@ static void button_loop(const char *filepath)
                         if (wait != 0)
                             blit_last_frame_fb();
                         osd_draw();
+                        lcd_set_inhibit(false);
                     }
                     ps.need_osd_redraw = false;
                 }
@@ -1850,6 +1853,7 @@ static void button_loop(const char *filepath)
                             blit_last_frame_fb();
                         draw_volume_overlay();
                         lcd_update();
+                        lcd_set_inhibit(false);
                     }
                 }
 
@@ -2410,9 +2414,7 @@ cleanup:
     cpu_boost(false);
     ring_flush();
     if (compositor_is_active()) compositor_stop();
-    /* Clear display to avoid stale frame splash — the SW framebuffer
-     * was not updated while compositor was pushing directly to panel,
-     * so lcd_update() without clear would show an old frame. */
+    lcd_set_inhibit(false);
     lcd_clear_display();
     lcd_update();
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }

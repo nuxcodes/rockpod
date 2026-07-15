@@ -915,81 +915,43 @@ static void devel_menu(void)
 #endif /* S5L87XX_DEVELOPMENT_BOOTLOADER */
 
 #ifdef IPOD_6G
-static void __attribute__((noreturn)) launch_retailos(void *entry,
-                                                      void *src, int len)
+static void __attribute__((noreturn)) launch_patched_onb(void *fw_data, int fw_len)
 {
+    printf("Launching patched ONB...");
+    sleep(HZ/2);
+
+    /* Disable IRQ FIRST — im3_read overwrites the exception vector
+     * table at IRAM0 (0x22000000). Any interrupt during the SPI read
+     * would jump through garbage vectors and crash. */
     disable_irq();
-    asm volatile("msr cpsr_c, #0xd3");
 
-    /* Stop all DMA channels */
-    for (int ch = 0; ch < DMAC_CH_COUNT; ch++) {
-        uint32_t chbase;
-        chbase = DMAC_CH_BASE(DMA0_BASE, ch);
-        DMACCxCONFIG(chbase) |= DMACCxCONFIG_H_BIT;
-        for (int t = 0; t < 10000 && (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT); t++);
-        DMACCxCONFIG(chbase) = 0;
-        chbase = DMAC_CH_BASE(DMA1_BASE, ch);
-        DMACCxCONFIG(chbase) |= DMACCxCONFIG_H_BIT;
-        for (int t = 0; t < 10000 && (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT); t++);
-        DMACCxCONFIG(chbase) = 0;
-    }
-    DMACINTTCCLR(DMA0_BASE) = 0xff;
-    DMACINTERRCLR(DMA0_BASE) = 0xff;
-    DMACINTTCCLR(DMA1_BASE) = 0xff;
-    DMACINTERRCLR(DMA1_BASE) = 0xff;
+    /* Load ONB from NOR to IRAM0 */
+    spi_clkdiv(SPI_PORT, 3);
+    struct Im3Info *hinfo = (struct Im3Info *)IRAM1_ORIG;
+    im3_read(NORBOOT_OFF + im3_nor_sz(hinfo), hinfo, (void *)IRAM0_ORIG);
 
-    /* Disable all VIC interrupts */
-    VIC0INTENCLEAR = ~0;
-    VIC1INTENCLEAR = ~0;
+    /* Patch ONB: replace arg setup + step 10 BL at 0x105AE-0x105B9
+     * (12 bytes exactly). Do NOT touch 0x105BA+ (error exit path).
+     * Steps 7-9 (HOB init, MMU+cache, FV HOBs) run normally. */
+    uint8_t *onb = (uint8_t *)IRAM0_ORIG;
+    static const uint8_t patch[] = {
+        0x40, 0xF2, 0x00, 0x00,  /* movw r0, #0x0000 */
+        0xC0, 0xF6, 0x00, 0x00,  /* movt r0, #0x0800 */
+        0x00, 0x47,              /* bx   r0           */
+        0x00, 0xBF,              /* nop (pad to 12)   */
+    };
+    memcpy(onb + 0x105AE, patch, 12);
 
-    /* Disable external interrupts */
+    /* Copy firmware to DRAM_ORIG */
+    memmove((void *)DRAM_ORIG, fw_data, fw_len);
+
     eint_init();
+    commit_discard_idcache();
 
-    /* Stop tick timer only, leave USEC_TIMER running */
-    TBCON = 0; TBCMD = (1 << 1);
-
-    /* Enable all clock gates for RetailOS */
-    PWRCON_AHB = 0;
-    PWRCON_APB = 0;
-
-    /* Set CPU voltage to safe 1100mV — Rockbox may have lowered to 1000mV */
-    pmu_write(0x1E, 0x13);
-
-    /* Restore PLL0@108MHz as system clock (BootROM default).
-     * RetailOS early init might expect PLL0, not PLL2@216MHz. */
-    cg16_config(&CG16_SYS, true, CG16_SEL_OSC, 1, 1);
-    soc_set_system_divs(1, 1, 1);
-    pll_onoff(2, false);
-    pll_config(0, PLLOP_DM, 1, 9, 0, 32400);
-    pll_onoff(0, true);
-    soc_set_system_divs(1, 2, 2);
-    cg16_config(&CG16_SYS, true, CG16_SEL_PLL0, 1, 1);
-
-    /* Copy firmware to final address (DMA stopped, safe) */
-    if (src && len > 0)
-        memmove(entry, src, len);
-
-    /* Flush caches + disable MMU in single asm block */
-    asm volatile(
-        "1: mrc p15, 0, r15, c7, c14, 3 \n"
-        "   bne 1b                       \n"
-        "   mov r0, #0                   \n"
-        "   mcr p15, 0, r0, c7, c10, 4  \n"
-        "   mcr p15, 0, r0, c7, c5, 0   \n"
-        "   mrc p15, 0, r0, c1, c0, 0   \n"
-        "   bic r0, r0, #(1 << 12)      \n"
-        "   bic r0, r0, #(1 << 2)       \n"
-        "   bic r0, r0, #(1 << 0)       \n"
-        "   mcr p15, 0, r0, c1, c0, 0   \n"
-        "   mov r0, #0                   \n"
-        "   mcr p15, 0, r0, c8, c7, 0   \n"
-        ::: "r0", "memory", "cc"
-    );
-
-    asm volatile("mov pc, %0" :: "r"(entry));
-    while(1);
+    asm volatile("mov pc, %0" :: "r"(IRAM0_ORIG));
+    while (1);
 }
-#endif /* IPOD_6G */
+#endif
 
 void main(void)
 {
@@ -1197,17 +1159,70 @@ void main(void)
 
     {
         unsigned char *tmpbuf = (unsigned char *)(DRAM_ORIG + 0x2000000);
-        printf("Loading retailos.bin...");
         int fwrc = load_raw_firmware(tmpbuf, "/retailos.bin", 12*1024*1024);
         if (fwrc > 0) {
             printf("RetailOS: %d bytes", fwrc);
-            /* NOTE: do NOT call ata_sleepnow() here — it gates the ATA
-             * controller clock via PWRCON, and RetailOS may not ungate
-             * it during init, causing ATA access to hang. The ONB path
-             * can get away with it because ONB does a full HW reinit. */
-            sleep(HZ/2);
-            launch_retailos((void *)DRAM_ORIG, tmpbuf, fwrc);
-            /* never returns */
+
+            /* Compute checksum of patched firmware */
+            uint32_t new_chksum = 0;
+            for (int i = 0; i < fwrc; i++)
+                new_chksum += tmpbuf[i];
+
+            /* Read firmware partition directory to find osos */
+            struct storage_info si;
+            storage_get_info(0, &si);
+            struct partinfo pi;
+            disk_partinfo(0, &pi);
+            unsigned long fw_sect = pi.start;
+
+            /* Read directory sector at partition + 0x4200/512 */
+            unsigned char dirbuf[512];
+            storage_read_sectors(fw_sect + 0x4200 / 512, 1, dirbuf);
+
+            /* Find osos entry (scan 40-byte entries) */
+            int osos_idx = -1;
+            for (int i = 0; i < 512 / 40; i++) {
+                uint32_t id;
+                memcpy(&id, dirbuf + i * 40 + 4, 4);
+                if (id == 0x6F736F73) { /* "osos" LE */
+                    osos_idx = i;
+                    break;
+                }
+            }
+
+            if (osos_idx >= 0) {
+                uint32_t old_chksum;
+                memcpy(&old_chksum, dirbuf + osos_idx * 40 + 28, 4);
+
+                if (old_chksum != new_chksum) {
+                    printf("Flashing patched osos...");
+
+                    /* Get devOffset from directory */
+                    uint32_t dev_off;
+                    memcpy(&dev_off, dirbuf + osos_idx * 40 + 12, 4);
+                    unsigned long img_sect = fw_sect + dev_off / 512;
+
+                    /* Write firmware to osos slot */
+                    int nsect = (fwrc + 511) / 512;
+                    storage_write_sectors(img_sect, nsect, tmpbuf);
+
+                    /* Update directory: len + checksum */
+                    uint32_t new_len = fwrc;
+                    memcpy(dirbuf + osos_idx * 40 + 16, &new_len, 4);
+                    memcpy(dirbuf + osos_idx * 40 + 28, &new_chksum, 4);
+                    storage_write_sectors(fw_sect + 0x4200 / 512, 1, dirbuf);
+
+                    printf("Done. Booting OF...");
+                } else {
+                    printf("osos up to date.");
+                }
+            }
+
+            /* Boot via ONB — full Apple boot chain */
+#if (CONFIG_STORAGE & STORAGE_ATA)
+            ata_sleepnow();
+#endif
+            kernel_launch_onb();
         }
     }
 #endif

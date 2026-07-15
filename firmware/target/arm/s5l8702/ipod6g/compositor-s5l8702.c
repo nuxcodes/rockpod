@@ -161,7 +161,7 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0;
+    CR(0x3AC) = 0x04004002;
     CR(0x0D4) = 1;
     { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
     commit_discard_dcache();
@@ -210,7 +210,6 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
-    CR(0x024) = 1;
     commit_dcache();
 
     push_frame();
@@ -301,8 +300,6 @@ void compositor_stop(void)
     LCD_CON = 0x80000DA9;
     ili_cmd(0x003); ili_data(0x0230);
     while (!(LCD_STATUS & 0x2));
-
-    lcd_set_inhibit(false);
 
     comp_active = false;
 }
