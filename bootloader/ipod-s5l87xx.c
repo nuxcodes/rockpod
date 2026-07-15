@@ -307,6 +307,101 @@ static int kernel_launch_onb(void)
     return rc;
 }
 
+#if defined(IPOD_6G) || defined(IPOD_NANO3G)
+static inline uint32_t onb_get_uint32le(unsigned char *p)
+{
+    return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
+}
+
+/* Dump ONB (Original NOR Boot) to files on the FAT32 partition.
+ * Requires storage + filesystem to be initialized and disk mounted.
+ * Writes:
+ *   /onb_raw.bin       - raw IM3 image (header + encrypted body)
+ *   /onb_decrypted.bin - decrypted ARM code (loads at IRAM0_ORIG)
+ *   /onb_header.bin    - IM3 header only (0x800 bytes)
+ * Returns 0 on success, negative on error.
+ */
+static int dump_onb_to_disk(void)
+{
+    /* Read primary bootloader (RB) IM3 header to find ONB offset */
+    struct Im3Info hinfo;
+    int rc = im3_read(NORBOOT_OFF, &hinfo, NULL);
+    if (rc != 0) {
+        printf("Primary BL read error: %d", rc);
+        return -1;
+    }
+
+    unsigned bl_sz = im3_nor_sz(&hinfo);
+    unsigned onb_offset = NORBOOT_OFF + bl_sz;
+    printf("ONB at NOR offset 0x%x", onb_offset);
+
+    /* Read ONB IM3 header (just header, no body yet) */
+    rc = im3_read(onb_offset, &hinfo, NULL);
+    if (rc != 0) {
+        printf("ONB header read error: %d", rc);
+        return -2;
+    }
+
+    uint32_t onb_data_sz = onb_get_uint32le(hinfo.data_sz);
+    uint32_t onb_entry = onb_get_uint32le(hinfo.entry);
+    unsigned onb_total_raw = IM3HDR_SZ + onb_data_sz;
+    printf("ONB: data_sz=0x%x entry=0x%x enc=%d",
+            onb_data_sz, onb_entry, hinfo.enc_type);
+    lcd_update();
+
+    /* Use DRAM as buffer (well above bootloader/firmware usage) */
+    unsigned char *raw_buf = (unsigned char *)(DRAM_ORIG + 0x2000000);
+    unsigned char *dec_buf = (unsigned char *)(DRAM_ORIG + 0x2100000);
+
+    /* 1. Dump raw ONB (header + encrypted body) from NOR */
+    printf("Reading raw ONB from NOR...");
+    lcd_update();
+    bootflash_init(SPI_PORT);
+    bootflash_read(SPI_PORT, onb_offset, onb_total_raw, raw_buf);
+    bootflash_close(SPI_PORT);
+
+    int fd = open("/onb_raw.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
+    if (fd < 0) {
+        printf("Failed to create /onb_raw.bin");
+        return -3;
+    }
+    write(fd, raw_buf, onb_total_raw);
+    close(fd);
+    printf("Wrote /onb_raw.bin (%u bytes)", onb_total_raw);
+
+    /* 2. Dump decrypted ONB body via im3_read */
+    printf("Decrypting ONB...");
+    lcd_update();
+    rc = im3_read(onb_offset, &hinfo, dec_buf);
+    if (rc != 0) {
+        printf("ONB decrypt error: %d", rc);
+        return -4;
+    }
+
+    fd = open("/onb_decrypted.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
+    if (fd < 0) {
+        printf("Failed to create /onb_decrypted.bin");
+        return -5;
+    }
+    write(fd, dec_buf, onb_data_sz);
+    close(fd);
+    printf("Wrote /onb_decrypted.bin (%u bytes)", onb_data_sz);
+
+    /* 3. Dump the IM3 header separately for analysis */
+    fd = open("/onb_header.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
+    if (fd < 0) {
+        printf("Failed to create /onb_header.bin");
+        return -6;
+    }
+    write(fd, raw_buf, IM3HDR_SZ);
+    close(fd);
+    printf("Wrote /onb_header.bin (%u bytes)", IM3HDR_SZ);
+
+    printf("ONB dump complete!");
+    return 0;
+}
+#endif /* IPOD_6G || IPOD_NANO3G */
+
 /*  The boot sequence is executed on power-on or reset. After power-up
  *  the device could come from a state of hibernation, OF hibernates
  *  the iPod after an inactive period of ~30 minutes, on this state the
@@ -639,6 +734,51 @@ end:
         sleep(HZ/100);
 }
 
+static void menu_dump_onb(void)
+{
+    lcd_clear_display();
+    lcd_set_foreground(LCD_WHITE);
+    line = 0;
+
+    printf("=== Dump ONB to disk ===");
+
+    /* Dev bootloader skips storage init, do it here */
+    printf("Initializing storage...");
+    lcd_update();
+    int rc = storage_init();
+    if (rc != 0) {
+        lcd_set_foreground(LCD_REDORANGE);
+        printf("Storage init error: %d", rc);
+        goto end;
+    }
+
+    filesystem_init();
+    rc = disk_mount_all();
+    if (rc <= 0) {
+        lcd_set_foreground(LCD_REDORANGE);
+        printf("No partition found: %d", rc);
+        goto end;
+    }
+    printf("Disk mounted OK");
+
+    rc = dump_onb_to_disk();
+    if (rc == 0) {
+        lcd_set_foreground(LCD_GREEN);
+        piezo_seq(alive);
+    } else {
+        lcd_set_foreground(LCD_REDORANGE);
+        printf("Dump failed: %d", rc);
+    }
+
+end:
+    line++;
+    lcd_set_foreground(LCD_RBYELLOW);
+    printf("Press SELECT to continue");
+    lcd_update();
+    while (button_status() != BUTTON_SELECT)
+        sleep(HZ/100);
+}
+
 #ifdef HAVE_SERIAL
 
 #define FLASH_PAGES (FLASH_SIZE >> 12)
@@ -690,6 +830,7 @@ static void devel_menu(void)
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
         "Show SysCfg",
         "Show bootloader hash",
+        "Dump ONB to disk",
 #ifdef HAVE_SERIAL
         "Dump bootflash to UART",
 #endif
@@ -708,6 +849,7 @@ static void devel_menu(void)
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
         print_syscfg,
         print_bootloader_hash,
+        menu_dump_onb,
 #ifdef HAVE_SERIAL
         dump_bootflash,
 #endif
@@ -773,110 +915,79 @@ static void devel_menu(void)
 #endif /* S5L87XX_DEVELOPMENT_BOOTLOADER */
 
 #ifdef IPOD_6G
-/*
- * Full hardware cleanup and jump to RetailOS loaded at DRAM.
- *
- * Unlike launch_onb() which jumps to the ONB in IRAM (where it does
- * its own full hardware reinit), RetailOS loaded from disk may not
- * reinitialize everything. We must undo all hardware state that
- * Rockbox set up: DMA, interrupts, timers, caches, and MMU.
- */
 static void __attribute__((noreturn)) launch_retailos(void *entry,
                                                       void *src, int len)
 {
-    /* 1. Disable IRQ and FIQ at the CPU level immediately */
     disable_irq();
-    asm volatile("msr cpsr_c, #0xd3");  /* SVC mode, IRQ+FIQ disabled */
+    asm volatile("msr cpsr_c, #0xd3");
 
-    /* 2. Stop all DMA channels on both PL080 controllers.
-     *    Disable each channel, wait for it to go inactive,
-     *    then disable the controller itself. */
+    /* Stop all DMA channels */
     for (int ch = 0; ch < DMAC_CH_COUNT; ch++) {
         uint32_t chbase;
-
-        /* DMAC0 */
         chbase = DMAC_CH_BASE(DMA0_BASE, ch);
-        DMACCxCONFIG(chbase) &= ~DMACCxCONFIG_E_BIT;
-        while (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT);
-
-        /* DMAC1 */
+        DMACCxCONFIG(chbase) |= DMACCxCONFIG_H_BIT;
+        for (int t = 0; t < 10000 && (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT); t++);
+        DMACCxCONFIG(chbase) = 0;
         chbase = DMAC_CH_BASE(DMA1_BASE, ch);
-        DMACCxCONFIG(chbase) &= ~DMACCxCONFIG_E_BIT;
-        while (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT);
+        DMACCxCONFIG(chbase) |= DMACCxCONFIG_H_BIT;
+        for (int t = 0; t < 10000 && (DMACCxCONFIG(chbase) & DMACCxCONFIG_A_BIT); t++);
+        DMACCxCONFIG(chbase) = 0;
     }
-    /* Clear pending DMA interrupts and disable controllers */
     DMACINTTCCLR(DMA0_BASE) = 0xff;
     DMACINTERRCLR(DMA0_BASE) = 0xff;
-    DMACCONFIG(DMA0_BASE) &= ~DMACCONFIG_E_BIT;
     DMACINTTCCLR(DMA1_BASE) = 0xff;
     DMACINTERRCLR(DMA1_BASE) = 0xff;
-    DMACCONFIG(DMA1_BASE) &= ~DMACCONFIG_E_BIT;
 
-    /* 3. Disable all interrupts on both VIC controllers */
-    VIC0INTENCLEAR = 0xffffffff;
-    VIC1INTENCLEAR = 0xffffffff;
-    VIC0SOFTINTCLEAR = 0xffffffff;
-    VIC1SOFTINTCLEAR = 0xffffffff;
-    VIC0ADDRESS = (void*)0;
-    VIC1ADDRESS = (void*)0;
+    /* Disable all VIC interrupts */
+    VIC0INTENCLEAR = ~0;
+    VIC1INTENCLEAR = ~0;
 
-    /* 4. Disable all external interrupts (GPIOIC / EIC) */
+    /* Disable external interrupts */
     eint_init();
 
-    /* 5. Stop all 16-bit timers (A, B, C, D) */
-    TACON = 0;   TACMD = (1 << 1);  /* clear timer A */
-    TBCON = 0;   TBCMD = (1 << 1);  /* clear timer B (tick timer) */
-    TCCON = 0;   TCCMD = (1 << 1);  /* clear timer C */
-    TDCON = 0;   TDCMD = (1 << 1);  /* clear timer D */
+    /* Stop tick timer only, leave USEC_TIMER running */
+    TBCON = 0; TBCMD = (1 << 1);
 
-    /* 6. Stop all 32-bit timers (E, F, G, H) */
-    TECON = 0;   TECMD = (1 << 1);  /* clear timer E (USEC_TIMER) */
-    TFCON = 0;   TFCMD = (1 << 1);  /* clear timer F */
-    TGCON = 0;   TGCMD = (1 << 1);  /* clear timer G */
-    THCON = 0;   THCMD = (1 << 1);  /* clear timer H */
+    /* Enable all clock gates for RetailOS */
+    PWRCON_AHB = 0;
+    PWRCON_APB = 0;
 
-    /* 7. Copy firmware to final address (DRAM_ORIG) now that all
-     *    DMA and interrupts are stopped — no concurrent DRAM access. */
+    /* Set CPU voltage to safe 1100mV — Rockbox may have lowered to 1000mV */
+    pmu_write(0x1E, 0x13);
+
+    /* Restore PLL0@108MHz as system clock (BootROM default).
+     * RetailOS early init might expect PLL0, not PLL2@216MHz. */
+    cg16_config(&CG16_SYS, true, CG16_SEL_OSC, 1, 1);
+    soc_set_system_divs(1, 1, 1);
+    pll_onoff(2, false);
+    pll_config(0, PLLOP_DM, 1, 9, 0, 32400);
+    pll_onoff(0, true);
+    soc_set_system_divs(1, 2, 2);
+    cg16_config(&CG16_SYS, true, CG16_SEL_PLL0, 1, 1);
+
+    /* Copy firmware to final address (DMA stopped, safe) */
     if (src && len > 0)
         memmove(entry, src, len);
 
-    /* 8. Flush and disable caches, then disable MMU.
-     *    Order matters: clean+invalidate dcache while MMU is still on
-     *    (so virtual-to-physical translations work), then disable
-     *    MMU+caches together. */
+    /* Flush caches + disable MMU in single asm block */
     asm volatile(
-        /* Clean and invalidate entire dcache (test-and-clean loop) */
-        "1:                                 \n"
-        "mrc    p15, 0, r15, c7, c14, 3     \n" /* test, clean & invalidate */
-        "bne    1b                          \n"
-        /* Drain write buffer */
-        "mov    r0, #0                      \n"
-        "mcr    p15, 0, r0, c7, c10, 4      \n"
-        /* Invalidate icache */
-        "mcr    p15, 0, r0, c7, c5, 0       \n"
-        /* Disable MMU, dcache, icache, and protection unit */
-        "mrc    p15, 0, r0, c1, c0, 0       \n"
-        "bic    r0, r0, #(1 << 12)          \n" /* disable icache */
-        "bic    r0, r0, #(1 << 2)           \n" /* disable dcache */
-        "bic    r0, r0, #(1 << 0)           \n" /* disable MMU */
-        "mcr    p15, 0, r0, c1, c0, 0       \n"
-        /* Invalidate TLB */
-        "mov    r0, #0                      \n"
-        "mcr    p15, 0, r0, c8, c7, 0       \n"
+        "1: mrc p15, 0, r15, c7, c14, 3 \n"
+        "   bne 1b                       \n"
+        "   mov r0, #0                   \n"
+        "   mcr p15, 0, r0, c7, c10, 4  \n"
+        "   mcr p15, 0, r0, c7, c5, 0   \n"
+        "   mrc p15, 0, r0, c1, c0, 0   \n"
+        "   bic r0, r0, #(1 << 12)      \n"
+        "   bic r0, r0, #(1 << 2)       \n"
+        "   bic r0, r0, #(1 << 0)       \n"
+        "   mcr p15, 0, r0, c1, c0, 0   \n"
+        "   mov r0, #0                   \n"
+        "   mcr p15, 0, r0, c8, c7, 0   \n"
         ::: "r0", "memory", "cc"
     );
 
-    /* 8. Jump to RetailOS entry point.
-     *    Use inline asm to load the address into r0 and branch
-     *    via mov pc, r0 -- ensures a clean, unconditional jump
-     *    with no stack or register dependencies. */
-    asm volatile(
-        "mov    r0, %0  \n"
-        "mov    pc, r0  \n"
-        :: "r"(entry)
-        : "r0"
-    );
-    __builtin_unreachable();
+    asm volatile("mov pc, %0" :: "r"(entry));
+    while(1);
 }
 #endif /* IPOD_6G */
 
@@ -1077,6 +1188,21 @@ void main(void)
         fatal_error(ERR_RB);
     }
 
+#if defined(IPOD_6G) || defined(IPOD_NANO3G)
+    /* Dump ONB if not already dumped */
+    {
+        int probe = open("/onb_decrypted.bin", O_RDONLY);
+        if (probe < 0) {
+            printf("Dumping ONB from NOR...");
+            int drc = dump_onb_to_disk();
+            if (drc != 0)
+                printf("ONB dump failed: %d", drc);
+        } else {
+            close(probe);
+        }
+    }
+#endif
+
 #ifdef IPOD_6G
     {
         unsigned char *tmpbuf = (unsigned char *)(DRAM_ORIG + 0x2000000);
@@ -1084,9 +1210,10 @@ void main(void)
         int fwrc = load_raw_firmware(tmpbuf, "/retailos.bin", 12*1024*1024);
         if (fwrc > 0) {
             printf("RetailOS: %d bytes", fwrc);
-#if (CONFIG_STORAGE & STORAGE_ATA)
-            ata_sleepnow();
-#endif
+            /* NOTE: do NOT call ata_sleepnow() here — it gates the ATA
+             * controller clock via PWRCON, and RetailOS may not ungate
+             * it during init, causing ATA access to hang. The ONB path
+             * can get away with it because ONB does a full HW reinit. */
             sleep(HZ/2);
             launch_retailos((void *)DRAM_ORIG, tmpbuf, fwrc);
             /* never returns */

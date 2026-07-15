@@ -221,16 +221,43 @@ enum plugin_status plugin_start(const void *parameter)
     push_frame();busywait_us(2000000);
     gram_log(test++,"L0 RED 024=1 bit28=0");
 
-    /* T6: Layer 1 + L5 video, bit28=0 */
-    {uint32_t v=CR(0x008);v&=~0x040;v|=0x080;CR(0x008)=v;}
-    CR(0x024)=1;
-    setup_layer(1,ovl,320,240,0x00010100);
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED + L5 video, bit28=0");
-
-    /* Cleanup */
+    /* T6: Color characterization on Layer 4 — RED, GREEN, BLUE, WHITE
+     * Used to derive the compositor's 3x3 color transform matrix.
+     * Layer 4 has no bit 28 orientation, so gives cleanest data. */
     {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
-    CR(0x024)=1;push_frame();
+    CR(0x024)=1;
+
+    /* T6a: Layer 4 RED (0xF800) */
+    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+    rb->commit_discard_dcache();
+    setup_layer(4,ovl,320,240,0x00010100);
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED 0xF800");
+
+    /* T6b: Layer 4 GREEN (0x07E0) */
+    for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
+    rb->commit_discard_dcache();
+    CR(0x0C0)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 GREEN 0x07E0");
+
+    /* T6c: Layer 4 BLUE (0x001F) */
+    for(int i=0;i<320*240;i++) ovl[i]=0x001F;
+    rb->commit_discard_dcache();
+    CR(0x0C0)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 BLUE 0x001F");
+
+    /* T6d: Layer 4 WHITE (0xFFFF) */
+    for(int i=0;i<320*240;i++) ovl[i]=0xFFFF;
+    rb->commit_discard_dcache();
+    CR(0x0C0)=PH(ovl);CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 WHITE 0xFFFF");
+
+    /* Disable L4 */
+    {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
 
     vlog("=== DONE (%d tests) ===",test);
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
