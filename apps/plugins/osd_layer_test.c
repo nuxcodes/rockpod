@@ -456,6 +456,41 @@ enum plugin_status plugin_start(const void *parameter)
              (unsigned long)g_after,(unsigned long)g_before);
     }
 
+    /* === Layer 4 ISOLATED color-transform characterization ======
+     * The still-open "overlay colors wrong" bug: T18/T19 proved Layer 4
+     * RED reads back greenish (R=25,G=43,B=29) even with L5 OFF and CSC
+     * toggled — a pure Layer-4 transform, not CSC leak or L5 bleed. Only
+     * RED was ever tested L5-off, leaving the transform underdetermined.
+     * Sweep 9 well-separated colors, L5 OFF (Layer 4 blends only against
+     * the black background color comp+0x024=0), full 6-register block
+     * rewrite each iteration, so one run over-determines a general linear
+     * model (9*3=27 equations vs 12 unknowns for a 3x3+offset fit). If
+     * the input RGB and output GRAM match, "RGB passthrough" is real; if
+     * they map through a fixed matrix, this pins the exact coefficients. */
+    {
+        uint32_t v=CR(0x008); v&=~0x080; CR(0x008)=v; /* L5 off: pure L4 */
+        static const struct { uint16_t rgb; const char*name; } sweep[]={
+            {0xF800,"RED   (31, 0, 0)"}, {0x07E0,"GREEN ( 0,63, 0)"},
+            {0x001F,"BLUE  ( 0, 0,31)"}, {0xFFE0,"YELLOW(31,63, 0)"},
+            {0x07FF,"CYAN  ( 0,63,31)"}, {0xF81F,"MAGNTA(31, 0,31)"},
+            {0xFFFF,"WHITE (31,63,31)"}, {0x0000,"BLACK ( 0, 0, 0)"},
+            {0x8410,"GRAY  (16,32,16)"},
+        };
+        for(unsigned k=0;k<sizeof(sweep)/sizeof(sweep[0]);k++){
+            for(int i=0;i<320*240;i++) ovl[i]=sweep[k].rgb;
+            rb->commit_discard_dcache();
+            setup_layer(4,ovl,320,240,0x00010100);
+            push_frame();busywait_us(800000);
+            uint32_t g=gram_sample();
+            vlog("L4-iso[%s] in=0x%04x -> GRAM=0x%06lx R=%lu G=%lu B=%lu",
+                 sweep[k].name,(unsigned)sweep[k].rgb,(unsigned long)g,
+                 (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+                 (unsigned long)(g&0x3F));
+        }
+        v=CR(0x008); v&=~0x004; v|=0x080; CR(0x008)=v; /* L4 off, L5 back on */
+        CR(0x024)=1;
+    }
+
     /* Layer 0 — never tested with proven setup_layer() methodology
      * until this session. grp[0]=0x0D8 (L0's dedicated blend reg),
      * bits[0]=0x040 (L0 enable) -- identical code path already proven
@@ -501,6 +536,54 @@ enum plugin_status plugin_start(const void *parameter)
     /* Disable L0 */
     {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
     CR(0x024)=1;
+
+    /* === Layer 0 vs Layer 1 A/B — the definitive isolation test =====
+     * L0 shows ZERO compositing effect (T24-T27 all read the L5-alone
+     * baseline regardless of content), while L1 is known to render. Both
+     * are configured through the IDENTICAL setup_layer() code path. This
+     * runs the SAME RED content on each in turn, L5 OFF (so the sample
+     * point reflects only the overlay), and dumps both register banks so
+     * any single differing bit between a working layer (L1) and a broken
+     * one (L0) is visible in one capture. Per osd-overlay-findings.md,
+     * this is the identified next step to isolate L0's root cause after
+     * ROM-side and runtime-side static analysis were both exhausted.
+     * L0 bank = comp+0x058..0x06C (stride 0x18), L1 = comp+0x070..0x084. */
+    {
+        uint32_t v=CR(0x008); v&=~0x080; CR(0x008)=v; /* L5 off */
+
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800; /* RED */
+        rb->commit_discard_dcache();
+        setup_layer(0,ovl,320,240,0x00010100);
+        push_frame();busywait_us(1000000);
+        uint32_t g0=gram_sample();
+        vlog("L0/L1-AB: L0 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu",
+             (unsigned long)g0,(unsigned long)((g0>>12)&0x3F),
+             (unsigned long)((g0>>6)&0x3F),(unsigned long)(g0&0x3F));
+        {uint32_t w=CR(0x008); w&=~0x040; CR(0x008)=w; CR(0x024)=1;} /* L0 off */
+
+        setup_layer(1,ovl,320,240,0x00010100);
+        push_frame();busywait_us(1000000);
+        uint32_t g1=gram_sample();
+        vlog("L0/L1-AB: L1 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu",
+             (unsigned long)g1,(unsigned long)((g1>>12)&0x3F),
+             (unsigned long)((g1>>6)&0x3F),(unsigned long)(g1&0x3F));
+
+        vlog("L0/L1-AB verdict: %s (L0=0x%06lx L1=0x%06lx)",
+             (g0==g1)?"IDENTICAL -- L0 renders same as L1, L0 bug is NOT layer-intrinsic"
+                     :"DIFFERENT -- L0 broken while L1 works from identical config",
+             (unsigned long)g0,(unsigned long)g1);
+        vlog("L0 bank: 058=0x%08lx 05C=0x%08lx 060=0x%08lx 064=0x%08lx 068=0x%08lx 06C=0x%08lx 0D8=0x%08lx",
+             (unsigned long)CR(0x058),(unsigned long)CR(0x05C),(unsigned long)CR(0x060),
+             (unsigned long)CR(0x064),(unsigned long)CR(0x068),(unsigned long)CR(0x06C),
+             (unsigned long)CR(0x0D8));
+        vlog("L1 bank: 070=0x%08lx 074=0x%08lx 078=0x%08lx 07C=0x%08lx 080=0x%08lx 084=0x%08lx 0E0=0x%08lx",
+             (unsigned long)CR(0x070),(unsigned long)CR(0x074),(unsigned long)CR(0x078),
+             (unsigned long)CR(0x07C),(unsigned long)CR(0x080),(unsigned long)CR(0x084),
+             (unsigned long)CR(0x0E0));
+
+        v=CR(0x008); v&=~0x020; v|=0x080; CR(0x008)=v; /* L1 off, L5 back on */
+        CR(0x024)=1;
+    }
 
     vlog("=== DONE (%d tests) ===",test);
     LR(0x70)=0;LR(0x80)=0;CR(0x000)=0;
