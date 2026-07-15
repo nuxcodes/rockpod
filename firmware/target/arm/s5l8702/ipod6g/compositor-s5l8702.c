@@ -210,6 +210,7 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
+    CR(0x024) = 1;
     commit_dcache();
 
     push_frame();

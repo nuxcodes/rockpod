@@ -180,75 +180,71 @@ enum plugin_status plugin_start(const void *parameter)
     rb->commit_discard_dcache();
     int test=0;
 
-    /* T0: Layer 1, bit28 SET (old way) — expect dark/wrong colors */
-    setup_layer(1,ovl,320,240,0x10010100);
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED bit28=1 (old)");
-
-    /* T1: Layer 1, bit28 CLEAR — expect correct/brighter colors */
-    CR(0x074)=0x00010100;
-    CR(0x024)=1;
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED bit28=0 (new)");
-
-    /* T2: Layer 4, bit28 CLEAR (always was) — reference */
-    {uint32_t v=CR(0x008);v&=~0x020;CR(0x008)=v;}
+    /* T0: Layer 4 RED BEFORE zeroing filter/CSC banks */
     setup_layer(4,ovl,320,240,0x00010100);
     push_frame();busywait_us(2000000);
-    gram_log(test++,"L4 RED bit28=0 (reference)");
+    gram_log(test++,"L4 RED BEFORE zero banks");
+
+    /* Zero all uninitialized filter/CSC register banks */
+    {uint32_t v=CR(0x008);v&=~0x004;CR(0x008)=v;} /* disable L4 */
+    for(int o=0x0F0;o<=0x17C;o+=4) CR(o)=0;
+    for(int o=0x180;o<=0x1C4;o+=4) CR(o)=0;
+    for(int o=0x31C;o<=0x360;o+=4) CR(o)=0;
+    for(int o=0x364;o<=0x3A8;o+=4) CR(o)=0;
+    CR(0x3C4)=0; CR(0x3C8)=0;
+    vlog("Zeroed filter/CSC banks 0F0-17C, 180-1C4, 31C-360, 364-3A8, 3C4-3C8");
+
+    /* T1: Layer 4 RED AFTER zeroing — if colors change, stale banks were the cause */
+    {uint32_t v=CR(0x008);v|=0x004;CR(0x008)=v;} /* re-enable L4 */
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED AFTER zero banks");
+
+    /* T2: Layer 4 RED, format 0x00000100 (bits 23:16 = 0x00) */
+    CR(0x0BC)=0x00000100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x00000100 (byte2=0)");
+
+    /* T2: Layer 4 RED, format 0x00020100 (bits 23:16 = 0x02) */
+    CR(0x0BC)=0x00020100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x00020100 (byte2=2)");
+
+    /* T3: Layer 4 RED, format 0x00030100 (bits 23:16 = 0x03) */
+    CR(0x0BC)=0x00030100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED fmt=0x00030100 (byte2=3)");
+
+    /* T4: Layer 4 RED, bit 8 CLEARED + GO cycle (test CSC latch) */
+    CR(0x0BC)=0x00010100;
+    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    CR(0x000)=0;{volatile int d=0;while(d++<5000);}CR(0x000)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED bit8=0 + GO cycle");
+    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
 
     /* Disable L4, re-enable L5 */
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T3: Layer 0 with comp+0x024=0x7D (Apple ROM value) */
-    vlog("T%d: Testing Layer 0 with comp+0x024=0x7D (Apple ROM init)",test);
-    {uint32_t v=CR(0x008);v&=~0x080;CR(0x008)=v;}
-    CR(0x024)=0x7D;
-    setup_layer(0,ovl,320,240,0x00010100);
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L0 RED 024=0x7D bit28=0");
-
-    /* T4: Layer 0 with comp+0x024=0x7D + bit28 SET */
-    CR(0x05C)=0x10010100;
-    CR(0x024)=0x7D;
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L0 RED 024=0x7D bit28=1");
-
-    /* T5: Layer 0 with comp+0x024=1 (our old value) for comparison */
-    CR(0x05C)=0x00010100;
-    CR(0x024)=1;
-    push_frame();busywait_us(2000000);
-    gram_log(test++,"L0 RED 024=1 bit28=0");
-
-    /* T6: Color characterization on Layer 4 — RED, GREEN, BLUE, WHITE
-     * Used to derive the compositor's 3x3 color transform matrix.
-     * Layer 4 has no bit 28 orientation, so gives cleanest data. */
-    {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}
-    CR(0x024)=1;
-
-    /* T6a: Layer 4 RED (0xF800) */
-    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+    /* T5: Layer 4 GREEN for color matrix */
+    for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
     rb->commit_discard_dcache();
     setup_layer(4,ovl,320,240,0x00010100);
     push_frame();busywait_us(2000000);
-    gram_log(test++,"L4 RED 0xF800");
-
-    /* T6b: Layer 4 GREEN (0x07E0) */
-    for(int i=0;i<320*240;i++) ovl[i]=0x07E0;
-    rb->commit_discard_dcache();
-    CR(0x0C0)=PH(ovl);CR(0x024)=1;
-    push_frame();busywait_us(2000000);
     gram_log(test++,"L4 GREEN 0x07E0");
 
-    /* T6c: Layer 4 BLUE (0x001F) */
+    /* T6: Layer 4 BLUE for color matrix */
     for(int i=0;i<320*240;i++) ovl[i]=0x001F;
     rb->commit_discard_dcache();
     CR(0x0C0)=PH(ovl);CR(0x024)=1;
     push_frame();busywait_us(2000000);
     gram_log(test++,"L4 BLUE 0x001F");
 
-    /* T6d: Layer 4 WHITE (0xFFFF) */
+    /* T7: Layer 4 WHITE */
     for(int i=0;i<320*240;i++) ovl[i]=0xFFFF;
     rb->commit_discard_dcache();
     CR(0x0C0)=PH(ovl);CR(0x024)=1;

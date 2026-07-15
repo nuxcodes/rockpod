@@ -1188,22 +1188,13 @@ void main(void)
         fatal_error(ERR_RB);
     }
 
-#if defined(IPOD_6G) || defined(IPOD_NANO3G)
-    /* Dump ONB if not already dumped */
-    {
-        int probe = open("/onb_decrypted.bin", O_RDONLY);
-        if (probe < 0) {
-            printf("Dumping ONB from NOR...");
-            int drc = dump_onb_to_disk();
-            if (drc != 0)
-                printf("ONB dump failed: %d", drc);
-        } else {
-            close(probe);
-        }
-    }
-#endif
-
 #ifdef IPOD_6G
+    /* Dump ONB from NOR to disk (one-time, triggered by SELECT+LEFT) */
+    if (button_read_device() == (BUTTON_SELECT|BUTTON_LEFT)) {
+        printf("Dumping ONB...");
+        dump_onb_to_disk();
+    }
+
     {
         unsigned char *tmpbuf = (unsigned char *)(DRAM_ORIG + 0x2000000);
         printf("Loading retailos.bin...");
