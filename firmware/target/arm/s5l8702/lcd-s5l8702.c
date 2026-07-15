@@ -504,37 +504,6 @@ void lcd_set_inhibit(bool inhibit)
     mutex_unlock(&lcd_mutex);
 }
 
-#ifdef S5L_LCD_WITH_CMDSET16
-void lcd_update_atomic_entry_mode(uint16_t entry_mode)
-{
-    int pixels = LCD_WIDTH * LCD_HEIGHT;
-    fb_data* p = FBADDR(0,0);
-    uint16_t* out = lcd_dblbuf[0];
-
-    mutex_lock(&lcd_mutex);
-
-    displaylcd_wait_dma();
-    displaylcd_setup(0, 0, LCD_WIDTH, LCD_HEIGHT);
-
-    memcpy(out, p, pixels * 2);
-
-    s5l_lcd_set_frame_mode();
-    commit_dcache();
-    dmac_ch_queue(&lcd_dma_ch, lcd_dblbuf,
-            (void*)S5L8702_DADDR_PERI_LCD_WR, pixels*2, NULL);
-
-    while (dmac_ch_running(&lcd_dma_ch))
-        yield();
-
-    s5l_lcd_set_command_mode();
-    s5l_lcd_write_reg(0x003, entry_mode);
-
-    lcd_ispowered = true;
-
-    mutex_unlock(&lcd_mutex);
-}
-#endif
-
 #if defined(HAVE_LCD_SHUTDOWN) || defined(HAVE_LCD_SLEEP)
 static void lcd_powersave(void)
 {

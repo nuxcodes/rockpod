@@ -46,7 +46,6 @@
 #include "vpu_h264.h"
 #include "vpu_mpeg4.h"
 #include "compositor-s5l8702.h"
-#include "lcd-s5l8702.h"
 #include "core_alloc.h"
 #include "audio.h"
 #include "video_audio.h"
@@ -653,7 +652,7 @@ static void blit_last_frame(void)
     if (compositor_is_active())
         compositor_stop();
     scale_and_blit(y, cb, cr, w, h);
-    lcd_set_inhibit(false);
+    compositor_restore_entry_mode();
 }
 
 /* Like blit_last_frame() but writes to framebuffer for compositing */
@@ -1839,7 +1838,7 @@ static void button_loop(const char *filepath)
                         if (wait != 0)
                             blit_last_frame_fb();
                         osd_draw();
-                        lcd_set_inhibit(false);
+                        compositor_restore_entry_mode();
                     }
                     ps.need_osd_redraw = false;
                 }
@@ -1853,7 +1852,7 @@ static void button_loop(const char *filepath)
                             blit_last_frame_fb();
                         draw_volume_overlay();
                         lcd_update();
-                        lcd_set_inhibit(false);
+                        compositor_restore_entry_mode();
                     }
                 }
 
@@ -2413,10 +2412,7 @@ cleanup:
     button_boost_set_inhibit(false);
     cpu_boost(false);
     ring_flush();
-    if (compositor_is_active()) compositor_stop();
-    lcd_set_inhibit(false);
-    lcd_clear_display();
-    lcd_update();
+    if (compositor_is_active()) { compositor_stop(); lcd_update(); compositor_restore_entry_mode(); }
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.decoder_m4) { vpu_mpeg4_close(ps.decoder_m4); ps.decoder_m4 = NULL; }
