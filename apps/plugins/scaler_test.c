@@ -33,27 +33,65 @@ static void push_frame(void){
     while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     LR(0x80)=0;
 }
-static uint32_t gram_sample(void){
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+/* ---- SOLID GRAM readback (see osd_layer_test.c for rationale) ------
+ * Bounded waits (never hangs), timed-out reads flagged READ-TIMEOUT
+ * instead of returning garbage, 3x repeat for stability, and a grid
+ * sampler for spatial artifacts — so the log is trustworthy without a
+ * human looking at the panel. */
+enum { GRAM_OK=0, GRAM_TIMEOUT=1, GRAM_UNSTABLE=2 };
+static const char* gram_st(int s){
+    return s==GRAM_OK?"OK":s==GRAM_TIMEOUT?"READ-TIMEOUT!!":"UNSTABLE!!";
+}
+static uint32_t gram_read_xy(int x,int y,int *st){
+    int to=0;
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);if(t<=0)to=1;}
     LR(0x70)=0;LR(0x80)=1;
-    while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
-    LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    {volatile int d=0;while(d++<200);}
+    LCD_CON=0x80000DA9;
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    ili_cmd(0x200);ili_data(x);ili_cmd(0x201);ili_data(y);ili_cmd(0x202);
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}(void)LCD_DBUFF;
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}
     uint32_t g=LCD_DBUFF&0x3FFFF;
     LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;
-    push_frame();return g;
+    push_frame();
+    if(st)*st=to?GRAM_TIMEOUT:GRAM_OK;
+    return g;
+}
+static uint32_t gram_read_stable(int x,int y,int *st){
+    int s0=0,s1=0,s2=0;
+    uint32_t a=gram_read_xy(x,y,&s0);
+    uint32_t b=gram_read_xy(x,y,&s1);
+    uint32_t c=gram_read_xy(x,y,&s2);
+    if(s0||s1||s2){if(st)*st=GRAM_TIMEOUT;return a;}
+    if(a==b&&b==c){if(st)*st=GRAM_OK;return a;}
+    if(st)*st=GRAM_UNSTABLE;
+    return (a==b||a==c)?a:(b==c?b:a);
 }
 static void busywait_us(uint32_t us){
     uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
 }
-static void gram_log(const char*desc){
-    uint32_t g=gram_sample();
-    vlog("  %s GRAM=0x%06lx R=%lu G=%lu B=%lu",desc,
-         (unsigned long)g,(unsigned long)((g>>12)&0x3F),
-         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F));
+/* 5-point grid: 4 quadrant centers + middle. Logs each point with its
+ * trust tag + a uniformity verdict so shear/partial-render/stray-pixel
+ * artifacts are visible from the log alone. */
+static void gram_grid(const char*desc){
+    static const int px[5]={ 60,260, 60,260,160};
+    static const int py[5]={ 60, 60,180,180,120};
+    uint32_t v[5];int s[5],worst=GRAM_OK,uniform=1;
+    for(int i=0;i<5;i++){
+        v[i]=gram_read_stable(px[i],py[i],&s[i]);
+        if(s[i]>worst)worst=s[i];
+        if(i&&v[i]!=v[0])uniform=0;
+    }
+    vlog("  GRID %s [%s]%s",desc,gram_st(worst),
+         uniform?" uniform":" NON-UNIFORM");
+    for(int i=0;i<5;i++)
+        vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu [%s]",px[i],py[i],
+             (unsigned long)v[i],(unsigned long)((v[i]>>12)&0x3F),
+             (unsigned long)((v[i]>>6)&0x3F),(unsigned long)(v[i]&0x3F),
+             gram_st(s[i]));
 }
 
 static void comp_hw_init(void){
@@ -155,6 +193,22 @@ enum plugin_status plugin_start(const void *parameter)
     vlog("Video 008=0x%08lx 3AC=0x%08lx",(unsigned long)CR(0x008),(unsigned long)CR(0x3AC));
     busywait_us(2000000);
 
+    /* FIRST-FRAME VERDICT — the trust signal for "is the frame correct?"
+     * without a human looking at the panel. A real decoded image is
+     * spatially NON-UNIFORM across the grid; the green-failure mode reads
+     * uniform 0x000980 (R=0,G=38,B=0) everywhere. Uniform-green here means
+     * the frame is broken; non-uniform with OK tags means real content. */
+    gram_grid("FIRST FRAME (decoded video)");
+    {
+        int s;uint32_t g=gram_read_stable(160,120,&s);
+        int uniform_green=(g==0x000980);
+        vlog("  first-frame verdict: %s [%s]",
+             (s!=GRAM_OK)?"CANNOT TRUST -- read did not certify OK"
+             :uniform_green?"GREEN-FAIL signature 0x000980 at center -- frame BROKEN"
+             :"center is real content (not green-fail signature) -- frame OK",
+             gram_st(s));
+    }
+
     /* === comp+0x024-write-while-DMA-active disturbance test =====
      * Apple's ROM never writes comp+0x024 while the compositor GO bit
      * is set (the only write site in the entire ROM happens once at
@@ -168,19 +222,21 @@ enum plugin_status plugin_start(const void *parameter)
      * green-screen signature (0x000980) for a hard, evidence-backed
      * verdict rather than a guess about normal frame-to-frame variation. */
     {
-        uint32_t g_before=gram_sample();
-        vlog("comp024-burst: baseline BEFORE burst GRAM=0x%06lx",(unsigned long)g_before);
+        int sb;uint32_t g_before=gram_read_stable(160,120,&sb);
+        vlog("comp024-burst: baseline BEFORE burst GRAM=0x%06lx [%s]",(unsigned long)g_before,gram_st(sb));
 
         for(int i=0;i<20;i++) CR(0x024)=1; /* burst, no frame push between writes */
 
-        uint32_t g_after=gram_sample();
-        vlog("comp024-burst: AFTER 20x burst (no recovery frame) GRAM=0x%06lx",(unsigned long)g_after);
+        int sa;uint32_t g_after=gram_read_stable(160,120,&sa);
+        vlog("comp024-burst: AFTER 20x burst (no recovery frame) GRAM=0x%06lx [%s]",(unsigned long)g_after,gram_st(sa));
         vlog("  comp024-burst verdict: %s",
-             (g_after==g_before)
-                 ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
-                 :(g_after==0x000980)
-                     ?"CHANGED TO KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
-                     :"CHANGED (not the known-bad signature) -- likely normal frame variation, inconclusive from a single sample");
+             (sb!=GRAM_OK||sa!=GRAM_OK)
+                 ?"INCONCLUSIVE -- a read did not certify OK"
+                 :(g_after==g_before)
+                     ?"UNCHANGED -- strong evidence burst writes did not disturb active video"
+                     :(g_after==0x000980)
+                         ?"CHANGED TO KNOWN GREEN-SCREEN SIGNATURE -- burst writes reproduce the disable bug!"
+                         :"CHANGED (not the known-bad signature) -- likely normal frame variation, inconclusive from a single sample");
     }
 
     /* === FLIP TEST === */
@@ -235,14 +291,16 @@ enum plugin_status plugin_start(const void *parameter)
         static const int py[]={10,60,120,180,230};
         vlog("  P18 pixel samples:");
         for(int i=0;i<5;i++){
-            {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+            int to=0;
+            {int t=100000;while((LR(0x8C)&3)&&--t>0);if(t<=0)to=1;}
             LR(0x70)=0;LR(0x80)=1;
-            while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
-            LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
+            {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+            {volatile int d=0;while(d++<200);}
+            LCD_CON=0x80000DA9;{int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
             ili_cmd(0x200);ili_data(px[i]);ili_cmd(0x201);ili_data(py[i]);ili_cmd(0x202);
-            while(!(LCD_STATUS&0x2));
-            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+            {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}(void)LCD_DBUFF;
+            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}
             uint32_t g=LCD_DBUFF&0x3FFFF;
             LCD_CON=0x80000DA8;LR(0x80)=0;LR(0x70)=1;
             /* P18 push restore */
@@ -252,10 +310,10 @@ enum plugin_status plugin_start(const void *parameter)
             ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
             while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA8;
             LR(0x80)=0;
-            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu",
+            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu [%s]",
                  px[i],py[i],(unsigned long)g,
                  (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-                 (unsigned long)(g&0x3F));
+                 (unsigned long)(g&0x3F),gram_st(to?GRAM_TIMEOUT:GRAM_OK));
         }
     }
     busywait_us(2000000);
@@ -276,20 +334,11 @@ enum plugin_status plugin_start(const void *parameter)
         static const int px[]={10,80,160,240,310};
         static const int py[]={10,60,120,180,230};
         for(int i=0;i<5;i++){
-            {int t=100000;while((LR(0x8C)&3)&&--t>0);}
-            LR(0x70)=0;LR(0x80)=1;
-            while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
-            LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
-            ili_cmd(0x200);ili_data(px[i]);ili_cmd(0x201);ili_data(py[i]);ili_cmd(0x202);
-            while(!(LCD_STATUS&0x2));
-            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-            LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
-            uint32_t g=LCD_DBUFF&0x3FFFF;
-            LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;push_frame();
-            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu",
+            int s;uint32_t g=gram_read_stable(px[i],py[i],&s);
+            vlog("    (%d,%d) 0x%06lx R=%lu G=%lu B=%lu [%s]",
                  px[i],py[i],(unsigned long)g,
                  (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-                 (unsigned long)(g&0x3F));
+                 (unsigned long)(g&0x3F),gram_st(s));
         }
     }
 

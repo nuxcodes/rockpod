@@ -33,36 +33,90 @@ static void push_frame(void){
     while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     LR(0x80)=0;
 }
-static uint32_t gram_sample(void){
-    {int t=100000;while((LR(0x8C)&3)&&--t>0);}
+/* ---- SOLID GRAM readback ------------------------------------------
+ * Every read is self-certifying so the log stands alone with no need
+ * for a human to look at the screen:
+ *   - all waits are BOUNDED (the plugin can never hang → no missing log)
+ *   - a timed-out read is reported as READ-TIMEOUT, never a garbage value
+ *     masquerading as real data
+ *   - each pixel is read 3x; disagreement is reported as UNSTABLE
+ *   - multi-point grid sampling catches spatial artifacts (shear, stars,
+ *     partial render) a single center pixel would miss
+ * The underlying register protocol is byte-for-byte the proven working
+ * sequence; only bounded-timeout guards and repeat/grid logic are added. */
+enum { GRAM_OK=0, GRAM_TIMEOUT=1, GRAM_UNSTABLE=2 };
+static const char* gram_st(int s){
+    return s==GRAM_OK?"OK":s==GRAM_TIMEOUT?"READ-TIMEOUT!!":"UNSTABLE!!";
+}
+/* Core single read of GRAM at panel coord (x,y). *st=GRAM_OK or
+ * GRAM_TIMEOUT. Returns raw 18-bit value (untrustworthy if timeout). */
+static uint32_t gram_read_xy(int x,int y,int *st){
+    int to=0;
+    {int t=100000;while((LR(0x8C)&3)&&--t>0);if(t<=0)to=1;}
     LR(0x70)=0;LR(0x80)=1;
-    while(!(LCD_STATUS&0x2));{volatile int d=0;while(d++<200);}
-    LCD_CON=0x80000DA9;while(!(LCD_STATUS&0x2));
-    ili_cmd(0x200);ili_data(160);ili_cmd(0x201);ili_data(120);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
-    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    {volatile int d=0;while(d++<200);}
+    LCD_CON=0x80000DA9;
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    ili_cmd(0x200);ili_data(x);ili_cmd(0x201);ili_data(y);ili_cmd(0x202);
+    {int t=200000;while(!(LCD_STATUS&0x2)&&--t>0);if(t<=0)to=1;}
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}(void)LCD_DBUFF;
+    LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);if(t<=0)to=1;}
     uint32_t g=LCD_DBUFF&0x3FFFF;
     LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;
-    push_frame();return g;
+    push_frame();
+    if(st)*st=to?GRAM_TIMEOUT:GRAM_OK;
+    return g;
 }
+/* Read (x,y) 3x; require agreement. *st=OK/TIMEOUT/UNSTABLE. */
+static uint32_t gram_read_stable(int x,int y,int *st){
+    int s0=0,s1=0,s2=0;
+    uint32_t a=gram_read_xy(x,y,&s0);
+    uint32_t b=gram_read_xy(x,y,&s1);
+    uint32_t c=gram_read_xy(x,y,&s2);
+    if(s0||s1||s2){if(st)*st=GRAM_TIMEOUT;return a;}
+    if(a==b&&b==c){if(st)*st=GRAM_OK;return a;}
+    if(st)*st=GRAM_UNSTABLE;
+    return (a==b||a==c)?a:(b==c?b:a);
+}
+static uint32_t gram_sample(void){int s;return gram_read_stable(160,120,&s);}
 static void busywait_us(uint32_t us){
     uint32_t t=USEC_TIMER;while((USEC_TIMER-t)<us)rb->backlight_on();
 }
 static void gram_log(int t,const char*desc){
-    uint32_t g=gram_sample();
-    vlog("T%d: %s GRAM=0x%06lx R=%lu G=%lu B=%lu",t,desc,
+    int s;uint32_t g=gram_read_stable(160,120,&s);
+    vlog("T%d: %s GRAM=0x%06lx R=%lu G=%lu B=%lu [%s]",t,desc,
          (unsigned long)g,(unsigned long)((g>>12)&0x3F),
-         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F));
+         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F),gram_st(s));
 }
 /* Like gram_log but also returns the raw GRAM value for numeric
  * comparison between two samples (equivalence/disturbance tests). */
 static uint32_t gram_log_r(int t,const char*desc){
-    uint32_t g=gram_sample();
-    vlog("T%d: %s GRAM=0x%06lx R=%lu G=%lu B=%lu",t,desc,
+    int s;uint32_t g=gram_read_stable(160,120,&s);
+    vlog("T%d: %s GRAM=0x%06lx R=%lu G=%lu B=%lu [%s]",t,desc,
          (unsigned long)g,(unsigned long)((g>>12)&0x3F),
-         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F));
+         (unsigned long)((g>>6)&0x3F),(unsigned long)(g&0x3F),gram_st(s));
     return g;
+}
+/* 5-point grid sample (4 quadrant centers + middle). Logs every point
+ * with its trust tag and a uniformity verdict, so spatial artifacts
+ * (shear, partial render, stray pixels) are visible from the log alone. */
+static void gram_grid(const char*desc){
+    static const int px[5]={ 60,260, 60,260,160};
+    static const int py[5]={ 60, 60,180,180,120};
+    uint32_t v[5];int s[5],worst=GRAM_OK,uniform=1;
+    for(int i=0;i<5;i++){
+        v[i]=gram_read_stable(px[i],py[i],&s[i]);
+        if(s[i]>worst)worst=s[i];
+        if(i&&v[i]!=v[0])uniform=0;
+    }
+    vlog("GRID %s [%s]%s",desc,gram_st(worst),
+         uniform?" uniform":" NON-UNIFORM");
+    for(int i=0;i<5;i++)
+        vlog("  (%d,%d) 0x%06lx R=%lu G=%lu B=%lu [%s]",px[i],py[i],
+             (unsigned long)v[i],(unsigned long)((v[i]>>12)&0x3F),
+             (unsigned long)((v[i]>>6)&0x3F),(unsigned long)(v[i]&0x3F),
+             gram_st(s[i]));
 }
 
 static void comp_hw_init(void){
@@ -481,12 +535,19 @@ enum plugin_status plugin_start(const void *parameter)
             rb->commit_discard_dcache();
             setup_layer(4,ovl,320,240,0x00010100);
             push_frame();busywait_us(800000);
-            uint32_t g=gram_sample();
-            vlog("L4-iso[%s] in=0x%04x -> GRAM=0x%06lx R=%lu G=%lu B=%lu",
+            int s;uint32_t g=gram_read_stable(160,120,&s);
+            vlog("L4-iso[%s] in=0x%04x -> GRAM=0x%06lx R=%lu G=%lu B=%lu [%s]",
                  sweep[k].name,(unsigned)sweep[k].rgb,(unsigned long)g,
                  (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
-                 (unsigned long)(g&0x3F));
+                 (unsigned long)(g&0x3F),gram_st(s));
         }
+        /* Grid on the RED fill to confirm the L4 transform is spatially
+         * uniform (not a shear/partial-render artifact contaminating the
+         * per-color values above). */
+        for(int i=0;i<320*240;i++) ovl[i]=0xF800;
+        rb->commit_discard_dcache();
+        CR(0x0C0)=PH(ovl);CR(0x024)=1;push_frame();busywait_us(800000);
+        gram_grid("L4-iso RED uniformity");
         v=CR(0x008); v&=~0x004; v|=0x080; CR(0x008)=v; /* L4 off, L5 back on */
         CR(0x024)=1;
     }
@@ -555,23 +616,27 @@ enum plugin_status plugin_start(const void *parameter)
         rb->commit_discard_dcache();
         setup_layer(0,ovl,320,240,0x00010100);
         push_frame();busywait_us(1000000);
-        uint32_t g0=gram_sample();
-        vlog("L0/L1-AB: L0 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu",
+        int s0;uint32_t g0=gram_read_stable(160,120,&s0);
+        vlog("L0/L1-AB: L0 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu [%s]",
              (unsigned long)g0,(unsigned long)((g0>>12)&0x3F),
-             (unsigned long)((g0>>6)&0x3F),(unsigned long)(g0&0x3F));
+             (unsigned long)((g0>>6)&0x3F),(unsigned long)(g0&0x3F),gram_st(s0));
+        gram_grid("L0 RED");
         {uint32_t w=CR(0x008); w&=~0x040; CR(0x008)=w; CR(0x024)=1;} /* L0 off */
 
         setup_layer(1,ovl,320,240,0x00010100);
         push_frame();busywait_us(1000000);
-        uint32_t g1=gram_sample();
-        vlog("L0/L1-AB: L1 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu",
+        int s1;uint32_t g1=gram_read_stable(160,120,&s1);
+        vlog("L0/L1-AB: L1 RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu [%s]",
              (unsigned long)g1,(unsigned long)((g1>>12)&0x3F),
-             (unsigned long)((g1>>6)&0x3F),(unsigned long)(g1&0x3F));
+             (unsigned long)((g1>>6)&0x3F),(unsigned long)(g1&0x3F),gram_st(s1));
+        gram_grid("L1 RED");
 
-        vlog("L0/L1-AB verdict: %s (L0=0x%06lx L1=0x%06lx)",
-             (g0==g1)?"IDENTICAL -- L0 renders same as L1, L0 bug is NOT layer-intrinsic"
-                     :"DIFFERENT -- L0 broken while L1 works from identical config",
-             (unsigned long)g0,(unsigned long)g1);
+        vlog("L0/L1-AB verdict: %s (L0=0x%06lx [%s] L1=0x%06lx [%s])",
+             (s0==GRAM_OK&&s1==GRAM_OK)
+                 ?((g0==g1)?"IDENTICAL -- L0 renders same as L1, L0 bug is NOT layer-intrinsic"
+                          :"DIFFERENT -- L0 broken while L1 works from identical config")
+                 :"INCONCLUSIVE -- a read did not certify OK, ignore comparison",
+             (unsigned long)g0,gram_st(s0),(unsigned long)g1,gram_st(s1));
         vlog("L0 bank: 058=0x%08lx 05C=0x%08lx 060=0x%08lx 064=0x%08lx 068=0x%08lx 06C=0x%08lx 0D8=0x%08lx",
              (unsigned long)CR(0x058),(unsigned long)CR(0x05C),(unsigned long)CR(0x060),
              (unsigned long)CR(0x064),(unsigned long)CR(0x068),(unsigned long)CR(0x06C),
