@@ -30,7 +30,7 @@ static void push_frame(void){
     LR(0x80)=1;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     LR(0x80)=0;
 }
 static uint32_t gram_sample(void){
@@ -43,7 +43,7 @@ static uint32_t gram_sample(void){
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
     uint32_t g=LCD_DBUFF&0x3FFFF;
-    LCD_CON=0x80100DB0;LR(0x80)=0;LR(0x70)=1;
+    LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;
     push_frame();return g;
 }
 static void busywait_us(uint32_t us){
@@ -68,7 +68,8 @@ static void comp_hw_init(void){
           for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=h[i];}}
     c[0x0D8/4]=0x1000;c[0x0DC/4]=0;c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
     c[0x0E8/4]=0x1000;c[0x0EC/4]=0;
-    {uint32_t v=c[0x008/4];v&=~0x20000000;v&=~0x10000000;
+    {uint32_t v=c[0x008/4];v&=~0xFC;
+     v&=~0x20000000;v&=~0x10000000;
      v&=~0x03000000;v|=0x01000000;v&=~0x00300000;v|=0x00100000;
      v&=~0x00030000;v|=0x00010000;v&=~1;v|=1;c[0x008/4]=v;}
     c[0x00C/4]=0x000F0F0F;
@@ -156,17 +157,17 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0;CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
+    CR(0x3AC)=0x04004002;CR(0x0D4)=1;
+    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
-    LCD_CON=0x80100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
     CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
     push_frame();
 
