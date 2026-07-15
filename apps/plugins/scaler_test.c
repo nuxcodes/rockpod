@@ -66,8 +66,8 @@ static void comp_hw_init(void){
          for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=t[i];
      else{uint32_t h[]={0x0C,0x26,0x10,0x82,0x4E};
           for(int i=0;i<5;i++)c[(0x1EC+i*4)/4]=h[i];}}
-    c[0x0D8/4]=0x10FF;c[0x0DC/4]=0;c[0x0E0/4]=0x10FF;c[0x0E4/4]=0;
-    c[0x0E8/4]=0x10FF;c[0x0EC/4]=0;
+    c[0x0D8/4]=0x1000;c[0x0DC/4]=0;c[0x0E0/4]=0x1000;c[0x0E4/4]=0;
+    c[0x0E8/4]=0x1000;c[0x0EC/4]=0;
     {uint32_t v=c[0x008/4];v&=~0xFC;
      v&=~0x20000000;v&=~0x10000000;
      v&=~0x03000000;v|=0x01000000;v&=~0x00300000;v|=0x00100000;
@@ -80,15 +80,6 @@ static void comp_hw_init(void){
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
     c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
-    c[0x024/4]=0x00000000;
-    /* Defensive zero of CSC/filter banks — a prior plugin run in the same
-     * power-on session may leave these non-zero; comp_hw_init() never
-     * touches this range otherwise. Matches osd_layer_test.c's T0/T1 fix. */
-    for(int o=0x0F0;o<=0x17C;o+=4) c[o/4]=0;
-    for(int o=0x180;o<=0x1C4;o+=4) c[o/4]=0;
-    for(int o=0x31C;o<=0x360;o+=4) c[o/4]=0;
-    for(int o=0x364;o<=0x3A8;o+=4) c[o/4]=0;
-    c[0x3C4/4]=0; c[0x3C8/4]=0;
 }
 
 static int fsc(const uint8_t*b,int l,int*s){
