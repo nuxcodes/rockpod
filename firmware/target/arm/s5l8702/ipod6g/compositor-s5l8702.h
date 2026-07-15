@@ -40,13 +40,14 @@ void compositor_layer_show(int layer);
 void compositor_layer_hide(int layer);
 
 /* Stop compositor: disables passthrough, restores all LCD registers
- * to pre-compositor state. Does NOT change Entry Mode — caller must
- * call compositor_restore_entry_mode() after writing new framebuffer
- * content to avoid BGR/RGB color flash. */
+ * to pre-compositor state. Also restores ILI9326 Entry Mode to
+ * BGR=0 (0x0230) before re-enabling lcd_update(), so the first
+ * SW-rendered frame has correct colors. */
 void compositor_stop(void);
 
 /* Restore ILI9326 Entry Mode to Rockbox default (0x0230, BGR=0).
- * Call AFTER lcd_update() has pushed new framebuffer content. */
+ * Now called automatically by compositor_stop(). Safe to call
+ * separately if needed (idempotent). */
 void compositor_restore_entry_mode(void);
 
 /* Returns true if compositor passthrough is currently active. */

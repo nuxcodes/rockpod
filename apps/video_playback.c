@@ -652,7 +652,6 @@ static void blit_last_frame(void)
     if (compositor_is_active())
         compositor_stop();
     scale_and_blit(y, cb, cr, w, h);
-    compositor_restore_entry_mode();
 }
 
 /* Like blit_last_frame() but writes to framebuffer for compositing */
@@ -1838,7 +1837,6 @@ static void button_loop(const char *filepath)
                         if (wait != 0)
                             blit_last_frame_fb();
                         osd_draw();
-                        compositor_restore_entry_mode();
                     }
                     ps.need_osd_redraw = false;
                 }
@@ -1852,7 +1850,6 @@ static void button_loop(const char *filepath)
                             blit_last_frame_fb();
                         draw_volume_overlay();
                         lcd_update();
-                        compositor_restore_entry_mode();
                     }
                 }
 
@@ -2412,7 +2409,12 @@ cleanup:
     button_boost_set_inhibit(false);
     cpu_boost(false);
     ring_flush();
-    if (compositor_is_active()) { compositor_stop(); lcd_update(); compositor_restore_entry_mode(); }
+    if (compositor_is_active()) compositor_stop();
+    /* Clear display to avoid stale frame splash — the SW framebuffer
+     * was not updated while compositor was pushing directly to panel,
+     * so lcd_update() without clear would show an old frame. */
+    lcd_clear_display();
+    lcd_update();
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.decoder_m4) { vpu_mpeg4_close(ps.decoder_m4); ps.decoder_m4 = NULL; }

@@ -161,7 +161,7 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0x04004002;
+    CR(0x3AC) = 0;
     CR(0x0D4) = 1;
     { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
     commit_discard_dcache();
@@ -291,6 +291,15 @@ void compositor_stop(void)
     LR(0x78) = saved_lcd_78;
 
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
+
+    /* Restore ILI9326 Entry Mode to Rockbox default (0x0230, BGR=0).
+     * compositor_start() sets BGR=1 (0x1238) for HW CSC path — must be
+     * reverted BEFORE lcd_set_inhibit re-enables lcd_update(), otherwise
+     * the first SW-rendered frame has R/B channels swapped. */
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80000DA9;
+    ili_cmd(0x003); ili_data(0x0230);
+    while (!(LCD_STATUS & 0x2));
 
     lcd_set_inhibit(false);
 
