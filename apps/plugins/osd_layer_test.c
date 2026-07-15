@@ -257,32 +257,43 @@ enum plugin_status plugin_start(const void *parameter)
     {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
     CR(0x024)=1;
 
-    /* T9: ARGB8888 RED on Layer 4 — format code 2 */
+    /* T9-T12: 4bpp format-ID sweep on Layer 4, ISOLATED from Layer 5.
+     * Prior "ARGB8888=fmt2" T9/T10 conflated 3 variables at once: L5 was
+     * still actively blending underneath (contaminating readback), T10
+     * only rewrote the FB pointer instead of the full block, and "fmt2 =
+     * ARGB8888" turned out to be a mislabel borrowed from the unrelated
+     * MIXER block (0x39200000) — on THIS block (compositor 0x38900000)
+     * format ID 2 has zero precedent anywhere in Apple's ROM. Sweep the
+     * whole 4-bytes/pixel ID group (2/3/4/5, the dispatcher's shared
+     * jump target for bpp=4) one at a time, full block rewrite each,
+     * with L5 off, to isolate which value (if any) is real RGB. */
+    {uint32_t v=CR(0x008);v&=~0x080;CR(0x008)=v;} /* L5 off: isolate L4 */
     {
-        uint32_t *ovl32 = (uint32_t*)ovl;
-        for(int i=0;i<320*240;i++) ovl32[i]=0xFFFF0000;
+        static const uint32_t fmt_ids[]={2,3,4,5};
+        uint32_t *ovl32=(uint32_t*)ovl;
+        for(int i=0;i<320*240;i++) ovl32[i]=0xFFFF0000; /* RED, alpha=0xFF */
         rb->commit_discard_dcache();
-        CR(0x0B8)=(4*320)/2;
-        CR(0x0BC)=0x00010200;
-        CR(0x0C0)=PH(ovl);
-        CR(0x0C4)=240|(320U<<16);
-        CR(0x0C8)=((4*320)+7)/8;
-        CR(0x0CC)=0;
-        {uint32_t v=CR(0x008);v|=0x004;CR(0x008)=v;}
-        CR(0x024)=1;
-        push_frame();busywait_us(2000000);
-        gram_log(test++,"L4 ARGB8888 RED 0xFFFF0000 fmt=0x200");
+        for(int k=0;k<4;k++){
+            uint32_t id=fmt_ids[k];
+            CR(0x0B8)=(4*320)/2;
+            CR(0x0BC)=0x00010000|(id<<8); /* bit16=bpp<4x8 marker, id at [15:8] */
+            CR(0x0C0)=PH(ovl);
+            CR(0x0C4)=240|(320U<<16);
+            CR(0x0C8)=((4*320)+7)/8;
+            CR(0x0CC)=0;
+            {uint32_t v=CR(0x008);v|=0x004;CR(0x008)=v;}
+            CR(0x024)=1;
+            push_frame();busywait_us(2000000);
+            {uint32_t g=gram_sample();
+             vlog("T%d: L4 4bpp fmtID=%lu RED (L5 off) GRAM=0x%06lx R=%lu G=%lu B=%lu",
+                  test++,(unsigned long)id,(unsigned long)g,
+                  (unsigned long)((g>>12)&0x3F),(unsigned long)((g>>6)&0x3F),
+                  (unsigned long)(g&0x3F));}
+        }
     }
-
-    /* T10: ARGB8888 GREEN */
-    {
-        uint32_t *ovl32 = (uint32_t*)ovl;
-        for(int i=0;i<320*240;i++) ovl32[i]=0xFF00FF00;
-        rb->commit_discard_dcache();
-        CR(0x0C0)=PH(ovl);CR(0x024)=1;
-        push_frame();busywait_us(2000000);
-        gram_log(test++,"L4 ARGB8888 GREEN 0xFF00FF00 fmt=0x200");
-    }
+    /* Restore: L4 disabled, L5 re-enabled — matches state T11 expects */
+    {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
 
     /* T11: comp+0x00C sweep — try disabling pipeline stages */
     CR(0x0BC)=0x00010100;
