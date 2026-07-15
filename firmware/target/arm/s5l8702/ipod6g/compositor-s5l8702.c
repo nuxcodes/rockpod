@@ -4,7 +4,7 @@
  * Copyright (C) 2025 Nux Li
  *
  * Hardware-accelerated YCbCr→RGB display via the S5L8702 compositor.
- * Uses ILI9326 register commands (P18) for GRAM setup + P9 passthrough.
+ * Uses ILI9326 register commands (P18) for GRAM setup + P16 passthrough.
  * Panel is ILI9326 (no DCS decoder).
  *
  * This program is free software; you can redistribute it and/or
@@ -58,7 +58,7 @@ static void push_frame(void)
     ili_cmd(0x201); ili_data(0);
     ili_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB0;    /* P16 pixel mode + bit 24 (Apple always sets it) */
+    LCD_CON = 0x81100DB0;
 
     LR(0x80) = 0;
 }
@@ -105,9 +105,6 @@ static void comp_hw_init(void)
     { uint32_t v = c[0x008/4]; v &= ~2;         c[0x008/4] = v; }
     { uint32_t v = c[0x008/4]; v |= 0x100;      c[0x008/4] = v; }
     { uint32_t v = c[0x008/4]; v |= 0x80;       c[0x008/4] = v; }
-    /* bit 7 (Layer 5/scaler) NOT set here — set in compositor_start after
-     * Layer 5 registers are configured. Layer 0 shares DMA with scaler;
-     * enabling scaler early locks Layer 0's DMA path. */
     { uint32_t v = c[0x008/4]; v |= 0x40000000; c[0x008/4] = v; }
 
     c[0x200/4] |= 0x10080;
@@ -115,8 +112,8 @@ static void comp_hw_init(void)
     c[0x208/4] = 0;
     c[0x20C/4] = 2;
     c[0x210/4] = 0x00010110;
-    c[0x214/4] = 0x013F00EF;  /* viewport: (W-1)<<16|(H-1) for landscape ILI9326 */
-    c[0x024/4] = 0x00000000;  /* black background for letterbox bars */
+    c[0x214/4] = 0x013F00EF;  /* landscape viewport */
+    c[0x024/4] = 0x00000000;
 }
 
 void compositor_start(int frame_w, int frame_h,
@@ -139,22 +136,20 @@ void compositor_start(int frame_w, int frame_h,
     saved_lcd_74 = LR(0x74);
     saved_lcd_78 = LR(0x78);
 
-    /* Enable compositor core (bits 7,13) + overlay DMA (bits 14-16) */
     PWRCON(0) &= ~(0x2080 | (7 << 14));
     { volatile int d = 0; while (d++ < 10000); }
 
     comp_hw_init();
 
-    /* HW scaler: step = (src << 12) / dst. Scale to display rect, not full LCD */
+    /* HW scaler: step = (src << 12) / dst. Scale to display rect */
     h_scale = ((uint32_t)frame_w << 12) / (uint32_t)disp_w;
     v_scale = ((uint32_t)frame_h << 12) / (uint32_t)disp_h;
     if (h_scale < 0x1000) h_scale = 0x1000;
     if (v_scale < 0x1000) v_scale = 0x1000;
 
     /* Layer 5 — YUV420 planes at native resolution */
-    /* Clear Layer 5 registers (skip 0x024 — ROM data table value 0x7D) */
     for (int o = 0x028; o <= 0x044; o += 4) CR(o) = 0;
-    for (int o = 0x04C; o <= 0x058; o += 4) CR(o) = 0;
+    for (int o = 0x04C; o <= 0x054; o += 4) CR(o) = 0;
     CR(0x050) = ((uint32_t)disp_x << 16) | (uint32_t)disp_y;
     CR(0x028) = 0x100;
     CR(0x02C) = frame_w | ((frame_w/2) << 16);
@@ -165,24 +160,23 @@ void compositor_start(int frame_w, int frame_h,
     CR(0x03C) = PH(cr);
     CR(0x040) = 0;
     CR(0x044) = PH(cb);
-    CR(0x3AC) = 0;                /* proven tear-free for video */
+    CR(0x3AC) = 0x04004002;
     CR(0x0D4) = 1;
-    /* Enable Layer 5 (bit 7) + CSC bypass (bit 8) AFTER all L5 regs configured */
     { uint32_t v = CR(0x008); v |= 0x100; CR(0x008) = v; }
     commit_discard_dcache();
 
-    /* P16 passthrough — confirmed working */
-    LCD_CON = 0x81100DB0;    /* P16 pixel mode + bit 24 (Apple always sets it) */
+    /* P16 passthrough */
+    LCD_CON = 0x81100DB0;
     LR(0x88) = 0x01000000;
     LR(0x20) = 0x33;
     LR(0x7C) = 0x00000402;
     LR(0x78) = 0x000A000A;
-    LR(0x74) = 0x014000F0;    /* LCD viewport: (W)<<16|(H) for landscape ILI9326 */
+    LR(0x74) = 0x014000F0;
 
     /* ILI9326 GRAM setup via P18 */
     while (!(LCD_STATUS & 0x2));
     LCD_CON = 0x80000DA9;
-    ili_cmd(0x003); ili_data(0x1238);  /* DFM=0 (65K RGB565), AM=1, BGR=1 */
+    ili_cmd(0x003); ili_data(0x1238);
     ili_cmd(0x210); ili_data(0);
     ili_cmd(0x211); ili_data(319);
     ili_cmd(0x212); ili_data(0);
@@ -191,7 +185,7 @@ void compositor_start(int frame_w, int frame_h,
     ili_cmd(0x201); ili_data(0);
     ili_cmd(0x202);
     while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x81100DB0;    /* P16 pixel mode + bit 24 (Apple always sets it) */
+    LCD_CON = 0x81100DB0;
 
     /* Compositor GO=1 then passthrough enable */
     CR(0x000) = 1;
@@ -209,18 +203,13 @@ void compositor_update(const uint8_t *y, const uint8_t *cb, const uint8_t *cr)
     if (!comp_active)
         return;
 
-    /* Wait for previous push to complete */
+    /* Wait for previous frame to finish before updating pointers */
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
-    /* Write new plane pointers — auto-latched via comp+0x004=1 */
     CR(0x038) = PH(y);
     CR(0x03C) = PH(cr);
     CR(0x044) = PH(cb);
-
     commit_dcache();
-
-    /* Ensure LCD clock is enabled (Apple does this before every push) */
-    PWRCON(0) &= ~2;
 
     push_frame();
 
@@ -245,12 +234,12 @@ void compositor_layer_setup(int layer, int x, int y, int w, int h,
     hw_y = 240 - h - y;
     if (hw_y < 0) hw_y = 0;
 
-    CR(base + 0x00) = (2 * w) / 2;           /* half_stride: (bpp * w) >> 1 */
-    CR(base + 0x04) = (layer <= 1)            /* format: RGB565 + bit28 for L0-1 */
+    CR(base + 0x00) = (2 * w) / 2;
+    CR(base + 0x04) = (layer <= 1)
                     ? 0x10010100 : 0x00010100;
-    CR(base + 0x08) = PH(fb);                /* FB address */
+    CR(base + 0x08) = PH(fb);
     CR(base + 0x0C) = (uint32_t)h | ((uint32_t)w << 16);
-    CR(base + 0x10) = ((2 * w) + 7) / 8;     /* stride_8: ceil(bpp*w/8) */
+    CR(base + 0x10) = ((2 * w) + 7) / 8;
     CR(base + 0x14) = (uint32_t)x | ((uint32_t)hw_y << 16);
 }
 
@@ -265,7 +254,6 @@ void compositor_layer_show(int layer)
     v |= layer_bit[layer];
     CR(0x008) = v;
 
-    /* Config commit strobe — latch layer enable change */
     CR(0x024) = 1;
 }
 
@@ -280,7 +268,6 @@ void compositor_layer_hide(int layer)
     v &= ~layer_bit[layer];
     CR(0x008) = v;
 
-    /* Clear format to fully disable */
     CR(layer_base[layer] + 0x04) = 0;
 
     CR(0x024) = 1;
@@ -295,12 +282,6 @@ void compositor_stop(void)
     LR(0x80) = 0;
     CR(0x000) = 0;
 
-    /* Restore ILI9326 Entry Mode for Rockbox UI */
-    while (!(LCD_STATUS & 0x2));
-    LCD_CON = 0x80000DA9;
-    ili_cmd(0x003); ili_data(0x0230);
-    while (!(LCD_STATUS & 0x2));
-
     LCD_CON = saved_lcd_con;
     LR(0x88) = saved_lcd_88;
     LR(0x20) = saved_lcd_20;
@@ -311,9 +292,16 @@ void compositor_stop(void)
     { int t = 100000; while ((LR(0x8C) & 3) && --t > 0); }
 
     lcd_set_inhibit(false);
-    lcd_update();
 
     comp_active = false;
+}
+
+void compositor_restore_entry_mode(void)
+{
+    while (!(LCD_STATUS & 0x2));
+    LCD_CON = 0x80000DA9;
+    ili_cmd(0x003); ili_data(0x0230);
+    while (!(LCD_STATUS & 0x2));
 }
 
 bool compositor_is_active(void)

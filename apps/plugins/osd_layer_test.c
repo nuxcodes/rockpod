@@ -30,7 +30,7 @@ static void push_frame(void){
     LR(0x80)=1;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
     LR(0x80)=0;
 }
 static uint32_t gram_sample(void){
@@ -43,7 +43,7 @@ static uint32_t gram_sample(void){
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
     LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
     uint32_t g=LCD_DBUFF&0x3FFFF;
-    LCD_CON=0x81100DB0;LR(0x80)=0;LR(0x70)=1;
+    LCD_CON=0x80100DB0;LR(0x80)=0;LR(0x70)=1;
     push_frame();return g;
 }
 static void busywait_us(uint32_t us){
@@ -75,6 +75,7 @@ static void comp_hw_init(void){
     {uint32_t v=c[0x008/4];v|=0x8000;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v&=~2;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x100;c[0x008/4]=v;}
+    {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
     c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
@@ -85,10 +86,10 @@ static int fsc(const uint8_t*b,int l,int*s){
         if(b[i+2]==1){*s=3;return i;}
         if(i+3<l&&b[i+2]==0&&b[i+3]==1){*s=4;return i;}}}return-1;}
 
-static void setup_layer(int n,uint16_t*fb,int w,int h){
+static void setup_layer(int n,uint16_t*fb,int w,int h,uint32_t fmt){
     uint32_t base=0x058+(unsigned)n*0x18;
     CR(base+0x00)=(2*w)/2;
-    CR(base+0x04)=(n<=1)?0x10010100:0x00010100;
+    CR(base+0x04)=fmt;
     CR(base+0x08)=PH(fb);
     CR(base+0x0C)=h|((uint32_t)w<<16);
     CR(base+0x10)=((2*w)+7)/8;
@@ -104,7 +105,7 @@ enum plugin_status plugin_start(const void *parameter)
     if(!*path)return PLUGIN_ERROR;
     rb->cpu_boost(true);rb->audio_stop();
     log_fd=rb->open("/osd_test.log",O_WRONLY|O_CREAT|O_TRUNC,0666);
-    vlog("=== OSD Overlay Test ===");
+    vlog("=== OSD Overlay Test v2 ===");
 
     uint8_t*ab;size_t as;
     ab=rb->plugin_get_audio_buffer(&as);
@@ -144,84 +145,87 @@ enum plugin_status plugin_start(const void *parameter)
      uintptr_t p=(uintptr_t)(ab+ds+fw*fh*2+4096);
      ovl=(uint16_t*)((p+31)&~(uintptr_t)31);}
 
-    /* Start compositor */
+    /* Start compositor — matching driver's working init */
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     PWRCON(0)&=~(0x2080|(7<<14));
     {volatile int d=0;while(d++<10000);}
     comp_hw_init();
-    for(int o=0x028;o<=0x044;o+=4)CR(o)=0;
-    for(int o=0x04C;o<=0x054;o+=4)CR(o)=0;
+    for(int o=0x024;o<=0x044;o+=4)CR(o)=0;
+    for(int o=0x04C;o<=0x058;o+=4)CR(o)=0;
     CR(0x028)=0x100;CR(0x02C)=fw|((fw/2)<<16);
     CR(0x034)=fh|((uint32_t)fw<<16);CR(0x04C)=0x10001000;
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
-    CR(0x3AC)=0x04004002;CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v|=0x180;CR(0x008)=v;}
+    CR(0x3AC)=0;CR(0x0D4)=1;
+    {uint32_t v=CR(0x008);v&=~0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
-    LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
+    LCD_CON=0x80100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
     while(!(LCD_STATUS&0x2));LCD_CON=0x80000DA9;
     ili_cmd(0x003);ili_data(0x1238);
     ili_cmd(0x210);ili_data(0);ili_cmd(0x211);ili_data(319);
     ili_cmd(0x212);ili_data(0);ili_cmd(0x213);ili_data(239);
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
-    while(!(LCD_STATUS&0x2));LCD_CON=0x81100DB0;
+    while(!(LCD_STATUS&0x2));LCD_CON=0x80100DB0;
     CR(0x000)=1;LR(0x70)=1;LR(0x80)=0;
     push_frame();
 
-    vlog("Video baseline 008=0x%08lx 3AC=0x%08lx",
-         (unsigned long)CR(0x008),(unsigned long)CR(0x3AC));
+    vlog("Video baseline 008=0x%08lx 3AC=0x%08lx 024=0x%08lx",
+         (unsigned long)CR(0x008),(unsigned long)CR(0x3AC),
+         (unsigned long)CR(0x024));
     busywait_us(2000000);
 
     for(int i=0;i<320*240;i++) ovl[i]=0xF800;
     rb->commit_discard_dcache();
     int test=0;
 
-    /* T0: Layer 0 RED fullscreen, L5 off */
+    /* T0: Layer 1, bit28 SET (old way) — expect dark/wrong colors */
+    setup_layer(1,ovl,320,240,0x10010100);
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED bit28=1 (old)");
+
+    /* T1: Layer 1, bit28 CLEAR — expect correct/brighter colors */
+    CR(0x074)=0x00010100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED bit28=0 (new)");
+
+    /* T2: Layer 4, bit28 CLEAR (always was) — reference */
+    {uint32_t v=CR(0x008);v&=~0x020;CR(0x008)=v;}
+    setup_layer(4,ovl,320,240,0x00010100);
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L4 RED bit28=0 (reference)");
+
+    /* Disable L4, re-enable L5 */
+    {uint32_t v=CR(0x008);v&=~0x004;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
+
+    /* T3: Layer 0 with comp+0x024=0x7D (Apple ROM value) */
+    vlog("T%d: Testing Layer 0 with comp+0x024=0x7D (Apple ROM init)",test);
     {uint32_t v=CR(0x008);v&=~0x080;CR(0x008)=v;}
-    setup_layer(0,ovl,320,240);
+    CR(0x024)=0x7D;
+    setup_layer(0,ovl,320,240,0x00010100);
     push_frame();busywait_us(2000000);
-    gram_log(test++,"L0 RED fullscreen L5off");
+    gram_log(test++,"L0 RED 024=0x7D bit28=0");
 
-    /* T1: Layer 1 RED fullscreen, L5 off */
-    {uint32_t v=CR(0x008);v&=~0x040;CR(0x008)=v;}
-    setup_layer(1,ovl,320,240);
+    /* T4: Layer 0 with comp+0x024=0x7D + bit28 SET */
+    CR(0x05C)=0x10010100;
+    CR(0x024)=0x7D;
     push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED fullscreen L5off");
+    gram_log(test++,"L0 RED 024=0x7D bit28=1");
 
-    /* T2: Layer 1 RED + L5 video */
-    {uint32_t v=CR(0x008);v|=0x080;CR(0x008)=v;}
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED + L5 video");
+    /* T5: Layer 0 with comp+0x024=1 (our old value) for comparison */
+    CR(0x05C)=0x00010100;
+    CR(0x024)=1;
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L0 RED 024=1 bit28=0");
 
-    /* T3: comp+0x204=0 (test RGB output format) */
-    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
-    rb->commit_discard_dcache();
-    CR(0x078)=PH(ovl);
-    CR(0x204)=0;CR(0x20C)=0;
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED 204=0 20C=0");
-
-    /* T4: comp+0x204=1 */
-    CR(0x204)=1;CR(0x20C)=1;
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED 204=1 20C=1");
-
-    /* T5: restore 204=2,20C=2 + clear 200 bit 7 */
-    CR(0x204)=2;CR(0x20C)=2;
-    {uint32_t v=CR(0x200);v&=~0x80;CR(0x200)=v;}
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L1 RED 200 bit7=0");
-
-    /* T6: restore 200 bit 7, try Layer 4 (no bit 28) for comparison */
-    {uint32_t v=CR(0x200);v|=0x80;CR(0x200)=v;}
-    {uint32_t v=CR(0x008);v&=~0x020;v|=0x004;CR(0x008)=v;}
-    for(int i=0;i<320*240;i++) ovl[i]=0xF800;
-    rb->commit_discard_dcache();
-    CR(0x0B8)=(2*320)/2;CR(0x0BC)=0x00010100;CR(0x0C0)=PH(ovl);
-    CR(0x0C4)=240|(320U<<16);CR(0x0C8)=((2*320)+7)/8;CR(0x0CC)=0;
-    CR(0x024)=1;push_frame();busywait_us(2000000);
-    gram_log(test++,"L4 RED (no bit28) for comparison");
+    /* T6: Layer 1 + L5 video, bit28=0 */
+    {uint32_t v=CR(0x008);v&=~0x040;v|=0x080;CR(0x008)=v;}
+    CR(0x024)=1;
+    setup_layer(1,ovl,320,240,0x00010100);
+    push_frame();busywait_us(2000000);
+    gram_log(test++,"L1 RED + L5 video, bit28=0");
 
     /* Cleanup */
     {uint32_t v=CR(0x008);v&=~0x020;v|=0x080;CR(0x008)=v;}

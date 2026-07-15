@@ -637,14 +637,22 @@ static void blit_last_frame(void)
     const uint8_t *y, *cb, *cr;
     int w, h;
 
-    if (!ps.decoder) return;
-
-    vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    if (ps.codec_type == CODEC_MPEG4)
+    {
+        if (!ps.decoder_m4) return;
+        vpu_mpeg4_get_frame(ps.decoder_m4, &y, &cb, &cr, &w, &h);
+    }
+    else
+    {
+        if (!ps.decoder) return;
+        vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    }
     if (!y || w == 0 || h == 0) return;
 
     if (compositor_is_active())
         compositor_stop();
     scale_and_blit(y, cb, cr, w, h);
+    compositor_restore_entry_mode();
 }
 
 /* Like blit_last_frame() but writes to framebuffer for compositing */
@@ -653,9 +661,16 @@ static void blit_last_frame_fb(void)
     const uint8_t *y, *cb, *cr;
     int w, h;
 
-    if (!ps.decoder) return;
-
-    vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    if (ps.codec_type == CODEC_MPEG4)
+    {
+        if (!ps.decoder_m4) return;
+        vpu_mpeg4_get_frame(ps.decoder_m4, &y, &cb, &cr, &w, &h);
+    }
+    else
+    {
+        if (!ps.decoder) return;
+        vpu_h264_get_frame(ps.decoder, &y, &cb, &cr, &w, &h);
+    }
     if (!y || w == 0 || h == 0) return;
 
     scale_and_blit_fb(y, cb, cr, w, h);
@@ -1823,6 +1838,7 @@ static void button_loop(const char *filepath)
                         if (wait != 0)
                             blit_last_frame_fb();
                         osd_draw();
+                        compositor_restore_entry_mode();
                     }
                     ps.need_osd_redraw = false;
                 }
@@ -1836,6 +1852,7 @@ static void button_loop(const char *filepath)
                             blit_last_frame_fb();
                         draw_volume_overlay();
                         lcd_update();
+                        compositor_restore_entry_mode();
                     }
                 }
 
@@ -2047,8 +2064,9 @@ void video_playback_start(const char *filepath, const char *title)
         }
     }
 
-    /* Reject unsupported H.264 profiles */
-    if (demux.avc_profile != 66)
+    /* Reject unsupported H.264 profiles (skip for MPEG-4) */
+    if (demux.format != MAKEFOURCC('m','p','4','v') &&
+        demux.avc_profile != 66)
     {
         const char *pname = demux.avc_profile == 77 ? "Main" :
                             demux.avc_profile == 100 ? "High" : "Unknown";
@@ -2229,8 +2247,9 @@ void video_playback_start(const char *filepath, const char *title)
     ps.duration_ms = calc_duration_ms(&demux);
     if (ps.duration_ms == 0) ps.duration_ms = 60000;
 
-    /* Use SPS dimensions (from avcC) as authoritative video size.
+    /* Use SPS dimensions (from avcC) as authoritative video size for H.264.
      * MP4 container metadata may have wrong dimensions. */
+    if (ps.codec_type == CODEC_H264 && ps.decoder)
     {
         const uint8_t *tmp_y;
         int sps_w = 0, sps_h = 0;
@@ -2245,6 +2264,11 @@ void video_playback_start(const char *filepath, const char *title)
             ps.video_w = demux.width;
             ps.video_h = demux.height;
         }
+    }
+    else
+    {
+        ps.video_w = demux.width;
+        ps.video_h = demux.height;
     }
 
     /* Compute display rect with aspect-preserving downscale.
@@ -2388,7 +2412,7 @@ cleanup:
     button_boost_set_inhibit(false);
     cpu_boost(false);
     ring_flush();
-    if (compositor_is_active()) compositor_stop();
+    if (compositor_is_active()) { compositor_stop(); lcd_update(); compositor_restore_entry_mode(); }
     if (ps.has_audio) { video_audio_stop(); ps.has_audio = false; }
     if (ps.decoder) { vpu_h264_close(ps.decoder); ps.decoder = NULL; }
     if (ps.decoder_m4) { vpu_mpeg4_close(ps.decoder_m4); ps.decoder_m4 = NULL; }

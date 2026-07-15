@@ -39,10 +39,15 @@ void compositor_layer_setup(int layer, int x, int y, int w, int h,
 void compositor_layer_show(int layer);
 void compositor_layer_hide(int layer);
 
-/* Stop compositor: disables passthrough, restores landscape MADCTL,
- * restores all LCD registers to pre-compositor state, and refreshes
- * the Rockbox UI via lcd_update(). */
+/* Stop compositor: disables passthrough, restores all LCD registers
+ * to pre-compositor state. Does NOT change Entry Mode — caller must
+ * call compositor_restore_entry_mode() after writing new framebuffer
+ * content to avoid BGR/RGB color flash. */
 void compositor_stop(void);
+
+/* Restore ILI9326 Entry Mode to Rockbox default (0x0230, BGR=0).
+ * Call AFTER lcd_update() has pushed new framebuffer content. */
+void compositor_restore_entry_mode(void);
 
 /* Returns true if compositor passthrough is currently active. */
 bool compositor_is_active(void);

@@ -781,7 +781,8 @@ static void devel_menu(void)
  * reinitialize everything. We must undo all hardware state that
  * Rockbox set up: DMA, interrupts, timers, caches, and MMU.
  */
-static void __attribute__((noreturn)) launch_retailos(void *entry)
+static void __attribute__((noreturn)) launch_retailos(void *entry,
+                                                      void *src, int len)
 {
     /* 1. Disable IRQ and FIQ at the CPU level immediately */
     disable_irq();
@@ -834,7 +835,12 @@ static void __attribute__((noreturn)) launch_retailos(void *entry)
     TGCON = 0;   TGCMD = (1 << 1);  /* clear timer G */
     THCON = 0;   THCMD = (1 << 1);  /* clear timer H */
 
-    /* 7. Flush and disable caches, then disable MMU.
+    /* 7. Copy firmware to final address (DRAM_ORIG) now that all
+     *    DMA and interrupts are stopped — no concurrent DRAM access. */
+    if (src && len > 0)
+        memmove(entry, src, len);
+
+    /* 8. Flush and disable caches, then disable MMU.
      *    Order matters: clean+invalidate dcache while MMU is still on
      *    (so virtual-to-physical translations work), then disable
      *    MMU+caches together. */
@@ -1077,15 +1083,12 @@ void main(void)
         printf("Loading retailos.bin...");
         int fwrc = load_raw_firmware(tmpbuf, "/retailos.bin", 12*1024*1024);
         if (fwrc > 0) {
-            printf("RetailOS: %d bytes, copying...", fwrc);
-            unsigned char *lb = (unsigned char *)DRAM_ORIG;
-            memmove(lb, tmpbuf, fwrc);
+            printf("RetailOS: %d bytes", fwrc);
 #if (CONFIG_STORAGE & STORAGE_ATA)
             ata_sleepnow();
 #endif
-            printf("Launching RetailOS");
             sleep(HZ/2);
-            launch_retailos(lb);
+            launch_retailos((void *)DRAM_ORIG, tmpbuf, fwrc);
             /* never returns */
         }
     }

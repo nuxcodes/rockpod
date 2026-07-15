@@ -75,6 +75,7 @@ static void comp_hw_init(void){
     {uint32_t v=c[0x008/4];v|=0x8000;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v&=~2;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x100;c[0x008/4]=v;}
+    {uint32_t v=c[0x008/4];v|=0x80;c[0x008/4]=v;}
     {uint32_t v=c[0x008/4];v|=0x40000000;c[0x008/4]=v;}
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
     c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
@@ -138,7 +139,7 @@ enum plugin_status plugin_start(const void *parameter)
     CR(0x054)=0x014000F0;CR(0x038)=PH(yo);CR(0x03C)=PH(cro);
     CR(0x040)=0;CR(0x044)=PH(cbo);
     CR(0x3AC)=0x04004002;CR(0x0D4)=1;
-    {uint32_t v=CR(0x008);v|=0x180;CR(0x008)=v;}
+    {uint32_t v=CR(0x008);v|=0x100;CR(0x008)=v;}
     rb->commit_discard_dcache();
     LCD_CON=0x81100DB0;LR(0x88)=0x01000000;LR(0x20)=0x33;
     LR(0x7C)=0x00000402;LR(0x78)=0x000A000A;LR(0x74)=0x014000F0;
@@ -188,7 +189,7 @@ enum plugin_status plugin_start(const void *parameter)
     ili_cmd(0x200);ili_data(0);ili_cmd(0x201);ili_data(0);ili_cmd(0x202);
     while(!(LCD_STATUS&0x2));
     LR(0x80)=0;{int t=100000;while((LR(0x8C)&3)&&--t>0);}
-    LCD_CON=0x80100DA8;
+    LCD_CON=0x80000DA8;
     LR(0x70)=1;
     {int t=100000;while((LR(0x8C)&3)&&--t>0);}
     LR(0x80)=1;
@@ -214,7 +215,7 @@ enum plugin_status plugin_start(const void *parameter)
             LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}(void)LCD_DBUFF;
             LCD_RDATA=0;{int t=100000;while(!(LCD_STATUS&1)&&--t>0);}
             uint32_t g=LCD_DBUFF&0x3FFFF;
-            LCD_CON=0x80100DA8;LR(0x80)=0;LR(0x70)=1;
+            LCD_CON=0x80000DA8;LR(0x80)=0;LR(0x70)=1;
             /* P18 push restore */
             {int t2=100000;while((LR(0x8C)&3)&&--t2>0);}
             LR(0x80)=1;
