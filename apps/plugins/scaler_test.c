@@ -81,6 +81,14 @@ static void comp_hw_init(void){
     c[0x200/4]|=0x10080;c[0x204/4]=2;c[0x208/4]=0;c[0x20C/4]=2;
     c[0x210/4]=0x00010110;c[0x214/4]=0x013F00EF;
     c[0x024/4]=0x00000000;
+    /* Defensive zero of CSC/filter banks — a prior plugin run in the same
+     * power-on session may leave these non-zero; comp_hw_init() never
+     * touches this range otherwise. Matches osd_layer_test.c's T0/T1 fix. */
+    for(int o=0x0F0;o<=0x17C;o+=4) c[o/4]=0;
+    for(int o=0x180;o<=0x1C4;o+=4) c[o/4]=0;
+    for(int o=0x31C;o<=0x360;o+=4) c[o/4]=0;
+    for(int o=0x364;o<=0x3A8;o+=4) c[o/4]=0;
+    c[0x3C4/4]=0; c[0x3C8/4]=0;
 }
 
 static int fsc(const uint8_t*b,int l,int*s){
