@@ -180,6 +180,9 @@ static void logf_line(const char *fmt, ...)
     n = rb->vsnprintf(line, sizeof(line) - 1, fmt, ap);
     va_end(ap);
     if (n < 0) n = 0;
+    if (n > (int)sizeof(line) - 2) n = sizeof(line) - 2;  /* vsnprintf returns
+                                        * intended len; clamp so line[n]='\n'
+                                        * can never write out of bounds */
     line[n] = '\n';
     if (g_log >= 0) rb->write(g_log, line, n + 1);
     line[n] = 0;
