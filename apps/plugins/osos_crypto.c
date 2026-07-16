@@ -228,12 +228,13 @@ static int patch_iscroll(unsigned char *b, uint32_t len)
 static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
                         uint32_t bodylen, uint32_t aeslen)
 {
-    unsigned char dsign[SIGN_SZ];
+    unsigned char dsign[SIGN_SZ], plain_sha[SHA1_SZ], chk[SHA1_SZ];
     int of;
     if (arm_vectors_score(body) < 2)
         logf_line("RESEAL WARN: body vec_score<2 (not ARM?) -- writing anyway");
     /* data_sign over the PLAINTEXT body (enc12; key OSOS_DATASIGN_KEY) */
     im3_sign_run(OSOS_DATASIGN_KEY, body, bodylen, dsign);
+    sha1_run(body, aeslen, plain_sha);                    /* remember plaintext hash */
     /* GID-encrypt the body in place -> format-1 ciphertext */
     aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);
     rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
@@ -242,16 +243,31 @@ static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
     rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
     im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
     of = rb->open("/osos_patched.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (of >= 0)
+    if (of < 0) { logf_line("RESEAL: cannot open /osos_patched.img"); return; }
+    rb->write(of, g_hdr2, IM3HDR_SZ);
+    rb->write(of, body, aeslen);
+    rb->close(of);
+    logf_line("RESEAL: /osos_patched.img = format-1 (GID-encrypted body) + "
+              "GID info_sign, data_sign key=%d", OSOS_DATASIGN_KEY);
+
+    /* SELF-VERIFY the built image against the ONB's OWN checks, so the log
+     * PROVES it is correct on THIS unit before you persist -- not just the RE
+     * prediction. (a) header sig == what FUN_000007fa recomputes; (b) the body
+     * GID-decrypts back to the EXACT patched plaintext (SHA match) + valid ARM. */
     {
-        rb->write(of, g_hdr2, IM3HDR_SZ);
-        rb->write(of, body, aeslen);
-        rb->close(of);
-        logf_line("RESEAL: /osos_patched.img = format-1 (GID-encrypted body) + "
-                  "GID info_sign, data_sign key=%d", OSOS_DATASIGN_KEY);
+        unsigned char chk16[SIGN_SZ];
+        int hdr_ok, body_ok;
+        im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, chk16);
+        hdr_ok = (rb->memcmp(chk16, g_hdr2 + INFOSIGN_OFF, SIGN_SZ) == 0);
+        aes_run(0 /*decrypt*/, 1 /*GID*/, body, aeslen);
+        sha1_run(body, aeslen, chk);
+        body_ok = (rb->memcmp(chk, plain_sha, SHA1_SZ) == 0) &&
+                  (arm_vectors_score(body) >= 2);
+        logf_line("SELF-VERIFY: header-sig(GID)=%s  body-decrypt=%s  => %s",
+                  hdr_ok ? "OK" : "FAIL", body_ok ? "OK" : "FAIL",
+                  (hdr_ok && body_ok) ? "IMAGE CORRECT - safe to persist"
+                                      : "MISMATCH - DO NOT persist, tell me");
     }
-    else
-        logf_line("RESEAL: cannot open /osos_patched.img");
 }
 
 enum plugin_status plugin_start(const void *parameter)
