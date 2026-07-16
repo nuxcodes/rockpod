@@ -373,18 +373,17 @@ enum plugin_status plugin_start(const void *parameter)
         }
     }
 
-    /* --- RESEAL to a plaintext FORMAT-2 osos (writes a FAT32 file only) ---
-     * enc_type-3 (X509) osos bodies are RSA-verified against Apple's cert and
-     * CANNOT be re-signed (no Apple key). The only modifiable format is
-     * enc_type-2 (SIGNED): plaintext body + symmetric GID header sig + keyed
-     * data_sign, NO RSA. So we build a format-2 image from the current osos's
-     * header (keeping entry/data_sz) + the patched PLAINTEXT body, and compute
-     * both keyed seals on-device. Output /osos_patched.img; persist_osos.py
-     * writes it to the slot later, gated on the SecureROM osos-load accepting
-     * format-2 (SECUREROM_DUMP.md). Supply the patched body as
-     * /osos_patch_body.bin (host: patch_osos.py on /osos_plain.bin). Only when
-     * the current osos actually GID-decrypted (best_key==1) so we know we're on
-     * the right device with GID available. */
+    /* --- RESEAL to a SYMMETRIC osos (writes FAT32 files only; NEVER the slot) ---
+     * ONB RE (onb_re/ONB_RE_FINDINGS.md): the osos-loader's MAIN path verifies
+     * only the GID header sig (info_sign, any format byte) and DECRYPTS the body
+     * with AES -- NO RSA. enc_type-3 (X509) is RSA-locked (can't re-sign), but a
+     * symmetric image (GID header sig + keyed data_sign, no X509) passes. Since
+     * the body processor DECRYPTS, the robust format is **format-1**
+     * (SIGNED_ENCRYPTED = GID-encrypted body, no X509); format-2 (plaintext) is
+     * a fallback in case the processor skips decrypt for plaintext. We emit BOTH
+     * so the (backup+rollback-protected, recoverable) boot test picks the winner.
+     * Same enc12 data_sign (over the plaintext body; key from the format-2
+     * oracle) + GID info_sign for both. persist_osos.py writes the chosen file. */
     if (hdr_present && enc_type == 3 && best_key == 1 && bodylen == aeslen)
     {
         int pf = rb->open("/osos_patch_body.bin", O_RDONLY);
@@ -399,35 +398,48 @@ enum plugin_status plugin_start(const void *parameter)
             }
             else
             {
+                unsigned char dsign[SIGN_SZ];
+                int of;
                 rb->read(pf, work, bodylen);            /* patched PLAINTEXT body */
                 rb->close(pf);
                 if (arm_vectors_score(work) < 2)
                     logf_line("RESEAL WARN: patch body vec_score<2 (not ARM?) "
                               "-- writing anyway");
-                /* Build the format-2 header from the current header: keep
-                 * ident/version/entry/data_sz, set format=2, replace the enc34
-                 * sign_off/cert fields (0x10..0x3f) with data_sign + zeros. */
+                /* data_sign over the PLAINTEXT body (enc12; key from oracle). */
+                im3_sign_run(OSOS_DATASIGN_KEY, work, bodylen, dsign);
+
+                /* candidate F2: format-2 (plaintext body) */
                 rb->memcpy(g_hdr2, file, IM3HDR_SZ);
                 g_hdr2[ENC_OFF] = 2;
                 rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
-                /* data_sign@0x10 = im3_sign(K, plaintext body) */
-                im3_sign_run(OSOS_DATASIGN_KEY, work, bodylen, g_hdr2 + DATASIGN_OFF);
-                /* info_sign@0x40 = im3_sign(GID, hdr[0:0x40]) -- computed LAST */
+                rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
                 im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
-                int of = rb->open("/osos_patched.img",
-                                  O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                of = rb->open("/osos_patched_f2.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (of >= 0)
                 {
-                    rb->write(of, g_hdr2, IM3HDR_SZ);   /* format-2 header + sigs */
-                    rb->write(of, work, bodylen);       /* plaintext patched body */
+                    rb->write(of, g_hdr2, IM3HDR_SZ);
+                    rb->write(of, work, bodylen);       /* plaintext */
                     rb->close(of);
-                    logf_line("RESEAL: wrote /osos_patched.img (%ld bytes) = "
-                              "format-2 header + plaintext patched body + "
-                              "data_sign(key=%d) + info_sign(GID).",
-                              (long)(IM3HDR_SZ + bodylen), OSOS_DATASIGN_KEY);
+                    logf_line("RESEAL f2: /osos_patched_f2.img (format-2 plaintext)");
                 }
-                else
-                    logf_line("RESEAL: cannot open /osos_patched.img");
+
+                /* candidate F1 (TRY FIRST): format-1 (GID-encrypted body) */
+                aes_run(1 /*encrypt*/, 1 /*GID*/, work, aeslen);   /* GID-encrypt in place */
+                rb->memcpy(g_hdr2, file, IM3HDR_SZ);
+                g_hdr2[ENC_OFF] = 1;
+                rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
+                rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
+                im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
+                of = rb->open("/osos_patched_f1.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (of >= 0)
+                {
+                    rb->write(of, g_hdr2, IM3HDR_SZ);
+                    rb->write(of, work, aeslen);        /* GID-encrypted */
+                    rb->close(of);
+                    logf_line("RESEAL f1: /osos_patched_f1.img (format-1 GID-encrypted)"
+                              " [persist THIS first] data_sign key=%d",
+                              OSOS_DATASIGN_KEY);
+                }
             }
         }
     }
