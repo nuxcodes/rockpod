@@ -207,11 +207,13 @@ enum plugin_status plugin_start(const void *parameter)
     if (fsize < IM3HDR_SZ + 0x40)
     { rb->close(fd); rb->splash(HZ * 2, "Input too small"); return PLUGIN_ERROR; }
 
-    /* Two buffers: full file + a working copy of the body. Use the uncached
-     * DRAM alias (S5L8702_UNCACHED_ADDR = +0x40000000) so AES DMA is coherent
-     * without relying on cache maintenance across the whole span. */
+    /* Two buffers: full file + a working copy of the body. Cached buffer;
+     * aes_run() does commit_discard_dcache() (clean+invalidate) right before
+     * AESGO, exactly like crypto-s5l8702.c hwkeyaes -- the proven S5L8702 AES
+     * driver -- so the DMA sees flushed input and post-DMA CPU reads miss to
+     * RAM. (This matches the same-SoC bootloader path rather than the Nano2G
+     * uncached-alias trick.) */
     file = rb->plugin_get_audio_buffer(&bufsz);
-    file = (unsigned char *)((uintptr_t)file + 0x40000000);
     if ((off_t)bufsz < fsize * 2 + 0x1000)
     { rb->close(fd); rb->splash(HZ * 3, "Buffer too small"); return PLUGIN_ERROR; }
 
