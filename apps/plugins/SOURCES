@@ -93,6 +93,7 @@ vpp_test.c
 vpu_vpp_test.c
 vpp_mvp_test.c
 vpp_preshear_test.c
+osos_crypto.c
 #endif
 #endif
 

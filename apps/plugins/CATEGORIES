@@ -215,5 +215,6 @@ vpp_test,apps
 vpp_mvp_test,apps
 vpu_vpp_test,apps
 vpp_preshear_test,apps
+osos_crypto,apps
 scaler_test,apps
 osd_layer_test,apps
