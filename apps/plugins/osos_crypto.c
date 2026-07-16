@@ -234,7 +234,9 @@ enum plugin_status plugin_start(const void *parameter)
         body = file;
         bodylen = fsize;
     }
-    aeslen = bodylen & ~0x3fu;             /* AES over whole 0x40-aligned span */
+    aeslen = bodylen & ~0xfu;              /* AES-CBC over the 16-aligned body
+                                            * (osos data_sz is 16- not 64-aligned,
+                                            * e.g. 0xa4a570) -- same as hwkeyaes */
 
     g_log = rb->open("/osos_crypto.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
 
@@ -247,8 +249,8 @@ enum plugin_status plugin_start(const void *parameter)
 
     /* --- Try GID then UID: which key decrypts the body to ARM code? --- */
     work = file + (((fsize + 0xfff) & ~0xfffu));   /* aligned scratch after file */
+    int best_key = 0, best_score = -1;
     {
-        int best_key = 0, best_score = -1;
         int keys[2] = { 1 /*GID*/, 2 /*UID*/ };
         for (i = 0; i < 2; i++)
         {
@@ -321,6 +323,55 @@ enum plugin_status plugin_start(const void *parameter)
                       keys[i] == 1 ? "GID" : "UID", hx,
                       rb->memcmp(h, file + INFOSIGN_OFF, SIGN_SZ) == 0
                           ? "<== MATCH" : "");
+        }
+    }
+
+    /* --- Optional RESEAL (writes a FAT32 file only; NEVER the slot) ---
+     * The 6 CoverFlow patches live in the BODY, so the header (and its
+     * info_sign@0x40) is unchanged; reseal is just: GID-encrypt the patched
+     * plaintext body and splice it into the original image, keeping header +
+     * cert verbatim. /osos_patched.img then differs from the on-disk osos ONLY
+     * in the encrypted body. It boots iff the SecureROM does not RSA-verify the
+     * body (see SECUREROM_DUMP.md go/no-go); persist_osos.py writes it to the
+     * slot later, gated + backed up. Supply the patched body as
+     * /osos_patch_body.bin (host: coverflow_patch.py on /osos_plain.bin). */
+    if (hdr_present && best_key > 0 && bodylen == aeslen)
+    {
+        int pf = rb->open("/osos_patch_body.bin", O_RDONLY);
+        if (pf >= 0)
+        {
+            off_t psz = rb->filesize(pf);
+            if (psz != (off_t)bodylen)
+            {
+                logf_line("RESEAL skip: /osos_patch_body.bin %ld bytes, need "
+                          "bodylen 0x%lx", (long)psz, (unsigned long)bodylen);
+                rb->close(pf);
+            }
+            else
+            {
+                rb->read(pf, work, bodylen);
+                rb->close(pf);
+                if (arm_vectors_score(work) < 2)
+                    logf_line("RESEAL WARN: patch body vec_score<2 (not ARM?) "
+                              "-- writing anyway");
+                aes_run(1 /*encrypt*/, best_key, work, aeslen);
+                int of = rb->open("/osos_patched.img",
+                                  O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (of >= 0)
+                {
+                    rb->write(of, file, IM3HDR_SZ);            /* header (as-is) */
+                    rb->write(of, work, aeslen);              /* enc patched body */
+                    if ((off_t)(IM3HDR_SZ + bodylen) < fsize) /* cert/footer tail */
+                        rb->write(of, file + IM3HDR_SZ + bodylen,
+                                  fsize - IM3HDR_SZ - bodylen);
+                    rb->close(of);
+                    logf_line("RESEAL: wrote /osos_patched.img (%ld bytes) = "
+                              "header + GID-encrypted patched body + cert.",
+                              (long)fsize);
+                }
+                else
+                    logf_line("RESEAL: cannot open /osos_patched.img");
+            }
         }
     }
 
