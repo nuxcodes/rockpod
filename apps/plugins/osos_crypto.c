@@ -196,6 +196,72 @@ static void logf_line(const char *fmt, ...)
     rb->splashf(0, "%s", line);   /* also show progress on screen briefly */
 }
 
+/* Apply the 4 build-general isScrolling NOPs: strb r0,[r4,#0x93d]
+ * (bytes 3d 09 c4 e5) -> mov r0,r0 (00 00 a0 e1). Byte-scan (matches
+ * coverflow_patch.py); patches ONLY if exactly 4 sites exist. Returns count. */
+static int patch_iscroll(unsigned char *b, uint32_t len)
+{
+    static const unsigned char pat[4] = {0x3d, 0x09, 0xc4, 0xe5};
+    static const unsigned char rep[4] = {0x00, 0x00, 0xa0, 0xe1};
+    uint32_t pos[8];
+    int n = 0, k;
+    uint32_t i;
+    for (i = 0; i + 4 <= len && n < 8; i++)
+        if (b[i] == pat[0] && b[i+1] == pat[1] &&
+            b[i+2] == pat[2] && b[i+3] == pat[3])
+            pos[n++] = i;
+    if (n == 4)
+        for (k = 0; k < 4; k++)
+            rb->memcpy(b + pos[k], rep, 4);
+    return n;
+}
+
+/* Build BOTH re-sealed candidates from a patched PLAINTEXT body (in `body`,
+ * which is GID-encrypted in place for F1): /osos_patched_f1.img (format-1,
+ * GID-encrypted, try first) and /osos_patched_f2.img (format-2, plaintext).
+ * data_sign over the plaintext (enc12; key OSOS_DATASIGN_KEY) + GID info_sign. */
+static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
+                        uint32_t bodylen, uint32_t aeslen)
+{
+    unsigned char dsign[SIGN_SZ];
+    int of;
+    if (arm_vectors_score(body) < 2)
+        logf_line("RESEAL WARN: body vec_score<2 (not ARM?) -- writing anyway");
+    im3_sign_run(OSOS_DATASIGN_KEY, body, bodylen, dsign);
+
+    /* F2: format-2 (plaintext body) */
+    rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
+    g_hdr2[ENC_OFF] = 2;
+    rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
+    rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
+    im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
+    of = rb->open("/osos_patched_f2.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (of >= 0)
+    {
+        rb->write(of, g_hdr2, IM3HDR_SZ);
+        rb->write(of, body, bodylen);
+        rb->close(of);
+        logf_line("RESEAL f2: /osos_patched_f2.img (format-2 plaintext)");
+    }
+
+    /* F1 (TRY FIRST): format-1 (GID-encrypted body) */
+    aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);   /* GID-encrypt in place */
+    rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
+    g_hdr2[ENC_OFF] = 1;
+    rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
+    rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
+    im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
+    of = rb->open("/osos_patched_f1.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (of >= 0)
+    {
+        rb->write(of, g_hdr2, IM3HDR_SZ);
+        rb->write(of, body, aeslen);
+        rb->close(of);
+        logf_line("RESEAL f1: /osos_patched_f1.img (format-1 GID-encrypted) "
+                  "[persist THIS first] data_sign key=%d", OSOS_DATASIGN_KEY);
+    }
+}
+
 enum plugin_status plugin_start(const void *parameter)
 {
     const char *path = parameter;
@@ -389,6 +455,7 @@ enum plugin_status plugin_start(const void *parameter)
         int pf = rb->open("/osos_patch_body.bin", O_RDONLY);
         if (pf >= 0)
         {
+            /* host-patched body supplied (e.g. patch_osos.py --full for all 6) */
             off_t psz = rb->filesize(pf);
             if (psz != (off_t)bodylen)
             {
@@ -398,49 +465,26 @@ enum plugin_status plugin_start(const void *parameter)
             }
             else
             {
-                unsigned char dsign[SIGN_SZ];
-                int of;
                 rb->read(pf, work, bodylen);            /* patched PLAINTEXT body */
                 rb->close(pf);
-                if (arm_vectors_score(work) < 2)
-                    logf_line("RESEAL WARN: patch body vec_score<2 (not ARM?) "
-                              "-- writing anyway");
-                /* data_sign over the PLAINTEXT body (enc12; key from oracle). */
-                im3_sign_run(OSOS_DATASIGN_KEY, work, bodylen, dsign);
-
-                /* candidate F2: format-2 (plaintext body) */
-                rb->memcpy(g_hdr2, file, IM3HDR_SZ);
-                g_hdr2[ENC_OFF] = 2;
-                rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
-                rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
-                im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
-                of = rb->open("/osos_patched_f2.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if (of >= 0)
-                {
-                    rb->write(of, g_hdr2, IM3HDR_SZ);
-                    rb->write(of, work, bodylen);       /* plaintext */
-                    rb->close(of);
-                    logf_line("RESEAL f2: /osos_patched_f2.img (format-2 plaintext)");
-                }
-
-                /* candidate F1 (TRY FIRST): format-1 (GID-encrypted body) */
-                aes_run(1 /*encrypt*/, 1 /*GID*/, work, aeslen);   /* GID-encrypt in place */
-                rb->memcpy(g_hdr2, file, IM3HDR_SZ);
-                g_hdr2[ENC_OFF] = 1;
-                rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
-                rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
-                im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
-                of = rb->open("/osos_patched_f1.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if (of >= 0)
-                {
-                    rb->write(of, g_hdr2, IM3HDR_SZ);
-                    rb->write(of, work, aeslen);        /* GID-encrypted */
-                    rb->close(of);
-                    logf_line("RESEAL f1: /osos_patched_f1.img (format-1 GID-encrypted)"
-                              " [persist THIS first] data_sign key=%d",
-                              OSOS_DATASIGN_KEY);
-                }
+                emit_reseal(file, work, bodylen, aeslen);
             }
+        }
+        else
+        {
+            /* No host-patched body: auto-apply the 4 build-general isScrolling
+             * NOPs on-device (safest patch, no RE) so the whole flow is a SINGLE
+             * plugin run: extract-osos -> osos_crypto(cur.osos) -> persist. */
+            int n;
+            rb->memcpy(work, body, aeslen);
+            aes_run(0 /*decrypt*/, best_key, work, aeslen);   /* -> plaintext */
+            n = patch_iscroll(work, bodylen);
+            logf_line("auto-patch isScrolling (4 NOPs): %d site(s) found", n);
+            if (n == 4)
+                emit_reseal(file, work, bodylen, aeslen);
+            else
+                logf_line("auto-patch: expected 4 isScrolling sites, got %d -- "
+                          "NOT resealing; supply /osos_patch_body.bin instead", n);
         }
     }
 
