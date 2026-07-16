@@ -177,7 +177,7 @@ static void hexstr(const unsigned char *p, int n, char *out)
 
 /* line-buffered report writer */
 static int g_log = -1;
-static uint8_t g_hdr2[IM3HDR_SZ];   /* scratch for the rebuilt format-2 header */
+static uint8_t g_hdr2[IM3HDR_SZ];   /* scratch for the rebuilt (format-1) header */
 static void logf_line(const char *fmt, ...)
 {
     char line[256];
@@ -216,10 +216,15 @@ static int patch_iscroll(unsigned char *b, uint32_t len)
     return n;
 }
 
-/* Build BOTH re-sealed candidates from a patched PLAINTEXT body (in `body`,
- * which is GID-encrypted in place for F1): /osos_patched_f1.img (format-1,
- * GID-encrypted, try first) and /osos_patched_f2.img (format-2, plaintext).
- * data_sign over the plaintext (enc12; key OSOS_DATASIGN_KEY) + GID info_sign. */
+/* Build the re-sealed patched osos as FORMAT-1 (SIGNED_ENCRYPTED) from a patched
+ * PLAINTEXT body in `body` -> /osos_patched.img. Rationale (no hedge): the
+ * current osos is format-3 (ENCRYPTED) and boots, and the ONB body processor
+ * (FUN_00000526) decrypts with NO format-byte branch -> the loader decrypts
+ * unconditionally, so the body MUST be encrypted (format-1). A plaintext
+ * (format-2) body would be decrypted -> corrupted. Format-1 also works whether
+ * the decrypt is conditional or not, so it strictly dominates. Seals: GID
+ * info_sign@0x40 (the one the loader checks) + keyed data_sign@0x10 (belt-and-
+ * suspenders; not compared to the body in the load path). */
 static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
                         uint32_t bodylen, uint32_t aeslen)
 {
@@ -227,39 +232,26 @@ static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
     int of;
     if (arm_vectors_score(body) < 2)
         logf_line("RESEAL WARN: body vec_score<2 (not ARM?) -- writing anyway");
+    /* data_sign over the PLAINTEXT body (enc12; key OSOS_DATASIGN_KEY) */
     im3_sign_run(OSOS_DATASIGN_KEY, body, bodylen, dsign);
-
-    /* F2: format-2 (plaintext body) */
+    /* GID-encrypt the body in place -> format-1 ciphertext */
+    aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);
     rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
-    g_hdr2[ENC_OFF] = 2;
+    g_hdr2[ENC_OFF] = 1;                                   /* SIGNED_ENCRYPTED */
     rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
     rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
     im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
-    of = rb->open("/osos_patched_f2.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (of >= 0)
-    {
-        rb->write(of, g_hdr2, IM3HDR_SZ);
-        rb->write(of, body, bodylen);
-        rb->close(of);
-        logf_line("RESEAL f2: /osos_patched_f2.img (format-2 plaintext)");
-    }
-
-    /* F1 (TRY FIRST): format-1 (GID-encrypted body) */
-    aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);   /* GID-encrypt in place */
-    rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
-    g_hdr2[ENC_OFF] = 1;
-    rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
-    rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
-    im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
-    of = rb->open("/osos_patched_f1.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    of = rb->open("/osos_patched.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (of >= 0)
     {
         rb->write(of, g_hdr2, IM3HDR_SZ);
         rb->write(of, body, aeslen);
         rb->close(of);
-        logf_line("RESEAL f1: /osos_patched_f1.img (format-1 GID-encrypted) "
-                  "[persist THIS first] data_sign key=%d", OSOS_DATASIGN_KEY);
+        logf_line("RESEAL: /osos_patched.img = format-1 (GID-encrypted body) + "
+                  "GID info_sign, data_sign key=%d", OSOS_DATASIGN_KEY);
     }
+    else
+        logf_line("RESEAL: cannot open /osos_patched.img");
 }
 
 enum plugin_status plugin_start(const void *parameter)
