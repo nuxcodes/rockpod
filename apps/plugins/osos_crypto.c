@@ -347,6 +347,24 @@ enum plugin_status plugin_start(const void *parameter)
     g_log = rb->open("/osos_crypto.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
 
     logf_line("osos_crypto: %s", path);
+
+    /* READ-ONLY probe: the production fuse that gates the keyless "002" fallback
+     * container. SecureROM FUN_00000872 reads ChipID 0x3d100004 bit 4 -> param_3;
+     * when param_3==0 the ONB accepts an unkeyed-SHA1 "002" image (no RSA, no Apple
+     * key). Retail units are expected fused-closed (bit4=1). Dumps ChipID 0x00..0x0c;
+     * pure MMIO reads, changes nothing. */
+    {
+        volatile uint32_t *chipid = (volatile uint32_t *)0x3d100000;
+        uint32_t c0 = chipid[0], c1 = chipid[1], c2 = chipid[2], c3 = chipid[3];
+        logf_line("ChipID[0x3d100000..c]= %08lx %08lx %08lx %08lx",
+                  (unsigned long)c0, (unsigned long)c1,
+                  (unsigned long)c2, (unsigned long)c3);
+        logf_line("002-fallback fuse: [0x3d100004] bit4=%lu => %s",
+                  (unsigned long)((c1 >> 4) & 1),
+                  ((c1 >> 4) & 1) ? "CLOSED (fused, retail-normal)"
+                                  : "OPEN -> keyless 002 osos may boot (tell me!)");
+    }
+
     logf_line("size=%ld hdr=%d enc_type=%lu bodylen=0x%lx aeslen=0x%lx",
               (long)fsize, (int)hdr_present, (unsigned long)enc_type,
               (unsigned long)bodylen, (unsigned long)aeslen);
