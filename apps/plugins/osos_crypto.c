@@ -177,7 +177,6 @@ static void hexstr(const unsigned char *p, int n, char *out)
 
 /* line-buffered report writer */
 static int g_log = -1;
-static uint8_t g_hdr2[IM3HDR_SZ];   /* scratch for the rebuilt (format-1) header */
 static void logf_line(const char *fmt, ...)
 {
     char line[256];
@@ -216,49 +215,70 @@ static int patch_iscroll(unsigned char *b, uint32_t len)
     return n;
 }
 
-/* Build the re-sealed patched osos as FORMAT-1 (SIGNED_ENCRYPTED) from a patched
- * PLAINTEXT body in `body` -> /osos_patched.img. Rationale (no hedge): the
- * current osos is format-3 (ENCRYPTED) and boots, and the ONB body processor
- * (FUN_00000526) decrypts with NO format-byte branch -> the loader decrypts
- * unconditionally, so the body MUST be encrypted (format-1). A plaintext
- * (format-2) body would be decrypted -> corrupted. Format-1 also works whether
- * the decrypt is conditional or not, so it strictly dominates. Seals: GID
- * info_sign@0x40 (the one the loader checks) + keyed data_sign@0x10 (belt-and-
- * suspenders; not compared to the body in the load path). */
-static void emit_reseal(const unsigned char *refhdr, unsigned char *body,
-                        uint32_t bodylen, uint32_t aeslen)
+/* Build the re-sealed patched osos as FORMAT-3-KEEP from a patched PLAINTEXT
+ * body in `body` -> /osos_patched.img. Rationale (safest, no hedge): the current
+ * osos is format-3 (ENCRYPTED) and boots; the ONB body processor (FUN_00000526)
+ * decrypts with NO format-byte branch, so the body MUST stay encrypted. Rather
+ * than rebuild a header (and recompute info_sign), we KEEP the device's own
+ * original header + cert byte-for-byte and swap ONLY the body ciphertext:
+ * hdr[0:0x40] is unchanged so Apple's GID info_sign@0x40 (the seal the loader
+ * checks; FUN_000007fa ignores the format byte) stays valid with zero
+ * recomputation, and the body is not sig/RSA-checked at boot. Output is
+ * byte-identical to the booting osos except the GID-re-encrypted patched body. */
+static void emit_reseal(const unsigned char *reffile, off_t fsize,
+                        unsigned char *body, uint32_t bodylen, uint32_t aeslen)
 {
-    unsigned char dsign[SIGN_SZ], plain_sha[SHA1_SZ], chk[SHA1_SZ];
+    unsigned char plain_sha[SHA1_SZ], chk[SHA1_SZ];
     int of;
+    ssize_t w;
+    uint32_t tail_off = IM3HDR_SZ + bodylen;   /* start of the cert/RSA trailer */
+
     if (arm_vectors_score(body) < 2)
         logf_line("RESEAL WARN: body vec_score<2 (not ARM?) -- writing anyway");
-    /* data_sign over the PLAINTEXT body (enc12; key OSOS_DATASIGN_KEY) */
-    im3_sign_run(OSOS_DATASIGN_KEY, body, bodylen, dsign);
     sha1_run(body, aeslen, plain_sha);                    /* remember plaintext hash */
-    /* GID-encrypt the body in place -> format-1 ciphertext */
-    aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);
-    rb->memcpy(g_hdr2, refhdr, IM3HDR_SZ);
-    g_hdr2[ENC_OFF] = 1;                                   /* SIGNED_ENCRYPTED */
-    rb->memset(g_hdr2 + DATASIGN_OFF, 0, INFOSIGN_OFF - DATASIGN_OFF);
-    rb->memcpy(g_hdr2 + DATASIGN_OFF, dsign, SIGN_SZ);
-    im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, g_hdr2 + INFOSIGN_OFF);
+    aes_run(1 /*encrypt*/, 1 /*GID*/, body, aeslen);      /* GID-re-encrypt patched body */
+
+    /* FORMAT-3-KEEP (safest): keep the device's OWN original header AND its
+     * original cert/RSA trailer byte-for-byte; change ONLY the body ciphertext.
+     * The header's Apple-GID info_sign@0x40 stays VALID because hdr[0:0x40] is
+     * untouched -- we reuse Apple's own seal, recompute nothing. ONB boot verify
+     * (onb_re: FUN_000007fa) checks info_sign@0x40 (unchanged -> valid, and it
+     * does NOT read the format byte) and FUN_00000526 AES-DECRYPTS the body
+     * (-> patched code); the body is not RSA/sig-checked at boot. So the output
+     * is byte-identical to the currently-booting osos except the patched body.
+     * Result size == the original osos size (header + body + trailer). */
     of = rb->open("/osos_patched.img", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (of < 0) { logf_line("RESEAL: cannot open /osos_patched.img"); return; }
-    rb->write(of, g_hdr2, IM3HDR_SZ);
-    rb->write(of, body, aeslen);
+    w = rb->write(of, reffile, IM3HDR_SZ);                /* original header, unchanged */
+    if (w != (ssize_t)IM3HDR_SZ)
+    { logf_line("RESEAL FAIL: short write header %ld/%d -- DO NOT persist",
+                (long)w, IM3HDR_SZ); rb->close(of); return; }
+    w = rb->write(of, body, aeslen);                      /* re-encrypted patched body */
+    if (w != (ssize_t)aeslen)
+    { logf_line("RESEAL FAIL: short write body %ld/0x%lx -- DO NOT persist",
+                (long)w, (unsigned long)aeslen); rb->close(of); return; }
+    if ((off_t)tail_off < fsize)                          /* original cert/RSA trailer */
+    {
+        uint32_t tail = (uint32_t)(fsize - tail_off);
+        w = rb->write(of, reffile + tail_off, tail);
+        if (w != (ssize_t)tail)
+        { logf_line("RESEAL FAIL: short write trailer %ld/0x%lx -- DO NOT persist",
+                    (long)w, (unsigned long)tail); rb->close(of); return; }
+    }
     rb->close(of);
-    logf_line("RESEAL: /osos_patched.img = format-1 (GID-encrypted body) + "
-              "GID info_sign, data_sign key=%d", OSOS_DATASIGN_KEY);
+    logf_line("RESEAL: /osos_patched.img = format-3-KEEP (original header+cert kept, "
+              "GID-re-encrypted patched body); size=%ld", (long)fsize);
 
-    /* SELF-VERIFY the built image against the ONB's OWN checks, so the log
+    /* SELF-VERIFY the built image against the ONB's OWN boot checks, so the log
      * PROVES it is correct on THIS unit before you persist -- not just the RE
-     * prediction. (a) header sig == what FUN_000007fa recomputes; (b) the body
+     * prediction. (a) the ORIGINAL header's GID info_sign@0x40 is what
+     * FUN_000007fa recomputes (== valid, unchanged); (b) the body we wrote
      * GID-decrypts back to the EXACT patched plaintext (SHA match) + valid ARM. */
     {
         unsigned char chk16[SIGN_SZ];
         int hdr_ok, body_ok;
-        im3_sign_run(1 /*GID*/, g_hdr2, INFOSIGN_LEN, chk16);
-        hdr_ok = (rb->memcmp(chk16, g_hdr2 + INFOSIGN_OFF, SIGN_SZ) == 0);
+        im3_sign_run(1 /*GID*/, (unsigned char *)reffile, INFOSIGN_LEN, chk16);
+        hdr_ok = (rb->memcmp(chk16, reffile + INFOSIGN_OFF, SIGN_SZ) == 0);
         aes_run(0 /*decrypt*/, 1 /*GID*/, body, aeslen);
         sha1_run(body, aeslen, chk);
         body_ok = (rb->memcmp(chk, plain_sha, SHA1_SZ) == 0) &&
@@ -447,17 +467,16 @@ enum plugin_status plugin_start(const void *parameter)
         }
     }
 
-    /* --- RESEAL to a SYMMETRIC osos (writes FAT32 files only; NEVER the slot) ---
-     * ONB RE (onb_re/ONB_RE_FINDINGS.md): the osos-loader's MAIN path verifies
-     * only the GID header sig (info_sign, any format byte) and DECRYPTS the body
-     * with AES -- NO RSA. enc_type-3 (X509) is RSA-locked (can't re-sign), but a
-     * symmetric image (GID header sig + keyed data_sign, no X509) passes. Since
-     * the body processor DECRYPTS, the robust format is **format-1**
-     * (SIGNED_ENCRYPTED = GID-encrypted body, no X509); format-2 (plaintext) is
-     * a fallback in case the processor skips decrypt for plaintext. We emit BOTH
-     * so the (backup+rollback-protected, recoverable) boot test picks the winner.
-     * Same enc12 data_sign (over the plaintext body; key from the format-2
-     * oracle) + GID info_sign for both. persist_osos.py writes the chosen file. */
+    /* --- RESEAL the patched osos (writes FAT32 files only; NEVER the slot) ---
+     * ONB RE (onb_re/ONB_RE_FINDINGS.md): the osos-loader's boot path verifies
+     * only the GID header sig (info_sign@0x40, ignoring the format byte) and
+     * AES-DECRYPTS the body -- NO RSA at boot (X509/RSA is install-time only).
+     * So we do NOT need to re-sign anything: emit_reseal keeps the device's own
+     * original header + cert (Apple's valid GID info_sign stays valid, hdr[0:0x40]
+     * unchanged) and swaps ONLY the GID-re-encrypted patched body -> format-3-KEEP,
+     * the minimal-delta image. Guard: input is a full enc_type-3 image, its body
+     * decrypts with GID (best_key==1), and the body is fully inside the 16-aligned
+     * AES region (bodylen==aeslen). persist_osos.py writes /osos_patched.img. */
     if (hdr_present && enc_type == 3 && best_key == 1 && bodylen == aeslen)
     {
         int pf = rb->open("/osos_patch_body.bin", O_RDONLY);
@@ -475,7 +494,7 @@ enum plugin_status plugin_start(const void *parameter)
             {
                 rb->read(pf, work, bodylen);            /* patched PLAINTEXT body */
                 rb->close(pf);
-                emit_reseal(file, work, bodylen, aeslen);
+                emit_reseal(file, fsize, work, bodylen, aeslen);
             }
         }
         else
@@ -489,7 +508,7 @@ enum plugin_status plugin_start(const void *parameter)
             n = patch_iscroll(work, bodylen);
             logf_line("auto-patch isScrolling (4 NOPs): %d site(s) found", n);
             if (n == 4)
-                emit_reseal(file, work, bodylen, aeslen);
+                emit_reseal(file, fsize, work, bodylen, aeslen);
             else
                 logf_line("auto-patch: expected 4 isScrolling sites, got %d -- "
                           "NOT resealing; supply /osos_patch_body.bin instead", n);
