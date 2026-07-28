@@ -348,21 +348,31 @@ enum plugin_status plugin_start(const void *parameter)
 
     logf_line("osos_crypto: %s", path);
 
-    /* READ-ONLY probe: the production fuse that gates the keyless "002" fallback
-     * container. SecureROM FUN_00000872 reads ChipID 0x3d100004 bit 4 -> param_3;
-     * when param_3==0 the ONB accepts an unkeyed-SHA1 "002" image (no RSA, no Apple
-     * key). Retail units are expected fused-closed (bit4=1). Dumps ChipID 0x00..0x0c;
-     * pure MMIO reads, changes nothing. */
+    /* READ-ONLY probe of the production fuse that gates the SecureROM's keyless
+     * fallback image path. SecureROM FUN_20005ea4 @0x20006158 reads *(0x3d100004)
+     * and tests bit4 (tst r0,#0x10): bit4=1 => fused/production (fallback blocked);
+     * bit4=0 => open (fallback reachable). Rockbox's syscon_preinit gates the CHIPID
+     * clock OFF (PWRCON(1)=0x3C50004C bit14, CLOCKGATE_CHIPID=46), so a naive read
+     * returns 0 -- must UNGATE first, read, then restore. ROM-verified: SecureROM's
+     * own clockgate_enable @0x2000147c uses BIC=enable on PWRCON(1). Read-only:
+     * restores PWRCON(1) to its prior value; changes nothing persistent. */
     {
-        volatile uint32_t *chipid = (volatile uint32_t *)0x3d100000;
-        uint32_t c0 = chipid[0], c1 = chipid[1], c2 = chipid[2], c3 = chipid[3];
-        logf_line("ChipID[0x3d100000..c]= %08lx %08lx %08lx %08lx",
+        volatile uint32_t *pwrcon1 = (volatile uint32_t *)0x3C50004C;
+        volatile uint32_t *chipid  = (volatile uint32_t *)0x3d100000;
+        uint32_t saved = *pwrcon1;
+        uint32_t c0, c1, c2, c3;
+        *pwrcon1 = saved & ~0x4000u;            /* ungate CHIPID clock (bit14 -> 0) */
+        c0 = chipid[0]; c1 = chipid[1]; c2 = chipid[2]; c3 = chipid[3];
+        *pwrcon1 = saved;                        /* restore prior gate state */
+        logf_line("ChipID[0..c] (CHIPID clock ungated)= %08lx %08lx %08lx %08lx",
                   (unsigned long)c0, (unsigned long)c1,
                   (unsigned long)c2, (unsigned long)c3);
-        logf_line("002-fallback fuse: [0x3d100004] bit4=%lu => %s",
+        logf_line("  (ChipID[0]=0x%08lx must be NON-ZERO for a valid read)",
+                  (unsigned long)c0);
+        logf_line("prod fuse [0x3d100004] bit4=%lu => %s",
                   (unsigned long)((c1 >> 4) & 1),
-                  ((c1 >> 4) & 1) ? "CLOSED (fused, retail-normal)"
-                                  : "OPEN -> keyless 002 osos may boot (tell me!)");
+                  ((c1 >> 4) & 1) ? "SET/CLOSED (production; keyless fallback blocked)"
+                                  : "CLEAR/OPEN (keyless fallback reachable -- tell me!)");
     }
 
     logf_line("size=%ld hdr=%d enc_type=%lu bodylen=0x%lx aeslen=0x%lx",
