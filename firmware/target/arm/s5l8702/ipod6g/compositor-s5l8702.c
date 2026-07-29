@@ -301,6 +301,7 @@ void compositor_stop(void)
     ili_cmd(0x003); ili_data(0x0230);
     while (!(LCD_STATUS & 0x2));
 
+    lcd_set_inhibit(false);
     comp_active = false;
 }
 
