@@ -56,7 +56,6 @@
 #include "i2c-s5l8702.h"
 #include "gpio-s5l8702.h"
 #include "pmu-target.h"
-#include "dma-s5l8702.h"
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
 #include "norboot-target.h"
 #endif
@@ -306,101 +305,6 @@ static int kernel_launch_onb(void)
     enable_irq();
     return rc;
 }
-
-#if defined(IPOD_6G) || defined(IPOD_NANO3G)
-static inline uint32_t onb_get_uint32le(unsigned char *p)
-{
-    return p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24);
-}
-
-/* Dump ONB (Original NOR Boot) to files on the FAT32 partition.
- * Requires storage + filesystem to be initialized and disk mounted.
- * Writes:
- *   /onb_raw.bin       - raw IM3 image (header + encrypted body)
- *   /onb_decrypted.bin - decrypted ARM code (loads at IRAM0_ORIG)
- *   /onb_header.bin    - IM3 header only (0x800 bytes)
- * Returns 0 on success, negative on error.
- */
-static int dump_onb_to_disk(void)
-{
-    /* Read primary bootloader (RB) IM3 header to find ONB offset */
-    struct Im3Info hinfo;
-    int rc = im3_read(NORBOOT_OFF, &hinfo, NULL);
-    if (rc != 0) {
-        printf("Primary BL read error: %d", rc);
-        return -1;
-    }
-
-    unsigned bl_sz = im3_nor_sz(&hinfo);
-    unsigned onb_offset = NORBOOT_OFF + bl_sz;
-    printf("ONB at NOR offset 0x%x", onb_offset);
-
-    /* Read ONB IM3 header (just header, no body yet) */
-    rc = im3_read(onb_offset, &hinfo, NULL);
-    if (rc != 0) {
-        printf("ONB header read error: %d", rc);
-        return -2;
-    }
-
-    uint32_t onb_data_sz = onb_get_uint32le(hinfo.data_sz);
-    uint32_t onb_entry = onb_get_uint32le(hinfo.entry);
-    unsigned onb_total_raw = IM3HDR_SZ + onb_data_sz;
-    printf("ONB: data_sz=0x%x entry=0x%x enc=%d",
-            onb_data_sz, onb_entry, hinfo.enc_type);
-    lcd_update();
-
-    /* Use DRAM as buffer (well above bootloader/firmware usage) */
-    unsigned char *raw_buf = (unsigned char *)(DRAM_ORIG + 0x2000000);
-    unsigned char *dec_buf = (unsigned char *)(DRAM_ORIG + 0x2100000);
-
-    /* 1. Dump raw ONB (header + encrypted body) from NOR */
-    printf("Reading raw ONB from NOR...");
-    lcd_update();
-    bootflash_init(SPI_PORT);
-    bootflash_read(SPI_PORT, onb_offset, onb_total_raw, raw_buf);
-    bootflash_close(SPI_PORT);
-
-    int fd = open("/onb_raw.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    if (fd < 0) {
-        printf("Failed to create /onb_raw.bin");
-        return -3;
-    }
-    write(fd, raw_buf, onb_total_raw);
-    close(fd);
-    printf("Wrote /onb_raw.bin (%u bytes)", onb_total_raw);
-
-    /* 2. Dump decrypted ONB body via im3_read */
-    printf("Decrypting ONB...");
-    lcd_update();
-    rc = im3_read(onb_offset, &hinfo, dec_buf);
-    if (rc != 0) {
-        printf("ONB decrypt error: %d", rc);
-        return -4;
-    }
-
-    fd = open("/onb_decrypted.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    if (fd < 0) {
-        printf("Failed to create /onb_decrypted.bin");
-        return -5;
-    }
-    write(fd, dec_buf, onb_data_sz);
-    close(fd);
-    printf("Wrote /onb_decrypted.bin (%u bytes)", onb_data_sz);
-
-    /* 3. Dump the IM3 header separately for analysis */
-    fd = open("/onb_header.bin", O_WRONLY|O_CREAT|O_TRUNC, 0666);
-    if (fd < 0) {
-        printf("Failed to create /onb_header.bin");
-        return -6;
-    }
-    write(fd, raw_buf, IM3HDR_SZ);
-    close(fd);
-    printf("Wrote /onb_header.bin (%u bytes)", IM3HDR_SZ);
-
-    printf("ONB dump complete!");
-    return 0;
-}
-#endif /* IPOD_6G || IPOD_NANO3G */
 
 /*  The boot sequence is executed on power-on or reset. After power-up
  *  the device could come from a state of hibernation, OF hibernates
@@ -734,51 +638,6 @@ end:
         sleep(HZ/100);
 }
 
-static void menu_dump_onb(void)
-{
-    lcd_clear_display();
-    lcd_set_foreground(LCD_WHITE);
-    line = 0;
-
-    printf("=== Dump ONB to disk ===");
-
-    /* Dev bootloader skips storage init, do it here */
-    printf("Initializing storage...");
-    lcd_update();
-    int rc = storage_init();
-    if (rc != 0) {
-        lcd_set_foreground(LCD_REDORANGE);
-        printf("Storage init error: %d", rc);
-        goto end;
-    }
-
-    filesystem_init();
-    rc = disk_mount_all();
-    if (rc <= 0) {
-        lcd_set_foreground(LCD_REDORANGE);
-        printf("No partition found: %d", rc);
-        goto end;
-    }
-    printf("Disk mounted OK");
-
-    rc = dump_onb_to_disk();
-    if (rc == 0) {
-        lcd_set_foreground(LCD_GREEN);
-        piezo_seq(alive);
-    } else {
-        lcd_set_foreground(LCD_REDORANGE);
-        printf("Dump failed: %d", rc);
-    }
-
-end:
-    line++;
-    lcd_set_foreground(LCD_RBYELLOW);
-    printf("Press SELECT to continue");
-    lcd_update();
-    while (button_status() != BUTTON_SELECT)
-        sleep(HZ/100);
-}
-
 #ifdef HAVE_SERIAL
 
 #define FLASH_PAGES (FLASH_SIZE >> 12)
@@ -830,7 +689,6 @@ static void devel_menu(void)
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
         "Show SysCfg",
         "Show bootloader hash",
-        "Dump ONB to disk",
 #ifdef HAVE_SERIAL
         "Dump bootflash to UART",
 #endif
@@ -849,7 +707,6 @@ static void devel_menu(void)
 #if defined(IPOD_6G) || defined(IPOD_NANO3G)
         print_syscfg,
         print_bootloader_hash,
-        menu_dump_onb,
 #ifdef HAVE_SERIAL
         dump_bootflash,
 #endif
@@ -1110,154 +967,6 @@ void main(void)
         }
         fatal_error(ERR_RB);
     }
-
-#ifdef IPOD_6G
-    /* Dump ONB from NOR to disk (one-time, triggered by SELECT+LEFT) */
-    if (button_read_device() == (BUTTON_SELECT|BUTTON_LEFT)) {
-        printf("Dumping ONB...");
-        dump_onb_to_disk();
-    }
-
-    {
-        unsigned char *tmpbuf = (unsigned char *)(DRAM_ORIG + 0x2000000);
-        int fwrc = load_raw_firmware(tmpbuf, "/retailos.bin", 12*1024*1024);
-        if (fwrc > 0) {
-            printf("RetailOS: %d bytes", fwrc);
-
-            uint32_t new_chksum = 0;
-            for (int i = 0; i < fwrc; i++)
-                new_chksum += tmpbuf[i];
-
-            /* Find firmware partition by reading raw MBR.
-             * iPod Classic: firmware partition is the FIRST MBR entry
-             * with a non-zero start sector. It typically has type 0x00
-             * but some tools change it. We identify it as the non-FAT
-             * partition (not type 0x0B/0x0C). */
-            unsigned char mbr[512];
-            storage_read_sectors(0, 1, mbr);
-            unsigned long fw_sect = 0;
-            for (int p = 0; p < 4; p++) {
-                unsigned char *ent = mbr + 0x1BE + p * 16;
-                uint8_t ptype = ent[4];
-                uint32_t start, size;
-                memcpy(&start, ent + 8, 4);
-                memcpy(&size, ent + 12, 4);
-                printf("P%d: type=0x%02x start=%lu sz=%lu",
-                       p, ptype, (unsigned long)start, (unsigned long)size);
-                if (start > 0 && ptype != 0x0B && ptype != 0x0C
-                              && ptype != 0x06 && ptype != 0x07) {
-                    if (!fw_sect) fw_sect = start;
-                }
-            }
-            if (!fw_sect) {
-                printf("ERR: no firmware partition");
-                goto boot_rockbox;
-            }
-
-            /* Read firmware partition header */
-            unsigned char dirbuf[4096];
-            if (storage_read_sectors(fw_sect, 1, dirbuf) != 0) {
-                printf("ERR: header read failed");
-                goto boot_rockbox;
-            }
-            if (memcmp(dirbuf + 0x100, "]ih[", 4) != 0) {
-                printf("ERR: bad fw header (no ]ih[)");
-                goto boot_rockbox;
-            }
-            uint32_t dir_byte_off;
-            memcpy(&dir_byte_off, dirbuf + 0x104, 4);
-            dir_byte_off += 0x200;
-
-            /* Directory may not be sector-aligned */
-            unsigned int dir_align = dir_byte_off % 512;
-            unsigned long dir_sect = fw_sect + dir_byte_off / 512;
-            if (storage_read_sectors(dir_sect, 1, dirbuf) != 0) {
-                printf("ERR: dir read failed");
-                goto boot_rockbox;
-            }
-
-            /* Find osos entry (scan from alignment offset) */
-            int osos_off = -1;
-            for (int i = dir_align; i + 40 <= 512; i += 40) {
-                uint32_t id;
-                memcpy(&id, dirbuf + i + 4, 4);
-                if (id == 0x6F736F73) {
-                    osos_off = i;
-                    break;
-                }
-            }
-            if (osos_off < 0) {
-                printf("ERR: osos not found");
-                goto boot_rockbox;
-            }
-
-            uint32_t old_chksum, old_len, dev_off;
-            memcpy(&old_chksum, dirbuf + osos_off + 28, 4);
-            memcpy(&old_len, dirbuf + osos_off + 16, 4);
-            memcpy(&dev_off, dirbuf + osos_off + 12, 4);
-            unsigned long img_sect = fw_sect + 1 + dev_off / 512;
-
-            if (old_chksum != new_chksum) {
-                /* Backup original osos to FAT32 (one-time) */
-                int probe = open("/retailos_backup.bin", O_RDONLY);
-                if (probe < 0) {
-                    printf("Backing up original osos...");
-                    unsigned char *bkbuf = tmpbuf + 12*1024*1024;
-                    int bk_sect = (old_len + 511) / 512;
-                    if (storage_read_sectors(img_sect, bk_sect, bkbuf) == 0) {
-                        int fd = open("/retailos_backup.bin",
-                                      O_WRONLY|O_CREAT|O_TRUNC, 0666);
-                        if (fd >= 0) {
-                            write(fd, bkbuf, old_len);
-                            close(fd);
-                        }
-                    }
-                } else {
-                    close(probe);
-                }
-
-                printf("Writing patched osos...");
-                int nsect = (fwrc + 511) / 512;
-                int wrc = storage_write_sectors(img_sect, nsect, tmpbuf);
-                if (wrc != 0) {
-                    printf("ERR: write failed (%d)!", wrc);
-                    printf("Restoring backup...");
-                    /* Attempt restore from backup */
-                    int bfd = open("/retailos_backup.bin", O_RDONLY);
-                    if (bfd >= 0) {
-                        unsigned char *bkbuf = tmpbuf + 12*1024*1024;
-                        int bklen = filesize(bfd);
-                        read(bfd, bkbuf, bklen);
-                        close(bfd);
-                        storage_write_sectors(img_sect,
-                                              (bklen + 511) / 512, bkbuf);
-                    }
-                    goto boot_rockbox;
-                }
-
-                /* Update directory only after successful write */
-                uint32_t new_len = fwrc;
-                memcpy(dirbuf + osos_off + 16, &new_len, 4);
-                memcpy(dirbuf + osos_off + 28, &new_chksum, 4);
-                if (storage_write_sectors(dir_sect,
-                                          1, dirbuf) != 0) {
-                    printf("ERR: dir update failed!");
-                    goto boot_rockbox;
-                }
-                printf("Done.");
-            } else {
-                printf("osos up to date.");
-            }
-
-            /* Boot via ONB — full Apple boot chain */
-#if (CONFIG_STORAGE & STORAGE_ATA)
-            ata_sleepnow();
-#endif
-            kernel_launch_onb();
-        }
-    }
-boot_rockbox:
-#endif
 
     printf("Loading Rockbox...");
     unsigned char *loadbuffer = (unsigned char *)DRAM_ORIG;
