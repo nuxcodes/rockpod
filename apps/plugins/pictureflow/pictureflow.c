@@ -4136,8 +4136,42 @@ static void reverse_animation(void)
 static inline void draw_gradient(int y, int h)
 {
 #ifdef HAVE_LCD_COLOR
-    mylcd_set_foreground(pf_lss_color);
-    mylcd_fillrect(0, y, LCD_WIDTH, h);
+    /* Decorate the selected row the way the core list does, so the
+     * track list agrees with the menus for whatever "selector type" is
+     * set. See apps/gui/bitmap/list.c:408-434 -- a flat selector start
+     * colour is only correct for "bar (color)"; the default on colour
+     * targets is "bar (gradient)", and the two remaining modes use the
+     * foreground/background pair instead. PictureFlow's own menus go
+     * through rb->do_menu() and already honour the setting, so before
+     * this the track list disagreed with the menus in the same plugin.
+     */
+    struct line_desc linedes = LINE_DESC_DEFINIT;
+    linedes.height = h;
+
+    switch (rb->global_settings->cursor_style)
+    {
+        case SYNCLIST_CURSOR_COLOR:
+            linedes.style = STYLE_COLORBAR;
+            linedes.text_color = pf_lst_color;
+            linedes.line_color = pf_lss_color;
+            break;
+        case SYNCLIST_CURSOR_GRADIENT:
+            linedes.style = STYLE_GRADIENT;
+            linedes.text_color = pf_lst_color;
+            linedes.line_color = pf_lss_color;
+            linedes.line_end_color = pf_lse_color;
+            break;
+        default:
+            /* Pointer and bar (inverse). The track list has no icon
+             * column to put a cursor in and already drew a bar in
+             * pointer mode, so both render as the fg/bg inversion.
+             */
+            linedes.style = STYLE_INVERT;
+            mylcd_set_foreground(pf_fg_color);
+            mylcd_set_background(pf_bg_color);
+            break;
+    }
+    rb->screens[SCREEN_MAIN]->put_line(0, y, &linedes, "");
 #else
     int r, inc, c;
     inc = (100 << 8) / h;
@@ -4278,7 +4312,13 @@ static bool show_track_list(void)
             draw_gradient(titletxt_y, titletxt_h);
             titletxt_x = get_scroll_line_offset(PF_SCROLL_TRACK);
 #ifdef HAVE_LCD_COLOR
-            mylcd_set_foreground(pf_lst_color);
+            /* Match how put_text() colours a selected row: the two bar
+             * modes name the text colour outright, the inverting modes
+             * get it by drawing through the fill. */
+            if (rb->global_settings->cursor_style > SYNCLIST_CURSOR_INVERT)
+                mylcd_set_foreground(pf_lst_color);
+            else
+                mylcd_set_drawmode(DRMODE_SOLID|DRMODE_INVERSEVID);
 #else
             mylcd_set_foreground(G_BRIGHT(255));
 #endif
@@ -4295,6 +4335,9 @@ static bool show_track_list(void)
 #endif
         }
         mylcd_putsxy(titletxt_x,titletxt_y,trackname);
+#ifdef HAVE_LCD_COLOR
+        mylcd_set_drawmode(DRMODE_SOLID);
+#endif
         titletxt_y += titletxt_h;
     }
 
