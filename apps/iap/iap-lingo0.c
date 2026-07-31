@@ -471,15 +471,26 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x0F:
         {
-            unsigned char lingo = buf[2];
+            /* Under IDPS a 2-byte transaction ID sits between the
+             * command and the payload, so the lingo being asked about
+             * is at buf[4], not buf[2]. Reading buf[2] returned the
+             * transaction ID's high byte -- zero for the first 255
+             * commands of a session -- so every query was answered as
+             * though it had asked about the General lingo, and an
+             * accessory could never discover any other lingo's version.
+             */
+            unsigned int off = l0_has_tid ? 4 : 2;
+            unsigned char lingo;
 
-            CHECKLEN(3);
+            CHECKLEN(off + 1);
+            lingo = buf[off];
 
             /* Supported lingos and versions are read from the lingo_versions
              * array
              */
             if (LINGO_SUPPORTED(lingo)) {
                 IAP_TX_INIT(0x00, 0x10);
+                L0_TX_TRANSID();
                 IAP_TX_PUT(lingo);
                 IAP_TX_PUT(LINGO_MAJOR(lingo));
                 IAP_TX_PUT(LINGO_MINOR(lingo));
@@ -900,7 +911,13 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             iap_send_tx();
             device.auth.state = AUST_AUTH;
-            if (device.accinfo == ACCST_NONE)
+            /* GetAccessoryInfo (0x27) is for accessories that
+             * identified with IdentifyDeviceLingoes: MFi Table 2-8
+             * marks steps 4 and 5 "non-IDPS only", and 3.3.32 scopes
+             * the command to those accessories. An IDPS accessory has
+             * already supplied all of it in AccessoryInfoToken.
+             */
+            if (!device.auth.idps && device.accinfo == ACCST_NONE)
                 device.accinfo = ACCST_INIT;
 
             /* After auth, initiate digital audio via periodic handler.
@@ -1085,16 +1102,25 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
          */
         case 0x28:
         {
-            CHECKLEN(3);
+            /* The Accessory Info Type is payload offset 0, which under
+             * IDPS follows the 2-byte transaction ID. Reading buf[2]
+             * picked up that ID's high byte instead, so the type-0
+             * branch was always taken and device.capabilities was
+             * filled with transID and type bytes -- after which the
+             * capability sweep stalled and the idle tick never slowed.
+             */
+            unsigned int off = device.auth.idps ? 2 : 0;
 
-            switch (buf[0x02])
+            CHECKLEN(3 + off);
+
+            switch (buf[0x02 + off])
             {
                 /* Info capabilities */
                 case 0x00:
                 {
-                    CHECKLEN(7);
+                    CHECKLEN(7 + off);
 
-                    device.capabilities = get_u32(&buf[0x03]);
+                    device.capabilities = get_u32(&buf[0x03 + off]);
                     /* Type 0x00 was already queried, that's where this 
 		     * information comes from 
 		     */
@@ -1363,11 +1389,32 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
                         device.idps_deviceid = get_u32(&buf[did_off]);
                 }
 
-                /* ACK entry: [length][type][subtype][status] */
-                IAP_TX_PUT(0x03); /* length: type+subtype+status */
-                IAP_TX_PUT(fid_type);
-                IAP_TX_PUT(fid_subtype);
-                IAP_TX_PUT(0x00); /* status: accepted */
+                /* ACK entry. Most tokens use [0x03][type][subtype]
+                 * [status], but AccessoryInfoToken, iPodPreferenceToken
+                 * and EAProtocolToken use a five-byte form that echoes
+                 * accInfoType / iPodPrefClass / protocolIndex -- each of
+                 * which sits in the byte right after FIDSubtype.
+                 * Without the echo an accessory cannot tell which of
+                 * several AccessoryInfoTokens was accepted.
+                 */
+                if (fid_type == 0x00 &&
+                    (fid_subtype == 0x02 || fid_subtype == 0x03 ||
+                     fid_subtype == 0x04) &&
+                    fid_len >= 3)
+                {
+                    IAP_TX_PUT(0x04);
+                    IAP_TX_PUT(fid_type);
+                    IAP_TX_PUT(fid_subtype);
+                    IAP_TX_PUT(0x00); /* status: accepted */
+                    IAP_TX_PUT(buf[offset + 3]); /* echo field */
+                }
+                else
+                {
+                    IAP_TX_PUT(0x03); /* length: type+subtype+status */
+                    IAP_TX_PUT(fid_type);
+                    IAP_TX_PUT(fid_subtype);
+                    IAP_TX_PUT(0x00); /* status: accepted */
+                }
 
                 /* skip: length_byte(1) + payload(fid_len) */
                 offset += 1 + fid_len;

@@ -25,7 +25,13 @@
 /* This is just the payload size, without sync, length and checksum */
 #define RX_BUFLEN (64*1024)
 /* This is the entire frame length, sync, length, payload and checksum */
-#define TX_BUFLEN 128
+/* Sized so an AckFIDTokenValues (0x3A) can never overflow. That ack is
+ * never larger than the SetFIDTokenValues that provoked it, and that
+ * packet is capped by RequestTransportMaxPayloadSize -- 255 as we
+ * answer it, or the MFi 3.3.14 fallback default of 506. At 128 a
+ * conformant accessory declaring all nine accessory-info types and all
+ * twelve preference classes overflowed and panicked the player. */
+#define TX_BUFLEN 512
 
 #ifdef HAVE_IAP_MULTIPORT
 #define IF_IAP_MP(x...) x
