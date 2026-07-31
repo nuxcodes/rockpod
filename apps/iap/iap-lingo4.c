@@ -1433,35 +1433,28 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             uint32_t trackcount;
             trackcount = playlist_amount();
 
-            /* Clamp read_count for tracks: -1 means "all records" */
-            if (buf[3] == 0x05) {
+            /* Clamp read_count to the records actually available.
+             * A count of -1 means "all records" and is covered by the
+             * same test. Compare by subtraction rather than adding to
+             * start_index, which would wrap for counts close to 2^32
+             * and let an oversized count through.
+             */
+            if (buf[3] == 0x05 ||
+                (buf[3] >= 0x02 && buf[3] <= 0x06)) {
                 if (start_index >= trackcount) {
                     cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                     break;
                 }
-                if (read_count == 0xFFFFFFFF ||
-                    (start_index + read_count) > trackcount)
+                if (read_count > trackcount - start_index)
                     read_count = trackcount - start_index;
             }
-            /* Clamp read_count for playlists: -1 means "all records" */
             if (buf[3] == 0x01) {
                 if (start_index >= (number_of_playlists + 1)) {
                     cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                     break;
                 }
-                if (read_count == 0xFFFFFFFF ||
-                    (start_index + read_count) > (number_of_playlists + 1))
+                if (read_count > (number_of_playlists + 1) - start_index)
                     read_count = (number_of_playlists + 1) - start_index;
-            }
-            /* Clamp read_count for other categories that resolve to tracks */
-            if (buf[3] >= 0x02 && buf[3] <= 0x06 && buf[3] != 0x05) {
-                if (start_index >= trackcount) {
-                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
-                    break;
-                }
-                if (read_count == 0xFFFFFFFF ||
-                    (start_index + read_count) > trackcount)
-                    read_count = trackcount - start_index;
             }
             for (counter=0;counter<read_count;counter++)
             {

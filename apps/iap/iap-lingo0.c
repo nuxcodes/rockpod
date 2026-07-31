@@ -1191,8 +1191,19 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
             unsigned char mode = buf[2 + off];
             unsigned char status;
             if (mode == 0x01) {
-                iap_interface_state_change(IST_EXTENDED);
-                status = IAP_ACK_OK;
+                /* "Extended Interface mode is available only if the
+                 * accessory identifies itself successfully for the
+                 * Extended Interface lingo (Lingo 0x04)" (MFi spec
+                 * 3.3.39). Refusing with Bad Parameter is also what
+                 * lets an accessory fall back to the deprecated
+                 * EnterExtendedInterfaceMode.
+                 */
+                if (!DEVICE_LINGO_SUPPORTED(0x04)) {
+                    status = IAP_ACK_BAD_PARAM;
+                } else {
+                    iap_interface_state_change(IST_EXTENDED);
+                    status = IAP_ACK_OK;
+                }
             } else if (mode == 0x00) {
                 iap_interface_state_change(IST_STANDARD);
                 status = IAP_ACK_OK;
@@ -1461,12 +1472,19 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
         /* SetEventNotification (0x49)
          *
-         * Accessory requests event notifications from the iPod.
-         * ACK OK for now; no events are actually generated.
+         * Accessory registers for asynchronous event notifications.
+         * Payload is a 64-bit big-endian notification bitmask (MFi
+         * spec Table 3-111). "The Apple device acknowledges this
+         * command with a General Lingo iPodAck command reporting
+         * Status OK (0x00)" (spec 3.3.53), so ACK OK; we do not
+         * generate any of the notifications yet.
+         *
+         * No CHECKAUTH: per MFi spec Table 2-7 the General lingo
+         * range 0x46-0x4C requires no authentication on UART.
          */
         case 0x49:
         {
-            CHECKAUTH;
+            CHECKLEN(2 + (device.auth.idps ? 2 : 0) + 8);
             IAP_TX_INIT(0x00, 0x02);
             if (device.auth.idps) {
                 IAP_TX_PUT(buf[2]);

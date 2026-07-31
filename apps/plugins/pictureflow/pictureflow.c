@@ -4278,7 +4278,7 @@ static bool show_track_list(void)
             draw_gradient(titletxt_y, titletxt_h);
             titletxt_x = get_scroll_line_offset(PF_SCROLL_TRACK);
 #ifdef HAVE_LCD_COLOR
-            mylcd_set_foreground(pf_fg_color);
+            mylcd_set_foreground(pf_lst_color);
 #else
             mylcd_set_foreground(G_BRIGHT(255));
 #endif
