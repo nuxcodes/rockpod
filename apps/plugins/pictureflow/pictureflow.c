@@ -4702,9 +4702,13 @@ static void draw_album_text(void)
             break;
         case ALBUM_NAME_BOTTOM:
         case ALBUM_AND_ARTIST_BOTTOM:
+            /* Two full lines plus a line of bottom margin. The old
+             * 9/4 and 5/2 factors assumed the artist sat only 3/4 of a
+             * line below the album, which left the pair almost flush
+             * with the bottom edge once that gap was widened below. */
             albumtxt_y = pf_cfg.show_statusbar
-                ? (pf_height - (char_height * 9 / 4))
-                : (pf_height - (char_height * 5 / 2));
+                ? (pf_height - (char_height * 3))
+                : (pf_height - (char_height * 13 / 4));
             break;
         case ALBUM_NAME_TOP:
         default:
@@ -4727,7 +4731,11 @@ static void draw_album_text(void)
         if (album_changed)
             set_scroll_line(artisttxt, PF_SCROLL_ARTIST);
         artisttxt_x = get_scroll_line_offset(PF_SCROLL_ARTIST);
-        int y_offset = char_height * 3 / 4;
+        /* A full line, not 3/4 of one. The album name occupies the
+         * whole char_height box -- ascent plus descent -- so a 3/4
+         * offset drew the artist's capitals straight through the
+         * descenders of anything like "Daydream" or "Legend". */
+        int y_offset = char_height;
         mylcd_putsxy(artisttxt_x, albumtxt_y + y_offset, artisttxt);
     } else {
         mylcd_putsxy(albumtxt_x, albumtxt_y, album_and_year);
