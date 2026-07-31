@@ -765,6 +765,15 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 
                     CHECKLEN(7 + doff);
                     index = get_u32(&buf[0x03 + doff]);
+                    /* Same guard as SetCurrentPlayingTrack below:
+                     * audio_skip() walks an out-of-range offset back one
+                     * track at a time holding id3_mutex, so a wild index
+                     * hangs the device instead of being rejected. */
+                    if (index >= (uint32_t)playlist_amount())
+                    {
+                        cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                        break;
+                    }
                     audio_skip(index-iap_get_trackindex());
 
                     cmd_ok(cmd);

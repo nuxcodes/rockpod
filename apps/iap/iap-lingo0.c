@@ -689,7 +689,7 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             /* In IDPS mode, a 2-byte transID precedes the auth data.
              * All responses must echo it. */
-            int off = 2;
+            unsigned int off = 2;
             uint8_t tid_hi = 0, tid_lo = 0;
             if (device.auth.idps) {
                 off = 4;
@@ -704,7 +704,13 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
 
             /* We only support authentication versions 1.0 and 2.0 */
             if ((device.auth.version != 0x100) && (device.auth.version != 0x200)) {
+                /* iap_reset_auth() clears auth.idps, but the reply below
+                 * still has to carry the transaction ID, and the session
+                 * is still an IDPS one -- dropping the flag here would
+                 * shift every later packet's payload by two bytes. */
+                bool was_idps = device.auth.idps;
                 iap_reset_auth(&(device.auth));
+                device.auth.idps = was_idps;
 
                 IAP_TX_INIT(0x00, 0x16);
                 if (device.auth.idps) {
