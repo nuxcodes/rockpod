@@ -3451,6 +3451,14 @@ static int  pf_anim_frac;
 static void start_animation(void)
 {
     step = (target < center_slide.slide_index) ? -1 : 1;
+    /* While idle slide_frame sits exactly on a slide boundary. For
+     * step < 0 the centre is derived as (slide_frame >> 16) + 1, so
+     * index<<16 already belongs to the slide above it -- the counter
+     * has to start one unit inside the interval that maps to the
+     * current centre, or the first evaluation snaps the centre to the
+     * slide on the right. */
+    if (step < 0)
+        slide_frame = (center_index << 16) - 1;
     pf_state = pf_scrolling;
     pf_anim_last_tick = *rb->current_tick;
     pf_anim_frac = 0;
@@ -3657,16 +3665,23 @@ static void update_scroll_animation(void)
         adv = num / HZ;
         pf_anim_frac = num - adv * HZ;
 
-        /* Two frames can land inside the same tick, giving no advance
-         * at all. Nothing has moved, so there is nothing to recompute
-         * -- and falling through would be actively wrong when scrolling
-         * left: slide_frame is still exactly on a boundary, so
-         * slide_frame >> 16 yields the current index, the step < 0
-         * branch below increments it, and the centre snaps to the slide
-         * on the right for one frame before the next advance drags it
-         * back. */
-        if (adv == 0)
-            return;
+        /* dt is clamped but adv is not. speed reaches 133120 and the
+         * clamp is 20 ticks, so one call can advance 798720 -- over
+         * twelve slides -- while target is never more than two away. A
+         * long frame would sail past it, the direction test at the end
+         * of this function would throw the flip into reverse, and
+         * center_index would meanwhile index pf_idx.album_index[] out
+         * of bounds in draw_album_text(), which does not range-check.
+         * Never advance beyond the target; for step < 0 stop one unit
+         * short so that (slide_frame >> 16) + 1 == target. */
+        {
+            int remain = (step < 0) ? slide_frame - (target << 16) + 1
+                                    : (target << 16) - slide_frame;
+            if (remain < 0)
+                remain = 0;
+            if (adv > remain)
+                adv = remain;
+        }
 
         slide_frame += adv * step;
     }
@@ -3685,11 +3700,13 @@ static void update_scroll_animation(void)
     if (center_index != index) {
         center_index = index;
         rb->queue_post(&thread_q, EV_WAKEUP, 0);
-        slide_frame = index << 16;
+        /* Same one-unit offset as in start_animation(): index<<16 is
+         * the top of the step < 0 interval, not the bottom. */
+        slide_frame = (index << 16) - (step < 0 ? 1 : 0);
         /* Recalculate pos/tick/ftick/fade for the snapped slide_frame.
          * Without this, stale pre-snap values cause a one-frame alpha
          * discontinuity (flash) at boundary crossings. */
-        pos = (step < 0) ? 65535 : 0;
+        pos = slide_frame & 0xffff;
         neg = 65536 - pos;
         tick = (step < 0) ? neg : pos;
         ftick = (tick * PFREAL_ONE) >> 16;
