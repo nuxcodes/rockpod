@@ -4336,7 +4336,11 @@ static bool show_track_list(void)
         }
         mylcd_putsxy(titletxt_x,titletxt_y,trackname);
 #ifdef HAVE_LCD_COLOR
-        mylcd_set_drawmode(DRMODE_SOLID);
+        /* Back to foreground-only. DRMODE_SOLID is BG|FG, which paints
+         * an opaque box behind every subsequent string -- including the
+         * album and artist drawn over the covers once the track list
+         * closes. Everything else in this plugin uses DRMODE_FG. */
+        mylcd_set_drawmode(DRMODE_FG);
 #endif
         titletxt_y += titletxt_h;
     }
