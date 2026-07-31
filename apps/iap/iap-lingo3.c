@@ -34,6 +34,7 @@
 #include "iap-lingo.h"
 #include "system.h"
 #include "audio.h"
+#include "sound.h"
 #include "powermgmt.h"
 #include "settings.h"
 #include "metadata.h"
@@ -832,7 +833,20 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 #endif
                     if (buf[0x03 + doff]==0x00){
                         /* Not Muted */
-                        global_status.volume = (int) (buf[0x04 + doff]/2.65625)-90;
+                        {
+                            int vol = (int) (buf[0x04 + doff]/2.65625)-90;
+                            /* The byte maps onto -90..+6 dB but the
+                             * codec only accepts sound_min..sound_max.
+                             * This is written straight to global_status
+                             * and re-applied on every cold start, so an
+                             * out-of-range value is a silent, permanent
+                             * mute that survives a reboot. */
+                            if (vol < sound_min(SOUND_VOLUME))
+                                vol = sound_min(SOUND_VOLUME);
+                            else if (vol > sound_max(SOUND_VOLUME))
+                                vol = sound_max(SOUND_VOLUME);
+                            global_status.volume = vol;
+                        }
                         device.mute = false;
                     }
                     else {
@@ -1013,7 +1027,20 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 #endif
                     if (buf[0x03 + doff]==0x00){
                         /* Not Muted */
-                        global_status.volume = (int) (buf[0x04 + doff]/2.65625)-90;
+                        {
+                            int vol = (int) (buf[0x04 + doff]/2.65625)-90;
+                            /* The byte maps onto -90..+6 dB but the
+                             * codec only accepts sound_min..sound_max.
+                             * This is written straight to global_status
+                             * and re-applied on every cold start, so an
+                             * out-of-range value is a silent, permanent
+                             * mute that survives a reboot. */
+                            if (vol < sound_min(SOUND_VOLUME))
+                                vol = sound_min(SOUND_VOLUME);
+                            else if (vol > sound_max(SOUND_VOLUME))
+                                vol = sound_max(SOUND_VOLUME);
+                            global_status.volume = vol;
+                        }
                         device.mute = false;
                     }
                     else {
@@ -1358,6 +1385,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
             IAP_TX_PUT_U32(playlist_amount());
 
             iap_send_tx();
+            break;
         }
 
         /* RetNumPlayingTracks (0x15)
