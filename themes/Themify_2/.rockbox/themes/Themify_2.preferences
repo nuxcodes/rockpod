@@ -21,7 +21,7 @@ sub-line mode: artist
 
 # ! Rating requires "Gather Runtime Data" to be enabled in Database Settings.
 # Possible Values: artist, album, genre, playlist_name, song_playtime, bitrate,  file_format, rating, year, off
-extra sub-line mode: off
+extra sub-line mode: album
 
 #-- Minimal Mode --#
 # Just the bare minimum. This turns off the playlist position counter as well as the shuffle, repeat and HQ audio icons.

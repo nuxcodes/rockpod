@@ -104,6 +104,12 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
         case 0x00:
         {
             unsigned long btn = BUTTON_NONE;
+            /* True while the accessory still reports any button down,
+             * including ones that map to no BUTTON_* code. */
+            bool any_bits = (buf[2] != 0)
+                         || (len >= 4 && buf[3] != 0)
+                         || (len >= 5 && buf[4] != 0)
+                         || (len >= 6 && buf[5] != 0);
 
             if(buf[2] != 0)
             {
@@ -227,8 +233,30 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
             }
             else
             {
+                /* Arm the delivery delay on the release edge too. Without
+                 * it, a release and the next press can be drained back to
+                 * back -- the drain loop no longer paces packets the way
+                 * the old always-arm behaviour incidentally did -- so the
+                 * 100Hz tick never observes BUTTON_NONE, no BUTTON_REL is
+                 * posted, and two taps merge into a held press that turns
+                 * into a seek at 300ms. A release is one-shot, unlike the
+                 * 30-100ms repeat of a held button, so this cannot bring
+                 * back the ghost-click stall.
+                 */
+                if (iap_remotebtn != BUTTON_NONE)
+                    iap_repeatbtn = 2;
                 iap_remotebtn = BUTTON_NONE;
-                iap_timeoutbtn = 0;
+                /* Shuffle and Repeat set iap_btnshuffle/iap_btnrepeat
+                 * but map to no button, so btn stays NONE here. Zeroing
+                 * the timeout unconditionally let iap_periodic() clear
+                 * those debounce flags within 100ms, and the accessory's
+                 * spec-mandated 30-100ms repeat then re-toggled shuffle
+                 * -- calling settings_save(), and so writing to storage,
+                 * around ten times a second for as long as the button
+                 * was held. Keep the timeout alive while anything is
+                 * still down.
+                 */
+                iap_timeoutbtn = any_bits ? 3 : 0;
             }
 
             /* power on released */
@@ -355,7 +383,11 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
              * So just route it through the handler again, with 0x00 as the
              * command
              */
-            memcpy(repeatbuf, buf, 6);
+            /* Bytes 1-3 of the button status are optional (MFi Table
+             * 4-18), so a conformant accessory may send fewer than 6
+             * bytes -- copy only what arrived.
+             */
+            memcpy(repeatbuf, buf, (len < 6) ? len : 6);
             repeatbuf[1] = 0x00;
             iap_handlepkt_mode2((len<6)?len:6, repeatbuf);
 

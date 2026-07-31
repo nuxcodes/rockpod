@@ -1521,7 +1521,19 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                         break;
                 }
                 put_u32(&data[3], start_index+counter);
-                iap_send_pkt(data, 7 + strlen(data+7) + 1);
+                {
+                    /* get_playlist_name() may fill this up to MAX_PATH,
+                     * but the packet has to fit TX_BUFLEN or
+                     * iap_send_tx() panics. Truncate the name instead.
+                     */
+                    size_t nlen = strlen((char *)data + 7);
+                    if (nlen > 63)
+                    {
+                        nlen = 63;
+                        data[7 + nlen] = '\0';
+                    }
+                    iap_send_pkt(data, 7 + nlen + 1);
+                }
                 yield();
             }
             break;
