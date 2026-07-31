@@ -732,8 +732,12 @@ bool iap_getc(IF_IAP_MP(int port,) const unsigned char x)
             /* large packet */
             s->state = ST_LENH;
         } else {
-            /* small packet */
-            if (x > (iap_rxlen-2))
+            /* small packet.
+             * Compare by addition: iap_rxlen is uint32_t, so the old
+             * (iap_rxlen-2) wrapped to ~4G once the buffer filled to
+             * within one byte, and then accepted every frame.
+             */
+            if ((uint32_t)x + 2 > iap_rxlen)
             {
                 /* Packet too long for buffer */
                 s->state = ST_SYNC;
@@ -753,7 +757,7 @@ bool iap_getc(IF_IAP_MP(int port,) const unsigned char x)
     case ST_LENL:
         s->check += x;
         s->len += x;
-        if ((s->len == 0) || (s->len > (iap_rxlen-2))) {
+        if ((s->len == 0) || ((uint32_t)s->len + 2 > iap_rxlen)) {
             /* invalid length */
             s->state = ST_SYNC;
             break;
@@ -1496,7 +1500,7 @@ void iap_handlepkt(void)
             level = disable_irq_save();
             iap_rxnext = iap_rxstart;
             iap_rxpayload = iap_rxstart;
-            iap_rxlen = RX_BUFLEN;
+            iap_rxlen = RX_BUFLEN+2;
             restore_irq(level);
             return;
         }
@@ -1526,8 +1530,26 @@ void iap_handlepkt(void)
          */
         level = disable_irq_save();
         {
-            size_t remaining = (iap_rxnext - iap_rxstart) - (length + 2);
-            memmove(iap_rxstart, iap_rxstart + (length + 2), remaining);
+            ptrdiff_t remaining =
+                (iap_rxnext - iap_rxstart) - (ptrdiff_t)(length + 2);
+            if (remaining < 0)
+            {
+                /* iap_reset_buffers() ran while a handler above was
+                 * yielding -- iap_malloc() is called from the USB
+                 * thread on HID transport activation and only guards
+                 * on iap_running, so it can rewind these pointers
+                 * under us. The bytes still buffered belong to the new
+                 * session, so drop them rather than hand memmove a
+                 * negative length, which as size_t is a ~4GB copy.
+                 */
+                iap_rxnext = iap_rxstart;
+                iap_rxpayload = iap_rxstart;
+                iap_rxlen = RX_BUFLEN+2;
+                restore_irq(level);
+                return;
+            }
+            memmove(iap_rxstart, iap_rxstart + (length + 2),
+                    (size_t)remaining);
         }
         iap_rxnext -= (length+2);
         iap_rxpayload -= (length+2);
