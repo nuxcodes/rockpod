@@ -4701,6 +4701,11 @@ static void draw_album_text(void)
             albumtxt_y = 0;
             break;
         case ALBUM_NAME_BOTTOM:
+            /* Single line: keep the original offsets. */
+            albumtxt_y = pf_cfg.show_statusbar
+                ? (pf_height - (char_height * 9 / 4))
+                : (pf_height - (char_height * 5 / 2));
+            break;
         case ALBUM_AND_ARTIST_BOTTOM:
             /* Two full lines plus a line of bottom margin. The old
              * 9/4 and 5/2 factors assumed the artist sat only 3/4 of a
