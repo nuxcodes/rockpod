@@ -123,13 +123,12 @@ void list_init_item_height(struct gui_synclist *list, enum screen_type screen)
     struct viewport *vp = list->parent[screen];
     int line_height = font_get(vp->font)->height;
 #ifdef HAVE_TOUCHSCREEN
+    /* the 4/12 factor is designed for reasonable item size on a 160dpi screen */
     if (global_settings.list_line_padding == -1)
         line_height = MAX(lcd_get_dpi()*4/12, line_height);
     else
         line_height = line_height + global_settings.list_line_padding;
 #endif
-    if (list->callback_draw_margin && list->line_height[screen] > line_height)
-        return;
     list->line_height[screen] = line_height;
 }
 
