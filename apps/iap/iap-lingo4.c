@@ -1439,15 +1439,6 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * start_index, which would wrap for counts close to 2^32
              * and let an oversized count through.
              */
-            if (buf[3] == 0x05 ||
-                (buf[3] >= 0x02 && buf[3] <= 0x06)) {
-                if (start_index >= trackcount) {
-                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
-                    break;
-                }
-                if (read_count > trackcount - start_index)
-                    read_count = trackcount - start_index;
-            }
             if (buf[3] == 0x01) {
                 if (start_index >= (number_of_playlists + 1)) {
                     cmd_ack(cmd, IAP_ACK_BAD_PARAM);
@@ -1455,6 +1446,26 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 }
                 if (read_count > (number_of_playlists + 1) - start_index)
                     read_count = (number_of_playlists + 1) - start_index;
+            }
+            else if (buf[3] >= 0x02 && buf[3] <= 0x06) {
+                if (start_index >= trackcount) {
+                    cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    break;
+                }
+                if (read_count > trackcount - start_index)
+                    read_count = trackcount - start_index;
+            }
+            else {
+                /* Categories we do not implement. Without this the
+                 * count is left as received, and the spec's own way of
+                 * asking for everything -- count = -1 (Table 5-30) --
+                 * spins the loop below 4.3 billion times re-sending an
+                 * unchanged buffer, wedging the iAP thread for the rest
+                 * of the session. Refuse with the status the spec
+                 * defines for exactly this (Table 5-2, 0x01).
+                 */
+                cmd_ack(cmd, IAP_ACK_UNKNOWN_DB);
+                break;
             }
             for (counter=0;counter<read_count;counter++)
             {
@@ -1831,19 +1842,29 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             /* Return the requested track data */
             switch(cmd)
             {
+                /* strlcpy() returns strlen(src), not the number of
+                 * bytes copied, so a tag longer than the 64-byte limit
+                 * would send more than was written -- past the end of
+                 * data[70] for anything over 66 characters, and past
+                 * TX_BUFLEN into panicf() beyond ~124. Clamp to what
+                 * actually landed: at most 63 characters plus the NUL.
+                 */
                 case 0x20:
                     len = strlcpy((char *)&data[3],
                                   id3.title ? id3.title : "", 64);
+                    if (len > 63) len = 63;
                     iap_send_pkt(data, 4+len);
                     break;
                 case 0x22:
                     len = strlcpy((char *)&data[3],
                                   id3.artist ? id3.artist : "", 64);
+                    if (len > 63) len = 63;
                     iap_send_pkt(data, 4+len);
                     break;
                 case 0x24:
                     len = strlcpy((char *)&data[3],
                                   id3.album ? id3.album : "", 64);
+                    if (len > 63) len = 63;
                     iap_send_pkt(data, 4+len);
                     break;
             }
