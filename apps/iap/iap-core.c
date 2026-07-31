@@ -327,6 +327,15 @@ void iap_reset_auth(struct auth_t* auth)
     auth->state = AUST_NONE;
     auth->max_section = 0;
     auth->next_section = 0;
+    /* Transaction IDs are a property of the session, not of the iPod.
+     * Left set, this leaks into every later accessory: notifications
+     * stay disabled (iap_periodic()), and a legacy Display Remote's
+     * 2-byte packets are rejected forever because lingo 3 keeps
+     * expecting a transID that is not there. EndIDPS re-asserts it
+     * straight after calling iap_reset_device(), so clearing it here
+     * does not disturb the IDPS path itself.
+     */
+    auth->idps = false;
 }
 
 void iap_reset_state(IF_IAP_MP_NONVOID(int port))
