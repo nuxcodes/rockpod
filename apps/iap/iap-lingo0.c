@@ -47,10 +47,30 @@
             return; \
         }} while(0)
 
+/* Transaction ID of the command currently being handled, captured at
+ * the top of iap_handlepkt_mode0(). An iPodAck must echo it: MFi spec
+ * 2.6.1.2 says "Support for transaction IDs must be disabled upon
+ * receipt of a General lingo iPodAck command without a transaction ID.
+ * Such commands have a payload length value (byte 2) of either 0x04 or
+ * 0x08" -- which is exactly what these two helpers used to emit. One
+ * such ack, from any CHECKAUTH, CHECKLEN or unimplemented command, made
+ * the accessory stop sending transaction IDs while device.auth.idps
+ * stayed set, after which every packet was parsed two bytes off.
+ */
+static bool l0_has_tid;
+static uint8_t l0_tid_hi, l0_tid_lo;
+
+#define L0_TX_TRANSID() do { \
+        if (l0_has_tid) { \
+            IAP_TX_PUT(l0_tid_hi); \
+            IAP_TX_PUT(l0_tid_lo); \
+        }} while(0)
+
 static void cmd_ack(const unsigned char cmd, const unsigned char status)
 {
     if (cmd  != 0){
         IAP_TX_INIT(0x00, 0x02);
+        L0_TX_TRANSID();
         IAP_TX_PUT(status);
         IAP_TX_PUT(cmd);
 
@@ -63,6 +83,7 @@ static void cmd_ack(const unsigned char cmd, const unsigned char status)
 static void cmd_pending(const unsigned char cmd, const uint32_t msdelay)
 {
     IAP_TX_INIT(0x00, 0x02);
+    L0_TX_TRANSID();
     IAP_TX_PUT(0x06);
     IAP_TX_PUT(cmd);
     IAP_TX_PUT_U32(msdelay);
@@ -78,6 +99,23 @@ void iap_handlepkt_mode0(const unsigned int len, const unsigned char *buf)
      * lingo, one for the command
      */
     CHECKLEN(2);
+
+    /* Capture the transaction ID so every reply, including the acks
+     * emitted by CHECKAUTH/CHECKLEN and by unimplemented commands, can
+     * echo it. RequestIdentify (0x00), Identify (0x01) and
+     * IdentifyDeviceLingoes (0x13) are the three commands the spec
+     * exempts (2.6.1.4), so they never carry one.
+     */
+    l0_has_tid = false;
+    l0_tid_hi = 0;
+    l0_tid_lo = 0;
+    if (device.auth.idps && len >= 4
+        && cmd != 0x00 && cmd != 0x01 && cmd != 0x13)
+    {
+        l0_has_tid = true;
+        l0_tid_hi = buf[2];
+        l0_tid_lo = buf[3];
+    }
 
     switch (cmd) {
         /* RequestIdentify (0x00)
