@@ -153,7 +153,7 @@
 #
 #--- Menu Engine ---# $ME
 #
-%Vi(-,3,28,302,-,7)
+%Vi(-,3,28,302,-,-)
 %Vi(Default_Menu_Supression,-100,0,30,30,7)
 %Vi(USB_Screen_Supression,-1,-1,1,1,7)
 # No Scrollbar
