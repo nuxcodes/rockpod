@@ -3440,10 +3440,20 @@ static bool sort_albums(int new_sorting, bool from_settings)
 /**
   Start the animation for changing slides
  */
+/* The flip advances by elapsed time, not by frame count. speed is
+ * calibrated per frame at this nominal rate; anything slower simply
+ * takes bigger steps rather than taking longer. */
+#define PF_NOMINAL_FPS 30
+
+static long pf_anim_last_tick;
+static int  pf_anim_frac;
+
 static void start_animation(void)
 {
     step = (target < center_slide.slide_index) ? -1 : 1;
     pf_state = pf_scrolling;
+    pf_anim_last_tick = *rb->current_tick;
+    pf_anim_frac = 0;
 }
 
 static void update_scroll_animation(void);
@@ -3620,7 +3630,34 @@ static void update_scroll_animation(void)
               + accel * pf_cfg.scroll_speed / 100;
     }
 
-    slide_frame += speed * step;
+    /* Advance by wall-clock, not per call. render_all_slides() cost
+     * varies with the settings -- turning parallel slides off widens
+     * the side slides and adds roughly a fifth to the pixel work -- and
+     * with a per-frame advance that showed up twice: fewer frames per
+     * second, and a flip that took proportionally longer because it
+     * still needed the same number of frames. Only the frame rate
+     * should move.
+     *
+     * The remainder is carried because HZ is 100, so a ~30ms frame is
+     * about three ticks and truncating each one would make the step
+     * size jitter by a third.
+     */
+    {
+        long now = *rb->current_tick;
+        int dt = now - pf_anim_last_tick;
+        int num, adv;
+
+        pf_anim_last_tick = now;
+        if (dt < 0)
+            dt = 0;
+        if (dt > HZ / 5)
+            dt = HZ / 5;    /* a stall must not teleport the flip */
+
+        num = speed * dt * PF_NOMINAL_FPS + pf_anim_frac;
+        adv = num / HZ;
+        pf_anim_frac = num - adv * HZ;
+        slide_frame += adv * step;
+    }
 
     int index = slide_frame >> 16;
     int pos = slide_frame & 0xffff;
