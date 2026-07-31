@@ -4150,6 +4150,9 @@ static inline void draw_gradient(int y, int h)
 
     switch (rb->global_settings->cursor_style)
     {
+        /* text_color is set for completeness but vput_line() restores
+         * the previous fg/bg for any style above STYLE_INVERT, so the
+         * visible text colour is the one set at the call site below. */
         case SYNCLIST_CURSOR_COLOR:
             linedes.style = STYLE_COLORBAR;
             linedes.text_color = pf_lst_color;
@@ -4312,11 +4315,19 @@ static bool show_track_list(void)
             draw_gradient(titletxt_y, titletxt_h);
             titletxt_x = get_scroll_line_offset(PF_SCROLL_TRACK);
 #ifdef HAVE_LCD_COLOR
-            /* Match how put_text() colours a selected row: the two bar
-             * modes name the text colour outright, the inverting modes
-             * get it by drawing through the fill. */
+            /* Replicate what put_text() does for a selected row -- both
+             * the colour and the draw mode. put_line() above was handed
+             * an empty string so it decorated the row without drawing
+             * any text, which means print_line() returned before
+             * reaching put_text() and the draw mode was never set up.
+             * vput_line() leaves DRMODE_SOLID behind, so without the
+             * explicit DRMODE_FG here the two bar modes would stamp an
+             * opaque background box over the bar that was just drawn. */
             if (rb->global_settings->cursor_style > SYNCLIST_CURSOR_INVERT)
+            {
                 mylcd_set_foreground(pf_lst_color);
+                mylcd_set_drawmode(DRMODE_FG);
+            }
             else
                 mylcd_set_drawmode(DRMODE_SOLID|DRMODE_INVERSEVID);
 #else
