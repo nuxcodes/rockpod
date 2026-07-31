@@ -3656,6 +3656,18 @@ static void update_scroll_animation(void)
         num = speed * dt * PF_NOMINAL_FPS + pf_anim_frac;
         adv = num / HZ;
         pf_anim_frac = num - adv * HZ;
+
+        /* Two frames can land inside the same tick, giving no advance
+         * at all. Nothing has moved, so there is nothing to recompute
+         * -- and falling through would be actively wrong when scrolling
+         * left: slide_frame is still exactly on a boundary, so
+         * slide_frame >> 16 yields the current index, the step < 0
+         * branch below increments it, and the centre snaps to the slide
+         * on the right for one frame before the next advance drags it
+         * back. */
+        if (adv == 0)
+            return;
+
         slide_frame += adv * step;
     }
 
