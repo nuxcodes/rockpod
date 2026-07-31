@@ -709,6 +709,42 @@ void iap_send_pkt(const unsigned char * data, const int len)
     iap_send_tx();
 }
 
+/* Send a prebuilt reply, inserting the transaction ID of the command
+ * being answered. MFi 2.6.1.4: the ID goes "after the Command ID
+ * field", which is two bytes for the Extended Interface lingo and one
+ * for every other (Table 2-10), so the insertion point comes from the
+ * lingo in data[0]. With no transaction ID in play this is exactly
+ * iap_send_pkt().
+ */
+void iap_send_reply(const unsigned char * data, const int len,
+                    unsigned char tid_hi, unsigned char tid_lo)
+{
+    int hdr;
+
+    if (!iap_running)
+        return;
+
+    if (!device.auth.idps)
+    {
+        iap_send_pkt(data, len);
+        return;
+    }
+
+    hdr = ((len >= 1) && (data[0] == 0x04)) ? 3 : 2;
+    if (len < hdr)
+    {
+        iap_send_pkt(data, len);
+        return;
+    }
+
+    iap_txnext = iap_txpayload;
+    IAP_TX_PUT_DATA(data, hdr);
+    IAP_TX_PUT(tid_hi);
+    IAP_TX_PUT(tid_lo);
+    IAP_TX_PUT_DATA(data + hdr, len - hdr);
+    iap_send_tx();
+}
+
 bool iap_getc(IF_IAP_MP(int port,) const unsigned char x)
 {
     struct state_t *s = &frame_state;

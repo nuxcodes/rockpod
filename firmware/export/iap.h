@@ -48,6 +48,8 @@ extern void iap_bitrate_set(int ratenum);
 extern void iap_periodic(void);
 extern void iap_handlepkt(void);
 extern void iap_send_pkt(const unsigned char * data, int len);
+extern void iap_send_reply(const unsigned char * data, int len,
+                           unsigned char tid_hi, unsigned char tid_lo);
 const unsigned char *iap_get_serbuf(void);
 
 /* Transport abstraction — USB HID driver overrides this for iAP-over-USB */

@@ -56,9 +56,26 @@ static unsigned long dbrecordcount = 0;
 /* Used to remember the LAST playlist selected */
 static unsigned long last_selected_playlist = 0;
 
+/* Transaction ID of the packet being handled. Lingo 4's command ID is
+ * two bytes (MFi Table 2-10), so under IDPS the transaction ID sits at
+ * buf[3..4] and the payload starts at buf[5 + doff]. Parsed at the top of
+ * iap_handlepkt_mode4(). */
+static uint8_t l4_tid_hi, l4_tid_lo;
+
+/* Insert the transaction ID into a reply built with the IAP_TX_ macros. */
+#define L4_TX_TRANSID() do { \
+        if (device.auth.idps) { \
+            IAP_TX_PUT(l4_tid_hi); \
+            IAP_TX_PUT(l4_tid_lo); \
+        }} while(0)
+
+/* Reply built in a prebuilt array rather than with the macros. */
+#define L4_SEND_REPLY(d, n) iap_send_reply((d), (n), l4_tid_hi, l4_tid_lo)
+
 static void cmd_ack(const unsigned int cmd, const unsigned char status)
 {
     IAP_TX_INIT4(0x04, 0x0001);
+    L4_TX_TRANSID();
     IAP_TX_PUT(status);
     IAP_TX_PUT_U16(cmd);
     iap_send_tx();
@@ -140,8 +157,25 @@ static unsigned long nbr_total_playlists(void)
 void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
 {
     unsigned int cmd = (buf[1] << 8) | buf[2];
+
+    /* Extra offset for the IDPS transaction ID (0 or 2). Every payload
+     * index and length check below adds it. Without it, after IDPS
+     * every parameter was read two bytes early -- PlayControl matched
+     * no case and silently did nothing while still acking OK, and
+     * SetPlayStatusChangeNotification could never be enabled. */
+    unsigned int doff = 0;
+
+    l4_tid_hi = 0;
+    l4_tid_lo = 0;
     /* Lingo 0x04 commands are at least 3 bytes in length */
     CHECKLEN(3);
+
+    if (device.auth.idps) {
+        CHECKLEN(5);    /* lingo + cmd(2) + transID(2) */
+        l4_tid_hi = buf[3 + doff];
+        l4_tid_lo = buf[4 + doff];
+        doff = 2;
+    }
 
     /* Lingo 0x04 must have been negotiated */
     if (!DEVICE_LINGO_SUPPORTED(0x04)) {
@@ -223,7 +257,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             unsigned char data[] = {0x04, 0x00, 0x03,
                                     0xFF, 0xFF, 0xFF, 0xFF,
                                     0x00, 0x00, 0x00, 0x00};
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0003: /* ReturnCurrentPlayingTrackChapterInfo. See Above */
@@ -449,7 +483,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              */
         {
             unsigned char data[] = {0x04, 0x00, 0x0A, 0x00};
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x000A: /* ReturnAudioBookSpeed. See Above */
@@ -608,7 +642,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             }
             struct mp3entry *id3 = audio_current_track();
 
-            switch(buf[3])
+            switch(buf[3 + doff])
             {
                 case 0x01: /* Podcast Not Supported */
                 case 0x04: /* Lyrics Not Supported */
@@ -622,8 +656,9 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 default:
                 {
                     IAP_TX_INIT4(0x04, 0x000D);
-                    IAP_TX_PUT(buf[3]);
-                    switch(buf[3])
+            L4_TX_TRANSID();
+                    IAP_TX_PUT(buf[3 + doff]);
+                    switch(buf[3 + doff])
                     {
                         case 0x00:
                         {
@@ -809,7 +844,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     0x00, 0xC8, /* 200 pixels */
                                     0x00, 0xC8  /* 200 pixels */
                                     };
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x000F: /* RetArtworkFormats. See Above */
@@ -895,7 +930,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     0x00, 0x00, 0x00, 0x00,/* RowSize*/
                                     0x00        /* ImagePixelData Var Length*/
                                    };
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0011: /* RetTrackArtworkData. See Abobe */
@@ -976,6 +1011,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              */
         {
             IAP_TX_INIT4(0x04, 0x0013);
+            L4_TX_TRANSID();
             IAP_TX_PUT(LINGO_MAJOR(0x04));
             IAP_TX_PUT(LINGO_MINOR(0x04));
             iap_send_tx();
@@ -1042,6 +1078,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              */
         {
             IAP_TX_INIT4(0x04, 0x0015);
+            L4_TX_TRANSID();
             IAP_TX_PUT_STRING("ROCKBOX");
             iap_send_tx();
             break;
@@ -1218,7 +1255,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * the value of cur_dbrecord[0]
              */
         {
-            memcpy(cur_dbrecord, buf + 3, 5);
+            memcpy(cur_dbrecord, buf + 3 + doff, 5);
 
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             uint32_t index;
@@ -1326,7 +1363,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
         {
             unsigned char data[] = {0x04, 0x00, 0x19,
                                     0x00, 0x00, 0x00, 0x00};
-            switch(buf[3]) /* type number */
+            switch(buf[3 + doff]) /* type number */
             {
                 case 0x01: /* total number of playlists */
                     dbrecordcount = nbr_total_playlists() + 1;
@@ -1349,7 +1386,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                     break;
             }
             put_u32(&data[3], dbrecordcount);
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0019: /* ReturnNumberCategorizedDBRecords. See Above */
@@ -1435,8 +1472,8 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             struct playlist_track_info track;
             struct mp3entry id3;
 
-            unsigned long start_index = get_u32(&buf[4]);
-            unsigned long read_count = get_u32(&buf[8]);
+            unsigned long start_index = get_u32(&buf[4 + doff]);
+            unsigned long read_count = get_u32(&buf[8 + doff]);
             unsigned long counter = 0;
             unsigned int number_of_playlists = nbr_total_playlists();
             uint32_t trackcount;
@@ -1448,7 +1485,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * start_index, which would wrap for counts close to 2^32
              * and let an oversized count through.
              */
-            if (buf[3] == 0x01) {
+            if (buf[3 + doff] == 0x01) {
                 if (start_index >= (number_of_playlists + 1)) {
                     cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                     break;
@@ -1456,7 +1493,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 if (read_count > (number_of_playlists + 1) - start_index)
                     read_count = (number_of_playlists + 1) - start_index;
             }
-            else if (buf[3] >= 0x02 && buf[3] <= 0x06) {
+            else if (buf[3 + doff] >= 0x02 && buf[3 + doff] <= 0x06) {
                 if (start_index >= trackcount) {
                     cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                     break;
@@ -1478,7 +1515,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             }
             for (counter=0;counter<read_count;counter++)
             {
-                switch(buf[3]) /* type number */
+                switch(buf[3 + doff]) /* type number */
                 {
                     case 0x01: /* Playlists */
                        get_playlist_name(data +7,start_index+counter, MAX_PATH);
@@ -1496,7 +1533,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                         playlist_get_track_info(NULL, start_index + counter,
                                                 &track);
                         iap_get_trackinfo(start_index + counter, &id3);
-                        switch(buf[3])
+                        switch(buf[3 + doff])
                         {
                             case 0x05:
                             {
@@ -1535,7 +1572,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                         nlen = 63;
                         data[7 + nlen] = '\0';
                     }
-                    iap_send_pkt(data, 7 + nlen + 1);
+                    L4_SEND_REPLY(data, 7 + nlen + 1);
                 }
                 yield();
             }
@@ -1608,7 +1645,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 data[11] = 0x01; /* play */
             else if (status & AUDIO_STATUS_PAUSE)
                 data[11] = 0x02; /* pause */
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x001D: /* ReturnPlayStatus. See Above */
@@ -1682,7 +1719,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 playlist_pos += playlist_amount();
             if ((status == AUDIO_STATUS_PLAY) || (status & AUDIO_STATUS_PAUSE))
                 put_u32(&data[3], playlist_pos);
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x001F: /* ReturnCurrentPlayingTrackIndex. See Above */
@@ -1844,7 +1881,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             unsigned char data[70] = {0x04, 0x00, 0xFF};
             struct mp3entry id3;
             size_t len;
-            long tracknum = get_u32(&buf[3]);
+            long tracknum = get_u32(&buf[3 + doff]);
 
             data[2] = cmd + 1;
             memcpy(&id3, audio_current_track(), sizeof(id3));
@@ -1874,19 +1911,19 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                     len = strlcpy((char *)&data[3],
                                   id3.title ? id3.title : "", 64);
                     if (len > 63) len = 63;
-                    iap_send_pkt(data, 4+len);
+                    L4_SEND_REPLY(data, 4+len);
                     break;
                 case 0x22:
                     len = strlcpy((char *)&data[3],
                                   id3.artist ? id3.artist : "", 64);
                     if (len > 63) len = 63;
-                    iap_send_pkt(data, 4+len);
+                    L4_SEND_REPLY(data, 4+len);
                     break;
                 case 0x24:
                     len = strlcpy((char *)&data[3],
                                   id3.album ? id3.album : "", 64);
                     if (len > 63) len = 63;
-                    iap_send_pkt(data, 4+len);
+                    L4_SEND_REPLY(data, 4+len);
                     break;
             }
             break;
@@ -1946,7 +1983,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *  7     0xNN   Telegram payload checksum byte
              */
         {
-            device.do_notify = buf[3] ? true : false;
+            device.do_notify = buf[3 + doff] ? true : false;
             /* respond with cmd ok packet */
             cmd_ok(cmd);
             break;
@@ -2070,7 +2107,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             uint32_t index;
             uint32_t trackcount;
-            index = get_u32(&buf[3]);
+            index = get_u32(&buf[3 + doff]);
             trackcount = playlist_amount();
             if (index >= trackcount)
             {
@@ -2129,7 +2166,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * Reserved             0x0A - 0xFF
              *
              */
-            switch(buf[3])
+            switch(buf[3 + doff])
             {
                 case 0x01: /* play/pause */
                     iap_remotebtn = BUTTON_RC_PLAY;
@@ -2199,7 +2236,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
         {
             unsigned char data[] = {0x04, 0x00, 0x2B,
                                     0x00, 0x00, 0x00, 0x00};
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x002B: /* ReturnTrackArtworkTimes. See Above */
@@ -2258,7 +2295,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             unsigned char data[] = {0x04, 0x00, 0x2D,
                                     0x00};
             data[3] = global_settings.playlist_shuffle ? 1 : 0;
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x002D: /* ReturnShuffle. See Above */
@@ -2357,14 +2394,14 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *  7   0xNN  Telegram payload checksum byte
              *
              */
-            if(buf[3] && !global_settings.playlist_shuffle)
+            if(buf[3 + doff] && !global_settings.playlist_shuffle)
             {
                 global_settings.playlist_shuffle = 1;
                 settings_save();
                 if (audio_status() & AUDIO_STATUS_PLAY)
                     playlist_randomise(NULL, current_tick, true);
             }
-            else if(!buf[3] && global_settings.playlist_shuffle)
+            else if(!buf[3 + doff] && global_settings.playlist_shuffle)
             {
                 global_settings.playlist_shuffle = 0;
                 settings_save();
@@ -2401,7 +2438,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                 data[3] = 1;
             else
                 data[3] = 2;
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0030: /* ReturnRepeat. See Above */
@@ -2482,11 +2519,11 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              *
              */
             int oldmode = global_settings.repeat_mode;
-            if (buf[3] == 0)
+            if (buf[3 + doff] == 0)
                 global_settings.repeat_mode = REPEAT_OFF;
-            else if (buf[3] == 1)
+            else if (buf[3 + doff] == 1)
                 global_settings.repeat_mode = REPEAT_ONE;
-            else if (buf[3] == 2)
+            else if (buf[3 + doff] == 2)
                 global_settings.repeat_mode = REPEAT_ALL;
 
             if (oldmode != global_settings.repeat_mode)
@@ -2763,7 +2800,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     LCD_WIDTH >> 8, LCD_WIDTH & 0xff,
                                     LCD_HEIGHT >> 8, LCD_HEIGHT & 0xff,
                                     0x01};
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0034: /* ReturnMonoDisplayImageLimits. See Above*/
@@ -2819,7 +2856,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     0x00, 0x00, 0x00, 0x00};
             unsigned long playlist_amt = playlist_amount();
             put_u32(&data[3], playlist_amt);
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x0036: /* ReturnNumPlayingTracks. See Above */
@@ -2886,7 +2923,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              */
         {
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
-            long tracknum = get_u32(&buf[3]);
+            long tracknum = get_u32(&buf[3 + doff]);
 
             /* audio_skip() backs an out-of-range offset out one track at
              * a time, holding id3_mutex and never yielding, so a wild
@@ -3052,7 +3089,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * the value of cur_dbrecord[0]
              */
         {
-            memcpy(cur_dbrecord, buf + 3, 5);
+            memcpy(cur_dbrecord, buf + 3 + doff, 5);
 
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             unsigned int number_of_playlists = nbr_total_playlists();
@@ -3133,7 +3170,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
                                     LCD_WIDTH >> 8, LCD_WIDTH & 0xff,
                                     LCD_HEIGHT >> 8, LCD_HEIGHT & 0xff,
                                     0x01};
-            iap_send_pkt(data, sizeof(data));
+            L4_SEND_REPLY(data, sizeof(data));
             break;
         }
         case 0x003A: /* ReturnColorDisplayImageLimits See Above */
@@ -3204,7 +3241,7 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             dbrecordcount = 0;
             cur_dbrecord[0] = 0;
             put_u32(&cur_dbrecord[1],0);
-            switch (buf[3])
+            switch (buf[3 + doff])
             {
                 case 0x01: /* Music */
                 {

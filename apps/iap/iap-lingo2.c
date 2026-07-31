@@ -47,9 +47,20 @@
             return; \
         }} while(0)
 
+/* Transaction ID of the packet being handled. After IDPS every packet
+ * carries one between the command byte and the payload, and every reply
+ * must echo it (MFi 2.3.2: "all subsequent iAP command packets must
+ * include transaction IDs, regardless of lingo"). Parsed at the top of
+ * iap_handlepkt_mode2(), mirroring what lingo 3 already does. */
+static uint8_t l2_tid_hi, l2_tid_lo;
+
 static void cmd_ack(const unsigned char cmd, const unsigned char status)
 {
     IAP_TX_INIT(0x02, 0x01);
+    if (device.auth.idps) {
+        IAP_TX_PUT(l2_tid_hi);
+        IAP_TX_PUT(l2_tid_lo);
+    }
     IAP_TX_PUT(status);
     IAP_TX_PUT(cmd);
 
@@ -66,11 +77,30 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
 #endif
     unsigned int cmd = buf[1];
 
+    /* Extra offset for the IDPS transaction ID (0 or 2). Every buf[]
+     * index and CHECKLEN below adds it, so one body serves both the
+     * legacy and the IDPS framing. Without this the button bitmap was
+     * read from the transaction ID: a counter below 0x0100 left byte 0
+     * zero and the handler fell through to buf[3], decoding the low
+     * byte as play/pause/shuffle, and above it the high byte was
+     * decoded as a permanently held chord. */
+    unsigned int doff = 0;
+
+    l2_tid_hi = 0;
+    l2_tid_lo = 0;
+
     /* We expect at least three bytes in the buffer, one for the
      * lingo, one for the command, and one for the first button
      * state bits.
      */
     CHECKLEN(3);
+
+    if (device.auth.idps) {
+        CHECKLEN(5);    /* lingo + cmd + transID(2) + one state byte */
+        l2_tid_hi = buf[2];
+        l2_tid_lo = buf[3];
+        doff = 2;
+    }
 
     /* Lingo 0x02 must have been negotiated, except for
      * ContextButtonStatus (0x00): simple remotes like the Apple A1018
@@ -106,14 +136,14 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
             unsigned long btn = BUTTON_NONE;
             /* True while the accessory still reports any button down,
              * including ones that map to no BUTTON_* code. */
-            bool any_bits = (buf[2] != 0)
-                         || (len >= 4 && buf[3] != 0)
-                         || (len >= 5 && buf[4] != 0)
-                         || (len >= 6 && buf[5] != 0);
+            bool any_bits = (buf[2 + doff] != 0)
+                         || (len >= 4 + doff && buf[3 + doff] != 0)
+                         || (len >= 5 + doff && buf[4 + doff] != 0)
+                         || (len >= 6 + doff && buf[5 + doff] != 0);
 
-            if(buf[2] != 0)
+            if(buf[2 + doff] != 0)
             {
-                if(buf[2] & 1)
+                if(buf[2 + doff] & 1)
                 {
                     btn |= BUTTON_RC_PLAY;
 #if CONFIG_TUNER
@@ -129,18 +159,18 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                     }
 #endif
                 }
-                if(buf[2] & 2)
+                if(buf[2 + doff] & 2)
                     btn |= BUTTON_RC_VOL_UP;
-                if(buf[2] & 4)
+                if(buf[2 + doff] & 4)
                     btn |= BUTTON_RC_VOL_DOWN;
-                if(buf[2] & 8)
+                if(buf[2 + doff] & 8)
                     btn |= BUTTON_RC_RIGHT;
-                if(buf[2] & 16)
+                if(buf[2 + doff] & 16)
                     btn |= BUTTON_RC_LEFT;
             }
-            else if(len >= 4 && buf[3] != 0)
+            else if(len >= 4 + doff && buf[3 + doff] != 0)
             {
-                if(buf[3] & 1) /* play */
+                if(buf[3 + doff] & 1) /* play */
                 {
                     if (audio_status() != AUDIO_STATUS_PLAY)
                         btn |= BUTTON_RC_PLAY;
@@ -150,7 +180,7 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                     }
 #endif
                 }
-                if(buf[3] & 2) /* pause */
+                if(buf[3 + doff] & 2) /* pause */
                 {
                     if (audio_status() == AUDIO_STATUS_PLAY)
                         btn |= BUTTON_RC_PLAY;
@@ -160,7 +190,7 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                     }
 #endif
                 }
-                if(buf[3] & 128) /* Shuffle */
+                if(buf[3 + doff] & 128) /* Shuffle */
                 {
                     if (!iap_btnshuffle)
                     {
@@ -169,9 +199,9 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                     }
                 }
             }
-            else if(len >= 5 && buf[4] != 0)
+            else if(len >= 5 + doff && buf[4 + doff] != 0)
             {
-                if(buf[4] & 1) /* repeat */
+                if(buf[4 + doff] & 1) /* repeat */
                 {
                     if (!iap_btnrepeat)
                     {
@@ -180,7 +210,7 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                     }
                 }
 
-                if (buf[4] & 2) /* power on */
+                if (buf[4 + doff] & 2) /* power on */
                 {
                     poweron_pressed = true;
                 }
@@ -189,26 +219,26 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
                  * Not quite sure how to react to this, but stopping playback
                  * is a good start.
                  */
-                if (buf[4] & 0x04)
+                if (buf[4 + doff] & 0x04)
                 {
                     if (audio_status() == AUDIO_STATUS_PLAY)
                         btn |= BUTTON_RC_PLAY;
                 }
 
-                if(buf[4] & 16) /* ffwd */
+                if(buf[4 + doff] & 16) /* ffwd */
                     btn |= BUTTON_RC_RIGHT;
-                if(buf[4] & 32) /* frwd */
+                if(buf[4 + doff] & 32) /* frwd */
                     btn |= BUTTON_RC_LEFT;
-                if(buf[4] & 64) /* menu */
+                if(buf[4 + doff] & 64) /* menu */
                     btn |= BUTTON_RC_MENU;
-                if(buf[4] & 128) /* select */
+                if(buf[4 + doff] & 128) /* select */
                     btn |= BUTTON_RC_SELECT;
             }
-            else if(len >= 6 && buf[5] != 0)
+            else if(len >= 6 + doff && buf[5 + doff] != 0)
             {
-                if(buf[5] & 1) /* up */
+                if(buf[5 + doff] & 1) /* up */
                     btn |= BUTTON_RC_UP;
-                if (buf[5] & 2) /* down */
+                if (buf[5 + doff] & 2) /* down */
                     btn |= BUTTON_RC_DOWN;
             }
 
@@ -260,7 +290,7 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
             }
 
             /* power on released */
-            if (poweron_pressed && len >= 5 && !(buf[4] & 2))
+            if (poweron_pressed && len >= 5 + doff && !(buf[4 + doff] & 2))
             {
                 poweron_pressed = false;
 #ifdef HAVE_LINE_REC
@@ -370,7 +400,11 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
          */
         case 0x04:
         {
-            unsigned char repeatbuf[6];
+            /* 6 payload bytes, plus room for an IDPS transaction ID:
+             * the recursive call below re-enters this handler, which
+             * recomputes doff from device.auth.idps, so the copy has to
+             * keep the transaction ID in place for it to skip. */
+            unsigned char repeatbuf[8];
 
             if (!DEVICE_AUTHENTICATED) {
                 cmd_ack(cmd, IAP_ACK_NO_AUTHEN);
@@ -384,12 +418,19 @@ void iap_handlepkt_mode2(const unsigned int len, const unsigned char *buf)
              * command
              */
             /* Bytes 1-3 of the button status are optional (MFi Table
-             * 4-18), so a conformant accessory may send fewer than 6
-             * bytes -- copy only what arrived.
+             * 4-18), so a conformant accessory may send fewer than the
+             * full payload -- copy only what arrived. Under IDPS the
+             * packet is 2 bytes longer, and the transaction ID is
+             * copied along with it so the recursive call can skip it.
              */
-            memcpy(repeatbuf, buf, (len < 6) ? len : 6);
-            repeatbuf[1] = 0x00;
-            iap_handlepkt_mode2((len<6)?len:6, repeatbuf);
+            {
+                unsigned int n = 6 + doff;
+                if (len < n)
+                    n = len;
+                memcpy(repeatbuf, buf, n);
+                repeatbuf[1] = 0x00;
+                iap_handlepkt_mode2(n, repeatbuf);
+            }
 
             cmd_ok(cmd);
             break;
