@@ -1230,8 +1230,11 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
              * up on an out-of-range offset rather than rejecting it.
              * The bound is also >=, not >: a valid index is 0..count-1.
              */
+            /* An index of -1 is how an accessory undoes a selection and
+             * moves up a category level; the spec makes it invalid only
+             * for Track (0x05), which is rejected by the bound below. */
             if ((cur_dbrecord[0] >= 2) && (cur_dbrecord[0] <= 6) &&
-                (index >= trackcount))
+                (index != 0xFFFFFFFFu) && (index >= trackcount))
             {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
@@ -2885,12 +2888,12 @@ void iap_handlepkt_mode4(const unsigned int len, const unsigned char *buf)
             int paused = !!(audio_status() & AUDIO_STATUS_PAUSE);
             long tracknum = get_u32(&buf[3]);
 
-            /* audio_skip() backs an out-of-range offset out one track
-             * at a time, holding id3_mutex and never yielding, and each
-             * step costs a playlist_check(). A wild index therefore
-             * locks the whole device up rather than being rejected --
-             * an index of 0x40000000 is on the order of 1e17 iterations.
-             * Range-check before handing it over.
+            /* audio_skip() backs an out-of-range offset out one track at
+             * a time, holding id3_mutex and never yielding, so a wild
+             * index locks the whole device up rather than being
+             * rejected -- an index of 0x40000000 is on the order of 1e9
+             * iterations, i.e. minutes. Range-check before handing it
+             * over.
              */
             if (tracknum < 0 || tracknum >= (long)playlist_amount())
             {
