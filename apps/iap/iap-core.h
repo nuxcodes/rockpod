@@ -158,7 +158,21 @@ struct device_t {
 };
 
 extern struct device_t device;
-#define DEVICE_AUTHENTICATED (device.auth.state == AUST_AUTH)
+/* MFi spec 2.4.2: "All lingo-authenticated commands and features are
+ * available to accessories once the Apple device has sent the accessory
+ * an AckAccessoryAuthenticationInfo command with success status (0x00).
+ * This provisional authentication lasts until the Apple device sends a
+ * AckAccessoryAuthenticationStatus command indicating that
+ * authentication has finished."
+ *
+ * That ack is sent as the state moves to AUST_CERTDONE, and the states
+ * from there to AUST_AUTH are the background half of the handshake, so
+ * treat the accessory as authenticated throughout. Requiring AUST_AUTH
+ * rejected commands the accessory is entitled to send during that
+ * window -- SetUIMode among them, which the spec's own worked example
+ * (Table 2-13) shows being accepted there.
+ */
+#define DEVICE_AUTHENTICATED (device.auth.state >= AUST_CERTDONE)
 #define DEVICE_AUTH_RUNNING ((device.auth.state != AUST_NONE) && (device.auth.state != AUST_AUTH))
 #define DEVICE_LINGO_SUPPORTED(x) (device.lingoes & BIT_N((x)&0x1f))
 
