@@ -117,7 +117,29 @@ int iap_repeatbtn = 0;
 unsigned int iap_timeoutbtn = 0;
 bool iap_btnrepeat = false, iap_btnshuffle = false;
 
-static long thread_stack[(DEFAULT_STACK_SIZE*6)/sizeof(long)];
+/* This stack was 6KB and sits immediately below serbuf with no gap, so
+ * it grows down straight into the RX buffer. Measured worst cases on the
+ * linked image put it over:
+ *
+ *   iap_handlepkt_mode4 reserves 3328 bytes in its prologue and
+ *   iap_handlepkt_mode3 3064, because each puts a struct mp3entry (2760
+ *   bytes) and one or two struct playlist_track_info (272 each) on the
+ *   stack unconditionally. Add iap_get_trackinfo, get_metadata_ex and a
+ *   WAV or Wave64 parse -- parse_list_chunk alone is 1864, the largest
+ *   of the 34 metadata parsers -- and a lingo 4 track-title query on a
+ *   WAV file reaches about 6.5KB. A plain MP3 current-track query still
+ *   reaches roughly 6.2KB once the codepage table is loaded.
+ *
+ * Only stack[0] is canary-checked, and only at a thread switch, so an
+ * overflow that misses word 0 silently corrupts the RX buffer instead
+ * of panicking. Any accessory that polls track titles drives this, so
+ * it is ordinary traffic rather than an edge case.
+ *
+ * tagcache's scanning thread gets DEFAULT_STACK_SIZE + 0x4000 for the
+ * same get_metadata_ex() workload and runs at 1.84x its measured worst
+ * case; x12 puts this thread at a comparable margin.
+ */
+static long thread_stack[(DEFAULT_STACK_SIZE*12)/sizeof(long)];
 static struct event_queue iap_queue;
 
 /* These are pointer used to manage a dynamically allocated buffer which
