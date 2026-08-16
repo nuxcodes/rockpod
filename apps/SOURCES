@@ -166,6 +166,9 @@ audio_path.c
 audio_thread.c
 pcmbuf.c
 codec_thread.c
+#ifdef HAVE_ALBUMART
+albumart_cache.c
+#endif
 playback.c
 codecs.c
 #ifndef HAVE_HARDWARE_BEEP

@@ -30,6 +30,14 @@
 #include "pathfuncs.h"
 #include "settings.h"
 #include "wps.h"
+#ifndef PLUGIN
+#include "file.h"
+#include "bmp.h"
+#ifdef HAVE_JPEG
+#include "jpeg_load.h"
+#endif
+#include "resize.h"
+#endif
 
 /* Define LOGF_ENABLE to enable logf output in this file */
 /*#define LOGF_ENABLE*/
@@ -275,6 +283,61 @@ bool find_albumart(const struct mp3entry *id3, char *buf, int buflen,
     /* Then we look for generic bitmaps */
     *size_string = 0;
     return search_albumart_files(id3, size_string, buf, buflen);
+}
+
+size_t albumart_decoded_size(const struct dim *dim)
+{
+    return sizeof(struct bitmap) +
+           BM_SIZE(dim->width, dim->height, FORMAT_NATIVE, false);
+}
+
+size_t albumart_decode_overhead(int width)
+{
+    size_t size = 0;
+#ifdef HAVE_JPEG
+    size += JPEG_DECODE_OVERHEAD;
+#endif
+#ifdef HAVE_LCD_COLOR
+    size += sizeof(struct uint32_argb) * 3 * width;
+#else
+    size += sizeof(uint32_t) * 3 * width;
+#endif
+    return size;
+}
+
+int albumart_decode_fd(int fd, const char *path, const struct dim *dim,
+                       struct mp3_albumart *embedded,
+                       void *buf, size_t max_size)
+{
+    int rc;
+    struct bitmap *bmp = buf;
+
+    if (!buf || !dim || max_size < sizeof(struct bitmap))
+        return 0;
+
+    bmp->width = dim->width;
+    bmp->height = dim->height;
+    bmp->data = (unsigned char *)buf + sizeof(struct bitmap);
+#if (LCD_DEPTH > 1) || defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1)
+    bmp->maskdata = NULL;
+#endif
+    const int format = FORMAT_NATIVE | FORMAT_DITHER |
+                       FORMAT_RESIZE | FORMAT_KEEP_ASPECT;
+#ifdef HAVE_JPEG
+    if (embedded != NULL)
+    {
+        lseek(fd, embedded->pos, SEEK_SET);
+        rc = clip_jpeg_fd(fd, embedded->type, embedded->size, bmp,
+                          (int)max_size, format, NULL);
+    }
+    else if (path && strlen(path) >= 4 &&
+             strcmp(path + strlen(path) - 4, ".bmp"))
+        rc = read_jpeg_fd(fd, bmp, (int)max_size, format, NULL);
+    else
+#endif
+        rc = read_bmp_fd(fd, bmp, (int)max_size, format, NULL);
+
+    return rc + (rc > 0 ? (int)sizeof(struct bitmap) : 0);
 }
 
 #endif /* PLUGIN */
