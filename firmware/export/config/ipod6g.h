@@ -64,6 +64,16 @@
 /* define this if you have access to the quickscreen */
 #define HAVE_QUICKSCREEN
 
+/* Volume outside the WPS. The clickwheel has no volume buttons of its
+ * own, but an accessory remote does -- the Apple in-line remote and the
+ * Bluetooth transmitters that emulate it both send Simple Remote lingo
+ * Volume Up and Volume Down (MFi Table 4-14, p.227). Those were mapped
+ * only in the WPS and the quickscreen, so a user browsing the file tree
+ * or sitting in a menu could not change the volume from the remote,
+ * while every transport button kept working. The stock firmware honours
+ * them everywhere. */
+#define HAVE_VOLUME_IN_LIST
+
 /* define this if you would like tagcache to build on this target */
 #define HAVE_TAGCACHE
 

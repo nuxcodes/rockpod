@@ -1,0 +1,29 @@
+# Build products. The names carry the target since the harness builds
+# for both ipod6g and ipodvideo, and the old unsuffixed patterns below
+# stopped matching when that happened -- which is how a 265 KB test
+# binary came to be committed twice.
+obj-*/
+iap_test-*
+dump_legacy-*
+
+# Pre-target names, kept so an old working tree still ignores them.
+obj/
+iap_test
+dump_legacy
+
+*.d
+
+# The transport suites gained the same per-target suffix, and the
+# unsuffixed patterns stopped matching again -- four binaries went into
+# a commit before this line was written.
+hid/hid_test
+hid/hid_test-*
+hid/*.dSYM
+e2e/e2e_test
+e2e/e2e_test-*
+e2e/*.o
+e2e/*.dSYM
+
+# The PP UART suite.
+uart/uart_test
+uart/*.dSYM

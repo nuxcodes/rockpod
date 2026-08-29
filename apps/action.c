@@ -1088,8 +1088,23 @@ static inline int do_backlight(action_last_t *last, action_cur_t *cur, int actio
     if (action != ACTION_NONE && bl_activate)
     {
         action_handle_backlight(true, true);
-        /* Handle first keypress enables backlight only */
-        if (has_flag(last->backlight_mask, SEL_ACTION_FFKEYPRESS) && bl_is_off)
+        /* Handle first keypress enables backlight only.
+         * Remote and accessory buttons are exempt for the same reason
+         * they are in filter_first_keypress_enabled(): their user
+         * cannot see the screen the press would be waking.
+         *
+         * Only where the remote has no display of its own. On a target
+         * with HAVE_REMOTE_LCD there is a screen the user is looking
+         * at, the reasoning above does not hold, and button.c routes
+         * those presses to filter_first_remote_keypress_enabled()
+         * rather than the filter this mirrors -- so the two would
+         * disagree. Sixteen targets define BUTTON_REMOTE; this leaves
+         * the four with a remote LCD exactly as they were. */
+        if (has_flag(last->backlight_mask, SEL_ACTION_FFKEYPRESS) && bl_is_off
+#if defined(BUTTON_REMOTE) && !defined(HAVE_REMOTE_LCD)
+            && !(cur->button & BUTTON_REMOTE)
+#endif
+           )
         {
             action       = ACTION_NONE;
             last->button = BUTTON_NONE;

@@ -39,6 +39,9 @@
 #include "serial.h"
 #include "power.h"
 #include "powermgmt.h"
+#ifdef IPOD_ACCESSORY_PROTOCOL
+#include "iap.h"
+#endif
 #ifdef IPOD_NANO2G
 #include "pmu-target.h"
 #endif
@@ -128,6 +131,21 @@ static inline int ipod_4g_button_read(void)
                 btn |= BUTTON_PLAY;
             if (status & 0x00001000)
                 btn |= BUTTON_MENU;
+#ifdef IPOD_ACCESSORY_PROTOCOL
+            if (iap_remote_ui_active())
+            {
+                old_wheel_value = -1;
+                new_wheel_value = 0;
+                repeat = 0;
+                wheel_delta = 0;
+                wheel_is_touched = false;
+                accumulated_wheel_delta = 0;
+                wheel_repeat = BUTTON_NONE;
+                wheel_velocity = 0;
+                last_wheel_usec = 0;
+                return BUTTON_NONE;
+            }
+#endif
             if (status & 0x40000000) 
             {
                 unsigned long usec = USEC_TIMER;
@@ -476,7 +494,8 @@ int button_read_device(void)
 
     /* The int_btn variable is set in the button interrupt handler */
 #ifdef IPOD_ACCESSORY_PROTOCOL
-    return int_btn | remote_control_rx();
+    return (iap_remote_ui_active() ? BUTTON_NONE : int_btn)
+           | remote_control_rx();
 #else
     return int_btn;
 #endif

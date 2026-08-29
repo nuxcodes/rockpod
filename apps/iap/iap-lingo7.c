@@ -37,6 +37,13 @@
             return; \
         }} while(0)
 
+/* Parameters and their length check, in the same units -- see the
+ * same pair in iap-lingo3.c. RF Tuner commands are lingo byte, command
+ * byte, then a transaction ID when one is in force, so parameter n is
+ * at 2 + doff + n and a check for n parameters wants 2 + n + doff. */
+#define L7_NEED(n)  CHECKLEN(2 + (n) + doff)
+#define L7_PARAM(n) (inbuffer[2 + doff + (n)])
+
 /* Check for authenticated state, and return an ACK Not
  * Authenticated on failure.
  */
@@ -47,13 +54,18 @@
         }} while(0)
 
 
+/* The RF Tuner lingo has no Apple-device acknowledgement either.
+ *
+ * MFi 4.7.5 (p.291): "Lingo: 0x07 - Origin: Accessory". Command 0x00 is
+ * the accessory's own AccessoryAck, and Table 4-111 (p.288) marks it
+ * "Acc to Dev". Sending it from the device is the acknowledgement
+ * travelling the wrong way; this file's own comment at the 0x00 case
+ * already calls it "ToIpod Ack".
+ */
 static void cmd_ack(const unsigned char cmd, const unsigned char status)
 {
-    IAP_TX_INIT(0x07, 0x00);
-    IAP_TX_PUT(status);
-    IAP_TX_PUT(cmd);
-
-    iap_send_tx();
+    (void)cmd;
+    (void)status;
 }
 
 #define cmd_ok(cmd) cmd_ack((cmd), IAP_ACK_OK)
@@ -67,17 +79,51 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
      */
     unsigned char cmd = inbuffer[1];
     unsigned char statusnotifymaskbyte = 0;
+    unsigned int doff = 0;
 
     /* We expect at least two bytes in the inbuffer, one for the
      * lingo and one for the command
      */
+    /* Equivalent mutant: the framer never delivers a payload shorter
+     * than this. MFi 2.5.2 (p.110) puts the smallest packet payload at
+     * 0x02 and iap_getc() enforces it, so len is always at least two
+     * and this can never fire. Kept because it states the handler's
+     * precondition where a reader looks for it, and recorded so the
+     * mutation sweep's survivor list stays fully accounted for. */
     CHECKLEN(2);
+
+    /* MFi 2.6.1.2 (p.111) has the accessory enable transaction IDs
+     * before it sends StartIDPS and keep them enabled "for all iAP
+     * commands", so a tuner accessory that identifies through IDPS
+     * puts two ID bytes between the command and its payload. This
+     * handler had no offset at all -- unique among the lingoes -- so
+     * it read the ID itself as the first two capability bytes. With
+     * an ID of 0x0201, for instance, inbuffer[2] became 0x02, whose
+     * low bits are the RDS and RSSI capability flags, and the real
+     * capability word landed two bytes late. */
+    if (DEVICE_TRANSID_ACTIVE)
+        doff = 2;
 
     /* Lingo 0x07 must have been negotiated */
     if (!DEVICE_LINGO_SUPPORTED(0x07)) {
         cmd_ack(cmd, IAP_ACK_BAD_PARAM);
         return;
     }
+
+    /* MFi 4.7.1 (p.287), first requirement of the lingo: "All RF tuner
+     * lingo commands require authentication." Table 2-7 (p.105) agrees
+     * for both transports. This file defined CHECKAUTH and never used
+     * it, alone among the lingoes that need one.
+     *
+     * The window is real: radio_present and the lingo bit are both set
+     * from the IdentifyDeviceLingoes handler (iap-lingo0.c:755), which
+     * runs before the authentication handshake it may have just
+     * started, so an accessory could drive the tuner and push arbitrary
+     * text into the radio screen without ever completing it. An
+     * accessory that asks for no authentication is already AUST_AUTH by
+     * the time that handler enables the tuner, so nothing that works
+     * today stops working. */
+    CHECKAUTH;
 
     switch (cmd)
     {
@@ -107,6 +153,14 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
         /* case 02 ToIpod      RetTunerCaps 8 bytes */
         case 0x02:
         {
+            /* MFi Table 4-116 (p.292): four capability bytes then two
+             * reserved ones, so eight with the lingo and command. The
+             * only length check in this file was the CHECKLEN(2) above,
+             * and the branches below read as far as inbuffer[5], so a
+             * truncated RetTunerCaps chose the band from bytes past the
+             * end of the packet. */
+            L7_NEED(6);
+
             /* Capabilities are stored as bits in first 4 bytes,
              * inbuffer[2] byte is bits 31:24
              * inbuffer[3] byte is bits 23:16
@@ -187,99 +241,134 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
              *
              */
 
-            if ((inbuffer[4] & 0x03) >0) {
-                statusnotifymaskbyte = 0;
-                if ((inbuffer[4] >> 0) & 0x01) {
-                    /* Supports Tuner Power On/Off, so set ON */
-                    statusnotifymaskbyte = 1;
-                }
-                if ((inbuffer[4] >> 1) & 0x01) {
-                    /* Supports Status Change Notification so set ON  */
-                    /* Apple 5/6/7G firmware does NOT enable this bit */
-                    /* statusnotifymaskbyte += 2;                     */
-                }
-                IAP_TX_INIT(0x07, 0x05);
-                IAP_TX_PUT(statusnotifymaskbyte);
-                iap_send_tx();
-            }
-            if ((inbuffer[5] >> 1) & 0x01) {
+            /* No SetTunerCtrl here.
+             *
+             * Table 4-123 (p.296) bit 0: "Turn RF tuner current draw
+             * from the Apple device on (1) or off (0). When RF tuner
+             * current draw is turned off, the accessory should rest in
+             * the lowest power state that still allows iAP commands to
+             * be received and processed." Powering the tuner on because
+             * the accessory said it *can* be powered is not the same as
+             * wanting it on, and this runs at authentication -- so
+             * plugging in a Radio Remote and never opening the radio
+             * left it drawing Intermittent High Power (4.7.2, p.288)
+             * for the whole session, with the only power-off on the
+             * FM-screen exit path.
+             *
+             * Power belongs to the radio screen: rmt_tuner_power() in
+             * ipod_remote_tuner.c does both edges. Bit 1, status change
+             * notification, was already deliberately left disabled --
+             * Apple's own firmware does not enable it -- so the byte
+             * this used to send was nothing but the power bit.
+             *
+             * The mode and band below are still set from the
+             * capabilities, which is safe with the tuner off: 4.7.10
+             * (p.295) has the accessory preserve "tuner frequency, band,
+             * and so on ... across tuner on and off cycles". */
+            if ((L7_PARAM(3) >> 1) & 0x01) {
                 /* Supports FM Europe/US Tuner 87.5 - 108.0 Mhz */
                 /* Apple firmware sends this before setting region */
                 IAP_TX_INIT(0x07, 0x0E);
+                IAP_TX_PUT_IPOD_TRANSID();
                 IAP_TX_PUT(0x00);
                 iap_send_tx();
-                /* Apple firmware then sends region */
+                /* Apple firmware then sends region.
+                  * MFi Table 4-126 (p.297) gives the band as an ID, not
+                  * the capability bit that selected this branch:
+                  * 0x00 AM worldwide, 0x01 Europe/US FM, 0x02 Japan FM,
+                  * 0x03 FM wide. Each branch below used to echo its own
+                  * capability bit, so Europe/US asked for Japan, Japan
+                  * and wide asked for reserved values, and AM asked for
+                  * Europe/US. ipod_remote_tuner.c:192 already uses the
+                  * IDs, so the two disagreed. */
                 IAP_TX_INIT(0x07, 0x08);
-                IAP_TX_PUT(0x02);
+                IAP_TX_PUT_IPOD_TRANSID();
+                IAP_TX_PUT(0x01);   /* Europe/US FM */
                 iap_send_tx();
-            } else if ((inbuffer[5] >> 3) & 0x01) {
+            } else if ((L7_PARAM(3) >> 3) & 0x01) {
                 /* Supports FM Wide Tuner 76 - 108.0 Mhz */
                 /* apple firmware send this before setting region */
                 IAP_TX_INIT(0x07, 0x0E);
+                IAP_TX_PUT_IPOD_TRANSID();
                 IAP_TX_PUT(0x00);
                 iap_send_tx();
                 /* Apple firmware then send region */
                 IAP_TX_INIT(0x07, 0x08);
-                IAP_TX_PUT(0x08);
+                IAP_TX_PUT_IPOD_TRANSID();
+                IAP_TX_PUT(0x03);   /* FM wide */
                 iap_send_tx();
-            } else if ((inbuffer[5] >> 2) & 0x01) {
+            } else if ((L7_PARAM(3) >> 2) & 0x01) {
                 /* Supports FM Japan Tuner 76 - 90.0 Mhz */
                 /* apple firmware send this before setting region */
                 IAP_TX_INIT(0x07, 0x0E);
+                IAP_TX_PUT_IPOD_TRANSID();
                 IAP_TX_PUT(0x41);
                 iap_send_tx();
                 /* Apple firmware then send region */
                 IAP_TX_INIT(0x07, 0x08);
-                IAP_TX_PUT(0x04);
+                IAP_TX_PUT_IPOD_TRANSID();
+                IAP_TX_PUT(0x02);   /* Japan FM */
                 iap_send_tx();
-            } else if ((inbuffer[5] >> 0) & 0x01) {
+            } else if ((L7_PARAM(3) >> 0) & 0x01) {
                 /* Supports AM Tuner */
                 IAP_TX_INIT(0x07, 0x08);
-                IAP_TX_PUT(0x01);
+                IAP_TX_PUT_IPOD_TRANSID();
+                IAP_TX_PUT(0x00);   /* AM worldwide */
                 iap_send_tx();
             }
 
-            if ((inbuffer[2]  & 0x03) > 0) {
+            if ((L7_PARAM(0)  & 0x03) > 0) {
                 statusnotifymaskbyte = 0;
-                if ((inbuffer[2] >> 0) & 0x01) {
+                if ((L7_PARAM(0) >> 0) & 0x01) {
                    /* Supports RDS/RBDS Capable so set
                     *StatusChangeNotify for RDS/RBDS Data
                     */
                     statusnotifymaskbyte = 1;
                 }
-                if ((inbuffer[2] >> 1) & 0x01) {
+                if ((L7_PARAM(0) >> 1) & 0x01) {
                     /* Supports Tuner Channel RSSi Indicator Capable so set */
                     /* StatusChangeNotify for RSSI */
                     /* Apple 5G firmware does NOT enable this bit so we wont  */
                     /* statusnotifymaskbyte += 2;                   */
                 }
                 IAP_TX_INIT(0x07, 0x18);
+                IAP_TX_PUT_IPOD_TRANSID();
                 IAP_TX_PUT(statusnotifymaskbyte);
                 iap_send_tx();
             }
 
-            if ((inbuffer[4] >> 2) & 0x01) {
+            if ((L7_PARAM(2) >> 2) & 0x01) {
                 /* Reserved */
             }
-            if ((inbuffer[4] >> 3) & 0x01) {
+            if ((L7_PARAM(2) >> 3) & 0x01) {
                 /* Reserved */
             }
-            if ((inbuffer[3] >> 1) & 0x01) {
+            /* L7_PARAM(1) is bits 23:16 of the capability word, so
+             * word bit N sits at shift N - 16. Table 4-117 (p.291)
+             * puts Tuner seek up/down at 18, seek RSSI threshold at 19,
+             * force monophonic at 20, stereo blend at 21 and FM
+             * deemphasis select at 22 -- shifts 2 to 6. These four were
+             * each one low, testing bits 17 to 20 while claiming 18 to
+             * 21; the deemphasis one below has always been right, which
+             * is what settles the mapping. Every body is empty, so
+             * nothing behaved differently -- but whoever fills one in
+             * would have inherited the wrong bit. */
+            if ((L7_PARAM(1) >> 2) & 0x01) {
                 /* Tuner Seek Up/Down` */
             }
-            if ((inbuffer[3] >> 2) & 0x01) {
+            if ((L7_PARAM(1) >> 3) & 0x01) {
                 /* Tuner Seek RSSI Threshold */
             }
-            if ((inbuffer[3] >> 3) & 0x01) {
+            if ((L7_PARAM(1) >> 4) & 0x01) {
                 /* Force Mono Mode */
             }
-            if ((inbuffer[3] >> 4) & 0x01) {
+            if ((L7_PARAM(1) >> 5) & 0x01) {
                 /* Stereo Blend */
             }
-            if ((inbuffer[3] >> 6) & 0x01) {
+            if ((L7_PARAM(1) >> 6) & 0x01) {
                 /* FM Tuner deemphasis */
             }
-            if ((inbuffer[2] >> 2) & 0x01) {
+            if ((L7_PARAM(0) >> 2) & 0x01) {
                 /* Stereo Source */
             }
             break;
@@ -321,9 +410,17 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
         case 0x0A:
         {
             /* Returns Frequency set and RSSI Power Levels
-             * These are sent as is to rmt_tuner_freq() in
-             * ../firmware/drivers/tuner/ipod_remote_tuner.c */
-            rmt_tuner_freq(len, inbuffer);
+             * These are sent to rmt_tuner_freq() in
+             * ../firmware/drivers/tuner/ipod_remote_tuner.c
+             *
+             * Table 4-111 (p.289) gives RetTunerFreq a data length of
+             * 7, and rmt_tuner_freq() reads buf[2..6] with its len
+             * argument cast to void. The only check reaching here was
+             * CHECKLEN(2), so a two-byte 07 0A set the frequency and
+             * radio_tuned from five bytes of RX-buffer tail -- in a
+             * burst, from the next queued packet. */
+            L7_NEED(5);
+            rmt_tuner_freq(len - doff, inbuffer + doff);
             break;
         }
 
@@ -361,7 +458,10 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
         /* case 13 ToIpod      TunerSeekDone 7 bytes */
         case 0x13:
         {
-            rmt_tuner_freq(len, inbuffer);
+            /* Table 4-111 (p.289) gives TunerSeekDone a data length of
+             * 7 as well, and it lands in the same reader. */
+            L7_NEED(5);
+            rmt_tuner_freq(len - doff, inbuffer + doff);
             break;
         }
 
@@ -402,7 +502,14 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
         /* case 1D ToIpod      RetRdsData NN bytes */
         case 0x1D:
         {
-            rmt_tuner_rds_data(len, inbuffer);
+            /* No CHECKLEN here: Table 4-111 (p.290) gives RetRdsData a
+             * data length of "0xNN", so there is no fixed size to
+             * check against. The bound that matters is structural --
+             * four bytes to reach the payload at buf+4 -- and it lives
+             * in rmt_tuner_rds_data(), which is what computes len-4
+             * and underflowed it. A CHECKLEN(4 + doff) here as well is
+             * invisible either way round, as a mutation confirms. */
+            rmt_tuner_rds_data(len - doff, inbuffer + doff);
             break;
         }
 
@@ -419,7 +526,7 @@ void iap_handlepkt_mode7(const unsigned int len, const unsigned char *inbuffer)
         /* case 21 ToIpod      RdsReadyNotify NN bytes */
         case 0x21:
         {
-            rmt_tuner_rds_data(len, inbuffer);
+            rmt_tuner_rds_data(len - doff, inbuffer + doff);
             break;
         }
         /* case 22 Reserved */
