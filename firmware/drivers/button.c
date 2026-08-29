@@ -170,6 +170,24 @@ static bool filter_first_keypress_disabled(int button, int data)
 
 static bool filter_first_keypress_enabled(int button, int data)
 {
+#if defined(BUTTON_REMOTE) && !defined(HAVE_REMOTE_LCD)
+    /* Never swallow a press that came from a remote or an accessory.
+     * The setting exists so that waking the display does not also act
+     * on the device in your pocket, which only makes sense for a button
+     * whose user can see the screen. Someone pressing play on a
+     * headphone remote or a dock cannot, and expects it to work first
+     * time -- as it does on the stock firmware.
+     *
+     * filter_first_remote_keypress_enabled() below already exempts a
+     * remote that has no display of its own. Targets without
+     * HAVE_REMOTE_LCD, which includes every iPod running the accessory
+     * protocol, route those buttons through this function instead and
+     * so never reached that carve-out.
+     */
+    if (button & BUTTON_REMOTE)
+        return filter_first_keypress_disabled(button, data);
+#endif
+
 #if defined(HAVE_TRANSFLECTIVE_LCD) && defined(HAVE_LCD_SLEEP)
     if (is_backlight_on(false) && lcd_active())
 #else

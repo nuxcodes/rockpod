@@ -11,7 +11,7 @@ Rockbox is an open-source replacement firmware for digital audio players (DAPs).
 This tree is a custom build for **iPod Classic 6G/7G** and **iPod Video 5G/5.5G**. Changes may diverge from upstream Rockbox to suit these targets. The two iPods share the same 320x240 LCD and most app-layer code, but have different SoCs, USB controllers, and board-level drivers:
 
 - **iPod Classic (6G/7G):** S5L8702 SoC, DesignWare USB OTG, CS42L55 codec. Config: `ipod6g`. Full feature set including MFi digital audio, SSD power management.
-- **iPod Video (5G/5.5G):** PP5022 SoC, ARC USB OTG, WM8758 codec. Config: `ipodvideo`. UI features (Cover Flow, dynamic colors, themes). MFi digital audio is ported but untested.
+- **iPod Video (5G/5.5G):** PP5022 SoC, ARC USB OTG, WM8758 codec. Config: `ipodvideo`. UI features plus serial iAP and analog line-out; MFi digital audio remains on the experimental `ipod5g-mfi-usb` branch.
 
 ## Build Commands
 
@@ -118,6 +118,8 @@ Multiple backends: native assembler threads (ARM, m68k, MIPS) with cooperative m
 - **4-space indentation**, no tabs. 80-column line limit. Unix LF line endings. UTF-8.
 - **Naming:** all lowercase for variables, functions, structs, enums. UPPER_CASE for preprocessor symbols and enum constants. No mixed case. No typedefs for structs.
 - **Comments:** `/* C-style only */`. Use `#if 0` to comment out blocks. No `//` comments.
+- Add code comments only when absolutely necessary.
+- Keep code comments concise and limited to one sentence.
 - **Function braces** on a new line. Otherwise follow existing file style.
 - When editing existing code, follow the style already present in that file.
 

@@ -9386,6 +9386,34 @@
   </voice>
 </phrase>
 <phrase>
+  id: LANG_ACCESSORY_CONNECTED
+  desc: shown while an iAP accessory owns the user interface
+  user: core
+  <source>
+    *: "Attached to accessory."
+  </source>
+  <dest>
+    *: "Attached to accessory."
+  </dest>
+  <voice>
+    *: "Attached to accessory."
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_OK_TO_DISCONNECT
+  desc: shown while an iAP accessory owns the user interface
+  user: core
+  <source>
+    *: "Ok to disconnect."
+  </source>
+  <dest>
+    *: "Ok to disconnect."
+  </dest>
+  <voice>
+    *: "Ok to disconnect."
+  </voice>
+</phrase>
+<phrase>
   id: LANG_UNKNOWN
   desc: generic string for unknown states, such as an unset clock
   user: core

@@ -52,8 +52,30 @@ void rmt_tuner_freq(unsigned int len, const unsigned char *buf)
     /* length currently unused */
     (void)len;
 
-    unsigned int khz = (buf[2] << 24) | (buf[3] << 16) |
-                       (buf[4] << 8) | buf[5];
+    /* Widen before shifting: buf[2] promotes to int, so a top byte of
+     * 128 or more shifted left by 24 overflows a signed int, which is
+     * undefined. An FM frequency never reaches that, but a malformed
+     * packet from the accessory can. */
+    unsigned int khz = ((unsigned int)buf[2] << 24) |
+                       ((unsigned int)buf[3] << 16) |
+                       ((unsigned int)buf[4] <<  8) |
+                        (unsigned int)buf[5];
+
+    /* MFi 4.7.24 (p.305), RetTunerFreq after a seek: "If no channel was
+     * found, a tuner frequency value of 0xFFFFFFFF must be reported."
+     *
+     * That was taken for a frequency. 0xFFFFFFFF * 1000 wraps to
+     * 4294966296 and lands in an int as -1000, which is below every
+     * region's freq_min -- so a failed seek left the radio reporting a
+     * negative frequency and radio_tuned set, and the UI showed a
+     * station that was not there. */
+    if (khz == 0xFFFFFFFFu)
+    {
+        radio_tuned = false;
+        tuner_signal_power = 0;
+        return;
+    }
+
     tuner_frequency = khz *1000 ;
     radio_tuned = true;
     rmt_tuner_signal_power(buf[6]);
@@ -82,6 +104,30 @@ static void rmt_tuner_set_freq(int curr_freq)
     }
 }
 
+/* Tuner power, on its own.
+ *
+ * MFi 4.7.10 (p.295): "RF tuner state information, such as tuner
+ * frequency, band, and so on, must be preserved by the accessory across
+ * tuner on and off cycles" -- and "When the tuner power is turned off,
+ * it must disable its audio output", which is what makes this the mute.
+ * So powering the tuner is all a mute has to do, and re-programming it
+ * afterwards is not merely wasteful. */
+static void rmt_tuner_power(bool on)
+{
+    const unsigned char data[] = {0x07, 0x05, on ? 0x01 : 0x00};
+    iap_send_pkt(data, sizeof(data));
+}
+
+/* The cold wake-up: invalidate this side's shadow of the accessory's
+ * state and program it from scratch. Only RADIO_SLEEP wants this. */
+/* Defined below; the wake-up sequence needs them to put the user's
+ * region, channel spacing, deemphasis and force-mono back. */
+static void rmt_tuner_region(int region);
+static void rmt_tuner_set_param(unsigned char param);
+static void set_deltafreq(int delta);
+static void set_deemphasis(int deemphasis);
+static void set_mono(int value);
+
 static void rmt_tuner_sleep(int state)
 {
     if (state == 0)
@@ -94,21 +140,80 @@ static void rmt_tuner_sleep(int state)
         tuner_frequency = 0;
         radio_tuned = false;
 
-        /* tuner HW on */
-        const unsigned char data[] = {0x07, 0x05, 0x01};
-        iap_send_pkt(data, sizeof(data));
+        rmt_tuner_power(true);
         /* set rds on */
         const unsigned char data3[] = {0x07, 0x20, 0x40, 0x00, 0x00, 0x10 };
         iap_send_pkt(data3, sizeof(data3));
-        /* boost gain */
+        /* boost gain.
+         *
+         * MFi Table 4-111 (p.289) marks 0x22-0x24 Reserved, so this is
+         * not a documented command -- it comes from what Apple's own
+         * firmware sends to this accessory. Kept because the Radio
+         * Remote is the only accessory that reaches this path and it is
+         * what it expects; changing it on the strength of the table
+         * alone would be guessing at hardware. Recorded so the next
+         * reader knows the table was checked. */
         const unsigned char data1[] = {0x07, 0x24, 0x06 };
         iap_send_pkt(data1, sizeof(data1));
-        /* tuner mode */
-        const unsigned char data4[] = {0x07, 0x0E, 0x00 };
-        iap_send_pkt(data4, sizeof(data3));
+        /* Tuner mode: the user's, not the accessory's default.
+         *
+         * This used to send SetTunerMode 0x00 outright. Table 4-135
+         * (p.301) makes that byte 200 kHz resolution, stereo allowed
+         * and 75 us deemphasis -- the US defaults. The shadows above
+         * are invalidated in the same breath, so nothing re-sent the
+         * real settings either.
+         *
+         * apps/radio/radio.c:222-228 re-applies RADIO_REGION and
+         * RADIO_FORCE_MONO only inside "if (radio_status ==
+         * FMRADIO_OFF)", so resuming from FMRADIO_PAUSED -- the
+         * ordinary Play press on a paused radio -- skipped it. Every
+         * region in firmware/tuner.c:33-38 except the US wants 50 us
+         * and a 100 or 50 kHz grid, so after any pause and resume the
+         * user heard the wrong deemphasis, the accessory's own seek
+         * grid was twice as coarse as their region's and skipped half
+         * the stations, and Force Mono was off with the setting still
+         * showing on.
+         *
+         * Applying them here rather than widening radio.c's condition:
+         * this is the accessory whose state was just invalidated, and
+         * it is the only thing that knows that. */
+        rmt_tuner_region(global_settings.fm_region);
+        set_deltafreq(fm_region_data[global_settings.fm_region].freq_step
+                      == 50000 ? 2 :
+                      fm_region_data[global_settings.fm_region].freq_step
+                      == 100000 ? 1 : 0);
+        set_deemphasis(fm_region_data[global_settings.fm_region].deemphasis
+                       == 50 ? 1 : 0);
+        set_mono(global_settings.fm_force_mono ? 1 : 0);
+        rmt_tuner_set_param(tuner_param);
         /* set volume */
         unsigned char data2[] = {0x03, 0x09, 0x04, 0x00, 0x00 };
-        data2[4] = (char)((global_status.volume+58) * 4);
+        /* Was (volume + 58) * 4, a scale that fits no codec this
+         * firmware runs on: at the WM8758's +6 dB maximum it produced 0,
+         * telling the accessory to play at silence. This is the same
+         * lingo 3 / event 0x04 packet iap_periodic() builds, so it has
+         * to use the same conversion or the two disagree on the wire
+         * inside one session. */
+        /* The UI scale, not the absolute one. Table 4-61 (p.258) gives
+         * event 0x04 "Byte 1: UI Volume Level", and p.261 says the UI
+         * level is "normalized to volume limit settings" where the
+         * absolute one is not. 1050bb2f94 fixed the scale here and
+         * reached for the wrong one of the pair -- its own comment says
+         * this has to match what iap_periodic() sends, and that uses
+         * iap_volume_to_ui_byte(). With a volume limit in force the two
+         * disagree: at the limit this said 128 where the event requires
+         * 255. */
+        data2[4] = iap_volume_to_ui_byte(global_status.volume);
+        /* Sent whether or not the accessory enabled event 0x04, where
+         * iap_periodic() gates the identical packet on
+         * device.notifications. That is a deliberate difference, not an
+         * oversight: this is the Radio Remote's wake-up sequence, it is
+         * the only accessory that reaches this path, and it has a
+         * volume readout to populate before it has had a chance to
+         * subscribe to anything. An accessory that did not ask for the
+         * event can ignore a notification it did not enable; one whose
+         * display starts blank cannot recover until the volume next
+         * moves. Reviewed against MFi 4.3.12 (p.257) and kept. */
         iap_send_pkt(data2, sizeof(data2));
     }
     else
@@ -119,9 +224,7 @@ static void rmt_tuner_sleep(int state)
         /* set rds off */
         const unsigned char data1[] = {0x07, 0x20, 0x00, 0x00, 0x00, 0x00 };
         iap_send_pkt(data1, sizeof(data1));
-        /* stop tuner HW */
-        const unsigned char data2[] = {0x07, 0x05, 0x00};
-        iap_send_pkt(data2, sizeof(data2));
+        rmt_tuner_power(false);
     }
 }
 
@@ -160,13 +263,13 @@ static void rmt_tuner_mute(int value)
         /* mute flag on (pause) */
         unsigned char data[] = {0x03, 0x09, 0x03, 0x02};
         iap_send_pkt(data, sizeof(data));
-        rmt_tuner_sleep(1);
+        rmt_tuner_power(false);
     }
     else
     {
         unsigned char data[] = {0x03, 0x09, 0x03, 0x01};
         iap_send_pkt(data, sizeof(data));
-        rmt_tuner_sleep(0);
+        rmt_tuner_power(true);
     }
 }
 
@@ -259,8 +362,17 @@ static void set_deemphasis(int deemphasis)
 
 static void set_mono(int value)
 {
-    tuner_param &= 0xEF;
-
+    /* The clear that used to be here, outside the guard, dropped bit 4
+     * from the cached parameter byte on every call -- including the
+     * calls that change nothing and send nothing. tuner_param then
+     * disagreed with what the tuner actually holds, and the next write
+     * from any other setting carried force-mono off with it.
+     *
+     * apps/radio/radio.c sets the region and then force-mono on every
+     * entry to the radio screen, so the third entry sent the parameter
+     * byte with bit 4 clear while the user's setting still said force
+     * mono. The clear inside the guard, below, is the one that belongs
+     * here: it makes room for the bit that is about to be written. */
     if (value != mono_mode)
     {
         tuner_param &= 0xEF;
@@ -289,13 +401,26 @@ static bool reply_timeout(void)
 
 void rmt_tuner_rds_data(unsigned int len, const unsigned char *buf)
 {
+    /* The caller checks for four bytes, which is what buf[2] and the
+     * buf+4 payload start need. How much payload there actually is
+     * still varies with the packet: RetRdsData is "0xNN" bytes in
+     * Table 4-111 (p.290), so nothing fixes it. */
+    if (len < 4)
+        return;
+
+    unsigned int avail = len - 4;
+
     if (buf[2] == 0x1E)
     {
-        rds_push_info(RDS_INFO_PS, (uintptr_t)(buf+4), 8);
+        /* The station name is eight characters, but only as many as
+         * the packet carries. rds_push_info() clamps its size against
+         * the destination, never the source, so asking for eight from
+         * a five-byte packet read three bytes past it. */
+        rds_push_info(RDS_INFO_PS, (uintptr_t)(buf+4), MIN(avail, 8u));
     }
     else if(buf[2] == 0x04)
     {
-        rds_push_info(RDS_INFO_RT, (uintptr_t)(buf+4), len-4);
+        rds_push_info(RDS_INFO_RT, (uintptr_t)(buf+4), avail);
     }
 }
 
@@ -337,8 +462,14 @@ int ipod_rmt_tuner_set(int setting, int value)
             /* scan through frequencies */
             if (radio_tuned)
             {
+                /* Out of band, either end. This was && , which needs
+                 * a frequency at or below the minimum and at or above
+                 * the maximum at the same time -- unsatisfiable for
+                 * every entry in fm_region_data, so the re-tune never
+                 * ran and a scan that wandered outside the band stayed
+                 * there. */
                 if ((tuner_frequency <= fmr->freq_min)
-                    && (tuner_frequency >= fmr->freq_max))
+                    || (tuner_frequency >= fmr->freq_max))
                 {
                     tuner_set(RADIO_FREQUENCY,value);
                 }

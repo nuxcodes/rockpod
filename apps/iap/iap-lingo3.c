@@ -32,6 +32,7 @@
 
 #include "iap-core.h"
 #include "iap-lingo.h"
+#include "iap-artwork.h"
 #include "system.h"
 #include "audio.h"
 #include "sound.h"
@@ -39,6 +40,7 @@
 #include "settings.h"
 #include "metadata.h"
 #include "playback.h"
+#include "misc.h"
 #ifdef USB_ENABLE_AUDIO
 bool usb_audio_get_active(void);
 #endif
@@ -58,6 +60,25 @@ bool usb_audio_get_active(void);
             return; \
         }} while(0)
 
+/* Parameters and their length check, in the same units.
+ *
+ * Display Remote commands are lingo byte, command byte, then a
+ * transaction ID when one is in force, so the first parameter is at
+ * 2 + doff and CHECKLEN wants 2 + n + doff for n parameter bytes.
+ * Written out, the two are in different units -- the reads count from
+ * the start of the packet, the check counts the whole packet -- and
+ * this file wrote the same offset both as 2 and as 0x02, so even
+ * grepping for one form missed half of them.
+ *
+ * L3_NEED(n) and L3_PARAM(n) both count parameters. For
+ * SetiPodStateInfo and GetiPodStateInfo the information type is
+ * PARAM(0) and its payload begins at PARAM(1). */
+#define L3_NEED(n)  CHECKLEN(2 + (n) + doff)
+#define L3_PARAM(n) (buf[2 + doff + (n)])
+/* Is parameter n-1 there? For trailing bytes a shorter accessory may
+ * omit -- the same shape as iap-lingo4.c's L4_HAVE(). */
+#define L3_HAVE(n)  (len >= (unsigned int)(2 + (n) + doff))
+
 /* Check for authenticated state, and return an ACK Not
  * Authenticated on failure.
  */
@@ -75,7 +96,7 @@ static uint8_t l3_tid_hi, l3_tid_lo;
 static void cmd_ack(const unsigned char cmd, const unsigned char status)
 {
     IAP_TX_INIT(0x03, 0x00);
-    if (device.auth.idps) {
+    if (DEVICE_TRANSID_ACTIVE) {
         IAP_TX_PUT(l3_tid_hi);
         IAP_TX_PUT(l3_tid_lo);
     }
@@ -89,7 +110,7 @@ static void cmd_ack(const unsigned char cmd, const unsigned char status)
 
 /* Insert transID into a TX response packet after IAP_TX_INIT */
 #define L3_TX_TRANSID() do { \
-        if (device.auth.idps) { \
+        if (DEVICE_TRANSID_ACTIVE) { \
             IAP_TX_PUT(l3_tid_hi); \
             IAP_TX_PUT(l3_tid_lo); \
         }} while(0)
@@ -98,9 +119,10 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 {
     unsigned int cmd = buf[1];
 
-    /* Extra data offset for IDPS transID (0 or 2).  All buf[] data
-     * accesses and CHECKLEN values inside the switch must add doff
-     * so the same code works for both legacy and IDPS packets. */
+    /* Extra data offset for the IDPS transaction ID (0 or 2). Nothing
+     * below adds it by hand: L3_PARAM(n) and L3_NEED(n) take parameter
+     * numbers and fold it in, so the same code works for legacy and
+     * IDPS packets and the check and the reads stay in one unit. */
     unsigned int doff = 0;
 
     l3_tid_hi = 0;
@@ -109,22 +131,36 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
     /* We expect at least two bytes in the buffer, one for the
      * state bits.
      */
+    /* Equivalent mutant: the framer never delivers a payload shorter
+     * than this. MFi 2.5.2 (p.110) puts the smallest packet payload at
+     * 0x02 and iap_getc() enforces it, so len is always at least two
+     * and this can never fire. Kept because it states the handler's
+     * precondition where a reader looks for it, and recorded so the
+     * mutation sweep's survivor list stays fully accounted for. */
     CHECKLEN(2);
+
+    /* After IDPS, all packets include a 2-byte transID after the
+     * command byte.  Extract it and set doff so all data-reading
+     * offsets and CHECKLENs are adjusted correctly.
+     *
+     * This has to happen before the negotiation check below, which
+     * acks. Acking first left l3_tid at 0x0000, and MFi 2.6.1.1 (p.111)
+     * has the accessory ignore any response whose transaction ID
+     * matches no command it sent -- so an accessory that probed a
+     * Display Remote command without having declared lingo 0x03 never
+     * saw the rejection and retried indefinitely. Lingoes 0x02 and 0x04
+     * already parse before their own checks. */
+    if (DEVICE_TRANSID_ACTIVE) {
+        CHECKLEN(4);    /* lingo + cmd + transID(2) minimum */
+        l3_tid_hi = buf[2];
+        l3_tid_lo = buf[3];
+        doff = 2;
+    }
 
     /* Lingo 0x03 must have been negotiated */
     if (!DEVICE_LINGO_SUPPORTED(0x03)) {
         cmd_ack(cmd, IAP_ACK_BAD_PARAM);
         return;
-    }
-
-    /* After IDPS, all packets include a 2-byte transID after the
-     * command byte.  Extract it and set doff so all data-reading
-     * offsets and CHECKLENs are adjusted correctly. */
-    if (device.auth.idps) {
-        CHECKLEN(4);    /* lingo + cmd + transID(2) minimum */
-        l3_tid_hi = buf[2];
-        l3_tid_lo = buf[3];
-        doff = 2;
     }
 
     switch (cmd)
@@ -187,9 +223,9 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         {
             uint32_t index;
 
-            CHECKLEN(7 + doff);
+            L3_NEED(5);
 
-            index = get_u32(&buf[2 + doff]);
+            index = get_u32(&L3_PARAM(0));
 
             if (index > 0) {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
@@ -259,9 +295,9 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         {
             uint32_t index;
 
-            CHECKLEN(6 + doff);
+            L3_NEED(4);
 
-            index = get_u32(&buf[2 + doff]);
+            index = get_u32(&L3_PARAM(0));
 
             if (index > 0) {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
@@ -294,19 +330,50 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x08:
         {
+            struct iap_chapter_info chapter;
+            struct mp3entry *id3;
             struct tm* tm;
 
-            CHECKLEN(6 + doff);
+            L3_NEED(4);
             CHECKAUTH;
 
             /* Save the current state of the various attributes we track */
             device.trackpos_ms = iap_get_trackpos();
             device.track_index = iap_get_trackindex();
-            device.chapter_index = 0;
-            device.play_status = audio_status();
-            /* TODO: Fix this */
-            device.mute = false;
-            device.volume = global_status.volume;
+            id3 = audio_current_track();
+            if ((audio_status() & AUDIO_STATUS_PLAY)
+                && iap_current_chapter(id3, &chapter)) {
+                device.chapter_index = chapter.index;
+                device.chapter_track_index = device.track_index;
+                device.chapter_count = chapter.count;
+            } else {
+                device.chapter_index = UINT32_MAX;
+                device.chapter_track_index = UINT32_MAX;
+                device.chapter_count = 0;
+            }
+            /* Same value the notification compares against, so a
+             * subscription taken during a seek does not fire on its
+             * first tick for a state that had not changed. */
+            device.play_status = iap_play_state_reported();
+            /* device.mute is deliberately not touched. Every other
+             * line here records what the state is; asserting mute off
+             * made the flag disagree with the codec, which is still at
+             * sound_min() from wherever the mute was applied -- nothing
+             * here lifts the attenuation. A following GetiPodStateInfo
+             * then answered "not muted, UI volume 128" with the
+             * hardware at -60 dB. */
+            /* Saved in the transmitted 0..255 form, not dB: the field is
+             * an unsigned char and the dB value is signed, so -25 dB
+             * would land as 231 and defeat the change detection in
+             * iap_periodic().
+             *
+             * volume_reported is cleared so the first tick after an
+             * accessory enables volume notifications sends the current
+             * level. Change detection alone would leave an accessory
+             * that never sees the user touch the volume with no idea
+             * what it is. */
+            device.volume = iap_volume_to_byte(global_status.volume);
+            device.volume_reported = false;
             device.power_state = charger_input_state;
             device.battery_level = battery_level();
             /* TODO: Fix this */
@@ -328,7 +395,44 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
             /* Get the notification bits */
             device.do_notify = false;
             device.changed_notifications = 0;
-            device.notifications = get_u32(&buf[0x02 + doff]);
+            /* A fresh subscription is owed the current state, not just
+             * the next change. The volume does this through
+             * volume_reported; the power and battery state needs the
+             * same, or an accessory that enables bit 5 hears nothing
+             * until the battery moves. */
+            device.volume_reported = false;
+            device.power_reported = false;
+            /* The mask is stored whole and acked Success even though
+             * five of the bits Table 4-59 (p.255) defines are never
+             * served: 06 Equalizer setting, 11 Backlight level, 13
+             * Sound check state, 14 Audiobook speed and 17 Track
+             * capabilities. Each is backed by a stub in this firmware
+             * -- equalizer_index, backlight, soundcheck and audiobook
+             * are assigned constants above and nothing ever moves them,
+             * and every capability in event 0x11 is a constant zero --
+             * so there is no change to report.
+             *
+             * This said six, and named four. Bit 18, Playback engine
+             * contents, was in the list and is not a stub: its value is
+             * playlist_amount(), and iap_periodic() was already sending
+             * exactly it for the Extended Interface twin. It is served
+             * now.
+             *
+             * That is the same shape as the Extended Interface bit 01
+             * defect, and unlike that one it cannot be answered on the
+             * wire. Lingo 3 has no GetSupportedRemoteEventNotification:
+             * 4.3.11 (p.255) gives the accessory no way to ask which
+             * bits work and defines no partial-support status, so a
+             * non-Success ack would refuse the whole mask and break an
+             * accessory that asked for everything and needed one bit.
+             * Masking the unserved bits out would change nothing it can
+             * observe.
+             *
+             * Recorded rather than fixed, so the next reader does not
+             * take the silence for an oversight or the refusal for an
+             * improvement. Serving them means implementing the four
+             * features behind them. */
+            device.notifications = get_u32(&L3_PARAM(0));
             if (device.notifications)
                 device.do_notify = true;
 
@@ -363,13 +467,25 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         case 0x0A:
         {
             CHECKAUTH;
-            IAP_TX_INIT(0x03, 0x0B);
-            L3_TX_TRANSID();
-            IAP_TX_PUT_U32(device.changed_notifications);
+            /* Detects changes itself, so polling works without any
+             * subscription -- 4.3.13 (p.263) says it must. Reading
+             * clears, as the same paragraph requires.
+             *
+             * Read before the buffer is opened, like every other call
+             * in this file that grew. It samples the track position,
+             * the battery and the hold switch now, and the next thing
+             * added to it will be someone else's; a growing function
+             * inside a TX window is the trap this layer has been fixed
+             * for four times. */
+            {
+                uint32_t changed = iap_take_changed_events();
+
+                IAP_TX_INIT(0x03, 0x0B);
+                L3_TX_TRANSID();
+                IAP_TX_PUT_U32(changed);
+            }
 
             iap_send_tx();
-
-            device.changed_notifications = 0;
             break;
         }
 
@@ -401,25 +517,42 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         case 0x0C:
         {
             struct mp3entry* id3;
-            struct playlist_info* playlist;
-            int play_status;
             struct tm* tm;
+            bool has_artwork = false;
 
-            CHECKLEN(3 + doff);
+            L3_NEED(1);
             CHECKAUTH;
+
+            /* Before the buffer is opened; see the note at 0x13.
+             *
+             * get_time() belongs here for the same reason and was left
+             * behind when the other two were moved. It blocks: once a
+             * second rtc_dirty() is true and it reads the RTC over i2c
+             * (rtc_pcf50605.c:44 on the 5G, rtc-6g.c on the 6G), which
+             * takes i2c_mtx and yields inside pp_i2c_wait_not_busy().
+             * Called from infoType 0x09 with the buffer already open,
+             * that hands the CPU to the UI thread, and on the 5G any
+             * tuner_set() from the radio screen reaches iap_send_pkt(),
+             * which rewinds iap_txnext to the payload start. The date
+             * bytes then land after the tuner command in one frame
+             * under a single length and checksum, and the reply the
+             * accessory asked for is gone. */
+            id3 = audio_current_track();
+            tm = get_time();
+            if (L3_PARAM(0) == 0x11)
+                has_artwork = iap_artwork_available(id3);
 
             IAP_TX_INIT(0x03, 0x0D);
             L3_TX_TRANSID();
-            IAP_TX_PUT(buf[0x02 + doff]);
+            IAP_TX_PUT(L3_PARAM(0));
 
-            switch (buf[0x02 + doff])
+            switch (L3_PARAM(0))
             {
                 /* 0x00: Track position
                  * Data length: 4
                  */
                 case 0x00:
                 {
-                    id3 = audio_current_track();
                     IAP_TX_PUT_U32(id3->elapsed);
 
                     iap_send_tx();
@@ -431,8 +564,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x01:
                 {
-                    playlist = playlist_get_current();
-                    IAP_TX_PUT_U32(playlist->index - playlist->first_index);
+                    IAP_TX_PUT_U32(iap_get_trackindex());
 
                     iap_send_tx();
                     break;
@@ -443,11 +575,17 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x02:
                 {
-                    playlist = playlist_get_current();
-                    IAP_TX_PUT_U32(playlist->index - playlist->first_index);
-                    /* Indicate that track does not have chapters */
-                    IAP_TX_PUT_U16(0x0000);
-                    IAP_TX_PUT_U16(0xFFFF);
+                    struct iap_chapter_info chapter;
+
+                    IAP_TX_PUT_U32(iap_get_trackindex());
+                    if ((audio_status() & AUDIO_STATUS_PLAY)
+                        && iap_current_chapter(id3, &chapter)) {
+                        IAP_TX_PUT_U16(chapter.count);
+                        IAP_TX_PUT_U16(chapter.index);
+                    } else {
+                        IAP_TX_PUT_U16(0);
+                        IAP_TX_PUT_U16(0xFFFF);
+                    }
 
                     iap_send_tx();
                     break;
@@ -458,18 +596,10 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x03:
                 {
-                    /* TODO: Handle FF/REW
+                    /* Table 4-62 (p.262) has FF and REW here too; see
+                     * iap_play_state_reported().
                      */
-                    play_status = audio_status();
-                    if (play_status & AUDIO_STATUS_PLAY) {
-                        if (play_status & AUDIO_STATUS_PAUSE) {
-                            IAP_TX_PUT(0x02);
-                        } else {
-                            IAP_TX_PUT(0x01);
-                        }
-                    } else {
-                        IAP_TX_PUT(0x00);
-                    }
+                    IAP_TX_PUT(iap_play_state_reported());
 
                     iap_send_tx();
                     break;
@@ -483,13 +613,26 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                     if (device.mute == false) {
                         /* Mute status False*/
                         IAP_TX_PUT(0x00);
-                        /* Volume */
-#ifdef USB_ENABLE_AUDIO
-                        if (usb_audio_get_active())
-                            IAP_TX_PUT(0xFF);
-                        else
-#endif
-                            IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
+                        /* Volume.
+                         *
+                         * This reported a hardcoded 0xFF while USB
+                         * audio was streaming, on the reasoning that
+                         * the DAC owns volume and should apply full
+                         * gain. That suits a dock with its own knob and
+                         * nothing else: the digital stream carries no
+                         * attenuation of its own, because SOUND_VOLUME
+                         * is applied in the CS42L55 headphone amp
+                         * (firmware/drivers/audio/cs42l55.c:44) and
+                         * HAVE_SW_VOLUME_CONTROL is not defined for
+                         * either target. An accessory without a volume
+                         * control of its own -- a Bluetooth transmitter,
+                         * say -- was therefore pinned at full scale with
+                         * no way to follow the iPod.
+                         *
+                         * MFi Table 4-61 asks for the UI volume level,
+                         * which p.261 says is "normalized to volume limit
+                         * settings", so report that scale. */
+                        IAP_TX_PUT(iap_volume_to_ui_byte(global_status.volume));
 
                     } else {
                         /* Mute status True*/
@@ -560,6 +703,20 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                             IAP_TX_PUT(0x02);
                             break;
                         }
+
+                        default:
+                        {
+                            /* Table 4-64 (p.262) has no encoding for
+                             * REPEAT_SHUFFLE or REPEAT_AB, and without
+                             * an arm here the reply went out with no
+                             * data byte at all -- Table 4-71 (p.265)
+                             * makes infoData follow Table 4-61, which
+                             * gives repeat one byte. "All" is the
+                             * closest of the three, and iap-lingo4.c
+                             * already answers it. */
+                            IAP_TX_PUT(0x02);
+                            break;
+                        }
                     }
 
                     iap_send_tx();
@@ -571,10 +728,16 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x09:
                 {
-                    tm = get_time();
-
                     /* Year */
-                    IAP_TX_PUT_U16(tm->tm_year);
+                    /* MFi Table 4-61 (p.260) and Table 4-72 (p.264):
+                    * "A value of 2005 represents the year 2005 A.D."
+                    * Rockbox keeps tm_year as years since 1900, the
+                    * POSIX convention -- rtc-6g.c:47 and
+                    * rtc_pcf50605.c:54 both compute "buf[6] + 100",
+                    * and valid_time() rejects anything outside
+                    * 100..199 -- so it needs converting. Sent raw it
+                    * put year 126 on the wire in 2026. */
+                    IAP_TX_PUT_U16(tm->tm_year + 1900);
 
                     /* Month */
                     IAP_TX_PUT(tm->tm_mon+1);
@@ -658,10 +821,11 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x0F:
                 {
-                    unsigned int pos;
-
-                    id3 = audio_current_track();
-                    pos = id3->elapsed/1000;
+                    /* id3 was read at the top of this handler, before
+                     * the buffer was opened. Re-reading here would take
+                     * id3_mutex with a half-built packet in the TX
+                     * buffer, which is the window the hoist closes. */
+                    unsigned int pos = id3->elapsed/1000;
 
                     IAP_TX_PUT_U16(pos);
 
@@ -677,19 +841,15 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                     if (device.mute == false) {
                         /* Mute status False*/
                         IAP_TX_PUT(0x00);
-                        /* Volume */
-#ifdef USB_ENABLE_AUDIO
-                        if (usb_audio_get_active())
-                        {
-                            IAP_TX_PUT(0xFF);
-                            IAP_TX_PUT(0xFF);
-                        }
-                        else
-#endif
-                        {
-                            IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
-                            IAP_TX_PUT(0xFF & (int)((global_status.volume + 90) * 2.65625));
-                        }
+                        /* Table 4-61 (p.261) splits these two: byte 1 is
+                         * the UI volume, "normalized to volume limit
+                         * settings", byte 2 the absolute volume, "not
+                         * normalized". They coincide until the user
+                         * lowers the volume limit. See the note on info
+                         * type 0x04 above for why neither reports a
+                         * hardcoded maximum while USB audio streams. */
+                        IAP_TX_PUT(iap_volume_to_ui_byte(global_status.volume));
+                        IAP_TX_PUT(iap_volume_to_byte(global_status.volume));
 
                     } else {
                         /* Mute status True*/
@@ -699,6 +859,19 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                         IAP_TX_PUT(0x00);
                     }
 
+                    iap_send_tx();
+                    break;
+                }
+
+                case 0x11:
+                {
+                    struct iap_chapter_info chapter;
+                    uint32_t capabilities =
+                        iap_current_chapter(id3, &chapter) ? BIT_N(1) : 0;
+
+                    if (has_artwork)
+                        capabilities |= BIT_N(2);
+                    IAP_TX_PUT_U32(capabilities);
                     iap_send_tx();
                     break;
                 }
@@ -737,9 +910,9 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x0E:
         {
-            CHECKLEN(3 + doff);
+            L3_NEED(1);
             CHECKAUTH;
-            switch (buf[0x02 + doff])
+            switch (L3_PARAM(0))
             {
                 /* Track position (ms)
                  * Data length: 4
@@ -748,8 +921,18 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 {
                     uint32_t pos;
 
-                    CHECKLEN(7 + doff);
-                    pos = get_u32(&buf[0x03 + doff]);
+                    L3_NEED(5);
+                    pos = get_u32(&L3_PARAM(1));
+                    /* audio_on_ff_rewind() (apps/playback.c:3374)
+                     * returns on PLAY_STOPPED, so with nothing playing
+                     * the seek does not happen -- and 4.3.17 (p.266)
+                     * has the ack carry "the results of the operation".
+                     * Status 0x02, matching the two precedents in this
+                     * same switch. */
+                    if (iap_play_state_byte() == 0x00) {
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                        break;
+                    }
                     audio_ff_rewind(pos);
 
                     cmd_ok(cmd);
@@ -763,8 +946,8 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 {
                     uint32_t index;
 
-                    CHECKLEN(7 + doff);
-                    index = get_u32(&buf[0x03 + doff]);
+                    L3_NEED(5);
+                    index = get_u32(&L3_PARAM(1));
                     /* Same guard as SetCurrentPlayingTrack below:
                      * audio_skip() walks an out-of-range offset back one
                      * track at a time holding id3_mutex, so a wild index
@@ -785,8 +968,16 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x02:
                 {
-                    /* This is not supported */
-                    cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                    uint16_t index;
+
+                    L3_NEED(3);
+                    index = get_u16(&L3_PARAM(1));
+                    if (!(audio_status() & AUDIO_STATUS_PLAY))
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                    else if (!iap_set_chapter(index))
+                        cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    else
+                        cmd_ok(cmd);
                     break;
                 }
 
@@ -795,8 +986,34 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x03:
                 {
-                    CHECKLEN(4 + doff);
-                    switch(buf[0x03 + doff])
+                    L3_NEED(2);
+
+                    /* Stop, Play and Pause are all exits from a seek,
+                     * and Table 4-62 (p.262) lists them as peers of
+                     * 0x03 FF and 0x04 REW -- nothing obliges an
+                     * accessory to send 0x05 EndFFRew first.
+                     *
+                     * Ending it here rather than letting the ten-second
+                     * safety release in iap_periodic() do it.
+                     * iap_seek_start() leaves iap_remotebtn holding
+                     * BUTTON_RC_RIGHT and iap_timeoutbtn at
+                     * IAP_BTN_HELD, and none of these three arms
+                     * touched either, so for those ten seconds
+                     * iap_play_state_reported() answered Fast forward
+                     * to a stopped player, button-clickwheel.c:479 ORed
+                     * the phantom button into the user's own input and
+                     * the browser scrolled by itself, and the accessory
+                     * never got the seek-stop notifications it was
+                     * owed. iap-lingo4.c:2687 does this before its own
+                     * audio_stop(); this is the same line for the lingo
+                     * that shares the seek helpers with it.
+                     *
+                     * No TX buffer is open here, so the packets
+                     * iap_seek_stop() sends are safe. */
+                    if (L3_PARAM(1) <= 0x02 && device.pb_seeking)
+                        iap_seek_stop();
+
+                    switch(L3_PARAM(1))
                     {
                         case 0x00:
                         {
@@ -807,14 +1024,52 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 
                         case 0x01:
                         {
-                            audio_resume();
-                            cmd_ok(cmd);
+                            /* Table 4-62 (p.262) annotates this value
+                             * "start or resume playback" for this
+                             * command. Resuming alone is a no-op on a
+                             * stopped engine, and this arm acked
+                             * Success for it. */
+                            if (!iap_play_or_resume())
+                                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                            else
+                                cmd_ok(cmd);
                             break;
                         }
 
                         case 0x02:
                         {
                             audio_pause();
+                            cmd_ok(cmd);
+                            break;
+                        }
+
+                        /* Table 4-62 (p.262): "0x03 Fast forward (FF),
+                         * 0x04 Fast rewind (REW), 0x05 End fast forward
+                         * or rewind mode", and Table 4-74 (p.267)
+                         * describes this info type as "The play status
+                         * of the Apple device (play, pause, stop, FF or
+                         * REW)".
+                         *
+                         * All three were answered Command Failed, so a
+                         * head unit speaking only Display Remote had no
+                         * seek at all -- the Extended Interface lingo
+                         * has had one since PlayControl was written.
+                         * Same helpers, so the two cannot drift. */
+                        case 0x03:
+                        case 0x04:
+                        {
+                            /* Refused with nothing playing -- see the
+                             * note on iap_seek_start(). */
+                            if (!iap_seek_start(L3_PARAM(1) == 0x03))
+                                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                            else
+                                cmd_ok(cmd);
+                            break;
+                        }
+
+                        case 0x05:
+                        {
+                            iap_seek_stop();
                             cmd_ok(cmd);
                             break;
                         }
@@ -830,36 +1085,101 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
 
                 case 0x04:
                 {
-                    CHECKLEN(5 + doff);
+                    /* Table 4-74 (p.267) gives this info type three
+                     * data bytes -- mute state, UI volume level and
+                     * bRestoreOnExit -- so the spec-exact check is
+                     * L3_NEED(4). It stays at three, and the trailing
+                     * byte is read only when it is there: the two bytes
+                     * the command exists to carry are the two required
+                     * ones, and refusing a dock that sends the shorter
+                     * form would stop its volume control working
+                     * outright. Same shape as iap-lingo4.c's SetShuffle
+                     * and SetRepeat, whose RestoreOnExit byte the spec
+                     * itself calls optional. */
+                    L3_NEED(3);
 #ifdef USB_ENABLE_AUDIO
                     /* In source mode, volume is controlled by the
                      * external DAC — don't modify Rockbox volume. */
                     if (usb_audio_get_active())
                     {
-                        cmd_ok(cmd);
+                        /* Volume belongs to the external DAC while the
+                         * digital stream is live, so nothing here can
+                         * apply it. MFi 4.3.17 (p.266) has this command
+                         * answered by "an iPodAck command with the
+                         * results of the operation", and the operation
+                         * did not happen -- Success said it had, and a
+                         * following GetiPodStateInfo then reported the
+                         * unchanged level, so the two answers
+                         * disagreed. The device also advertises UI
+                         * Volume control in RetiPodOptionsForLingo
+                         * (Table 3-132 p.194 bit 00), which is what
+                         * invited the command. */
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                         break;
                     }
 #endif
-                    if (buf[0x03 + doff]==0x00){
+                    /* bRestoreOnExit, Table 4-75 (p.270). Armed before
+                     * the level moves, so what gets remembered is the
+                     * user's own. Optional byte: absent means the
+                     * accessory did not ask, which is IAP_RESTORE_NO. */
+                    iap_volume_restore_arm(L3_HAVE(4) && L3_PARAM(3)
+                                           ? IAP_RESTORE_YES
+                                           : IAP_RESTORE_NO);
+
+                    if (L3_PARAM(1)==0x00){
                         /* Not Muted */
                         {
-                            int vol = (int) (buf[0x04 + doff]/2.65625)-90;
-                            /* The byte maps onto -90..+6 dB but the
-                             * codec only accepts sound_min..sound_max.
-                             * This is written straight to global_status
-                             * and re-applied on every cold start, so an
-                             * out-of-range value is a silent, permanent
-                             * mute that survives a reboot. */
+                            int vol = iap_byte_to_volume(L3_PARAM(2));
+                            /* Byte 1 is a UI volume level (MFi Table
+                             * 4-73, p.267), so it maps onto the volume
+                             * limit rather than sound_max. The clamp is
+                             * belt and braces: this is written straight
+                             * to global_status and re-applied on every
+                             * cold start, so an out-of-range value would
+                             * be a silent, permanent mute surviving a
+                             * reboot. */
                             if (vol < sound_min(SOUND_VOLUME))
                                 vol = sound_min(SOUND_VOLUME);
                             else if (vol > sound_max(SOUND_VOLUME))
                                 vol = sound_max(SOUND_VOLUME);
                             global_status.volume = vol;
+
+                            /* Storing the level is not applying it.
+                             * setvol() (apps/misc.c:871) is what calls
+                             * sound_set_volume(), and it is what every
+                             * other volume control in Rockbox goes
+                             * through -- the wheel, the sound menu, the
+                             * radio screen. Without it an accessory
+                             * changed the setting and nothing else.
+                             * It also lifts a mute, because it re-applies
+                             * the stored level the mute left untouched. */
+                            iap_set_mute(false);
                         }
-                        device.mute = false;
                     }
                     else {
-                        device.mute = true;
+                        /* Muting was recorded and reported and never
+                         * applied, so an accessory that muted the iPod
+                         * was told it had worked and heard no change.
+                         *
+                         * There is no mute in the app-level sound API --
+                         * audiohw_mute() is static inside each codec
+                         * driver -- so this attenuates to sound_min
+                         * instead, which is -60 dB on the CS42L55 and
+                         * -90 dB on the WM8758. global_status.volume is
+                         * deliberately left alone: it is the level to
+                         * come back to, and persisting a minimum there
+                         * would be a silent mute surviving a reboot.
+                         *
+                         * The cost of that choice is that starting a
+                         * track re-applies global_status.volume
+                         * (apps/playback.c:3074) and so lifts the mute.
+                         * Holding it across a track change needs a mute
+                         * concept that Rockbox does not have.
+                         *
+                         * sound_set_volume() writes global_status.volume
+                         * itself (firmware/sound.c:320), so the level to
+                         * come back to has to be put back after it. */
+                        iap_set_mute(true);
                     }
                     cmd_ok(cmd);
                     break;
@@ -872,8 +1192,8 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 {
                     uint32_t index;
 
-                    CHECKLEN(8 + doff);
-                    index = get_u32(&buf[0x03 + doff]);
+                    L3_NEED(6);
+                    index = get_u32(&L3_PARAM(1));
                     if (index == 0) {
                         cmd_ok(cmd);
                     } else {
@@ -887,23 +1207,31 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x07:
                 {
-                    CHECKLEN(5 + doff);
+                    L3_NEED(3);
 
-                    switch(buf[0x03 + doff])
+                    switch(L3_PARAM(1))
                     {
                         case 0x00:
                         {
-                            iap_shuffle_state(false);
+                            iap_shuffle_state(false, L3_PARAM(2) ? IAP_RESTORE_YES : IAP_RESTORE_NO);
                             cmd_ok(cmd);
                             break;
                         }
                         case 0x01:
-                        case 0x02:
                         {
-                            iap_shuffle_state(true);
+                            iap_shuffle_state(true, L3_PARAM(2) ? IAP_RESTORE_YES : IAP_RESTORE_NO);
                             cmd_ok(cmd);
                             break;
                         }
+
+                        /* 0x02 is "Shuffle albums" in Table 4-63
+                         * (p.262), and this device cannot do it -- it
+                         * used to answer Success and shuffle tracks
+                         * instead, which is a different thing done
+                         * silently. The Extended Interface sibling
+                         * refuses anything above 0x01, so the same
+                         * device gave two answers to the same request.
+                         * Falls through to the default below. */
 
                         default:
                         {
@@ -919,25 +1247,25 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x08:
                 {
-                    CHECKLEN(5 + doff);
+                    L3_NEED(3);
 
-                    switch(buf[0x03 + doff])
+                    switch(L3_PARAM(1))
                     {
                         case 0x00:
                         {
-                            iap_repeat_state(REPEAT_OFF);
+                            iap_repeat_state(REPEAT_OFF, L3_PARAM(2) ? IAP_RESTORE_YES : IAP_RESTORE_NO);
                             cmd_ok(cmd);
                             break;
                         }
                         case 0x01:
                         {
-                            iap_repeat_state(REPEAT_ONE);
+                            iap_repeat_state(REPEAT_ONE, L3_PARAM(2) ? IAP_RESTORE_YES : IAP_RESTORE_NO);
                             cmd_ok(cmd);
                             break;
                         }
                         case 0x02:
                         {
-                            iap_repeat_state(REPEAT_ALL);
+                            iap_repeat_state(REPEAT_ALL, L3_PARAM(2) ? IAP_RESTORE_YES : IAP_RESTORE_NO);
                             cmd_ok(cmd);
                             break;
                         }
@@ -955,7 +1283,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x09:
                 {
-                    CHECKLEN(9 + doff);
+                    L3_NEED(7);
 
                     cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                     break;
@@ -966,7 +1294,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x0A:
                 {
-                    CHECKLEN(7 + doff);
+                    L3_NEED(5);
 
                     cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                     break;
@@ -977,7 +1305,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x0B:
                 {
-                    CHECKLEN(5 + doff);
+                    L3_NEED(3);
 
                     cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                     break;
@@ -988,20 +1316,27 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x0D:
                 {
-                    CHECKLEN(5 + doff);
+                    L3_NEED(3);
 
                     cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                     break;
                 }
 
                 /* Audio book speed
-                 * Data length: 1
+                 * Data length: 2
                  */
                 case 0x0E:
                 {
-                    CHECKLEN(4 + doff);
+                    L3_NEED(3);
 
-                    cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                    if (L3_PARAM(2) > 0x01)
+                        cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                    else if (L3_PARAM(1) == 0x00)
+                        cmd_ok(cmd);
+                    else if (L3_PARAM(1) == 0xFF || L3_PARAM(1) == 0x01)
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                    else
+                        cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                     break;
                 }
 
@@ -1012,8 +1347,18 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 {
                     uint16_t pos;
 
-                    CHECKLEN(5 + doff);
-                    pos = get_u16(&buf[0x03 + doff]);
+                    L3_NEED(3);
+                    pos = get_u16(&L3_PARAM(1));
+                    /* audio_on_ff_rewind() (apps/playback.c:3374)
+                     * returns on PLAY_STOPPED, so with nothing playing
+                     * the seek does not happen -- and 4.3.17 (p.266)
+                     * has the ack carry "the results of the operation".
+                     * Status 0x02, matching the two precedents in this
+                     * same switch. */
+                    if (iap_play_state_byte() == 0x00) {
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+                        break;
+                    }
                     audio_ff_rewind(1000L * pos);
 
                     cmd_ok(cmd);
@@ -1026,34 +1371,107 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x10:
                 {
-                    CHECKLEN(7 + doff);
+                    /* Table 4-74 (p.268): mute state, UI volume,
+                     * Absolute volume, bRestoreOnExit. */
+                    L3_NEED(5);
 #ifdef USB_ENABLE_AUDIO
                     if (usb_audio_get_active())
                     {
-                        cmd_ok(cmd);
+                        /* Volume belongs to the external DAC while the
+                         * digital stream is live, so nothing here can
+                         * apply it. MFi 4.3.17 (p.266) has this command
+                         * answered by "an iPodAck command with the
+                         * results of the operation", and the operation
+                         * did not happen -- Success said it had, and a
+                         * following GetiPodStateInfo then reported the
+                         * unchanged level, so the two answers
+                         * disagreed. The device also advertises UI
+                         * Volume control in RetiPodOptionsForLingo
+                         * (Table 3-132 p.194 bit 00), which is what
+                         * invited the command. */
+                        cmd_ack(cmd, IAP_ACK_CMD_FAILED);
                         break;
                     }
 #endif
-                    if (buf[0x03 + doff]==0x00){
+                    /* bRestoreOnExit, Table 4-75 (p.270). Byte 3 of
+                     * this info type's four, so it is required here
+                     * and L3_NEED(5) above has already checked for it. */
+                    iap_volume_restore_arm(L3_PARAM(4) ? IAP_RESTORE_YES
+                                                       : IAP_RESTORE_NO);
+
+                    if (L3_PARAM(1)==0x00){
                         /* Not Muted */
                         {
-                            int vol = (int) (buf[0x04 + doff]/2.65625)-90;
-                            /* The byte maps onto -90..+6 dB but the
-                             * codec only accepts sound_min..sound_max.
-                             * This is written straight to global_status
-                             * and re-applied on every cold start, so an
-                             * out-of-range value is a silent, permanent
-                             * mute that survives a reboot. */
+                            int vol;
+
+                            /* MFi Table 4-74 (p.269): "Byte 1: UI volume
+                             * level ... If the accessory sets this byte
+                             * to 0, the Apple device uses the Absolute
+                             * volume setting."
+                             *
+                             * A zero UI byte is therefore not a request
+                             * for silence, it is a request to read byte
+                             * 2 instead. Taking it literally meant an
+                             * accessory that drives the absolute scale
+                             * -- and so leaves byte 1 at zero, as the
+                             * spec tells it to -- muted the iPod on
+                             * every volume command it sent.
+                             *
+                             * The two scales differ: the UI byte is
+                             * normalized to the volume limit, the
+                             * absolute byte is not. */
+                            if (L3_PARAM(2) == 0x00)
+                                vol = iap_byte_to_abs_volume(L3_PARAM(3));
+                            else
+                                vol = iap_byte_to_volume(L3_PARAM(2));
+
+                            /* The clamp is belt and braces: this is
+                             * written straight to global_status and
+                             * re-applied on every cold start, so an
+                             * out-of-range value would be a silent,
+                             * permanent mute surviving a reboot. */
                             if (vol < sound_min(SOUND_VOLUME))
                                 vol = sound_min(SOUND_VOLUME);
                             else if (vol > sound_max(SOUND_VOLUME))
                                 vol = sound_max(SOUND_VOLUME);
                             global_status.volume = vol;
+
+                            /* Storing the level is not applying it.
+                             * setvol() (apps/misc.c:871) is what calls
+                             * sound_set_volume(), and it is what every
+                             * other volume control in Rockbox goes
+                             * through -- the wheel, the sound menu, the
+                             * radio screen. Without it an accessory
+                             * changed the setting and nothing else.
+                             * It also lifts a mute, because it re-applies
+                             * the stored level the mute left untouched. */
+                            iap_set_mute(false);
                         }
-                        device.mute = false;
                     }
                     else {
-                        device.mute = true;
+                        /* Muting was recorded and reported and never
+                         * applied, so an accessory that muted the iPod
+                         * was told it had worked and heard no change.
+                         *
+                         * There is no mute in the app-level sound API --
+                         * audiohw_mute() is static inside each codec
+                         * driver -- so this attenuates to sound_min
+                         * instead, which is -60 dB on the CS42L55 and
+                         * -90 dB on the WM8758. global_status.volume is
+                         * deliberately left alone: it is the level to
+                         * come back to, and persisting a minimum there
+                         * would be a silent mute surviving a reboot.
+                         *
+                         * The cost of that choice is that starting a
+                         * track re-applies global_status.volume
+                         * (apps/playback.c:3074) and so lifts the mute.
+                         * Holding it across a track change needs a mute
+                         * concept that Rockbox does not have.
+                         *
+                         * sound_set_volume() writes global_status.volume
+                         * itself (firmware/sound.c:320), so the level to
+                         * come back to has to be put back after it. */
+                        iap_set_mute(true);
                     }
 
                     cmd_ok(cmd);
@@ -1095,32 +1513,25 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         {
             int play_status;
             struct mp3entry* id3;
-            struct playlist_info* playlist;
 
             CHECKAUTH;
+
+            /* Both blocking reads before the buffer is opened; see the
+             * note at 0x13. audio_current_track() takes id3_mutex. */
+            id3 = audio_current_track();
+            play_status = iap_play_state_reported();
 
             IAP_TX_INIT(0x03, 0x10);
             L3_TX_TRANSID();
 
-            play_status = audio_status();
+            IAP_TX_PUT(play_status);
 
-            if (play_status & AUDIO_STATUS_PLAY) {
-                /* Playing or paused */
-                if (play_status & AUDIO_STATUS_PAUSE) {
-                    /* Paused */
-                    IAP_TX_PUT(0x02);
-                } else {
-                    /* Playing */
-                    IAP_TX_PUT(0x01);
-                }
-                playlist = playlist_get_current();
-                IAP_TX_PUT_U32(playlist->index - playlist->first_index);
-                id3 = audio_current_track();
+            if (play_status != 0x00) {
+                IAP_TX_PUT_U32(iap_get_trackindex());
                 IAP_TX_PUT_U32(id3->length);
                 IAP_TX_PUT_U32(id3->elapsed);
             } else {
                 /* Stopped, all values are 0x00 */
-                IAP_TX_PUT(0x00);
                 IAP_TX_PUT_U32(0x00);
                 IAP_TX_PUT_U32(0x00);
                 IAP_TX_PUT_U32(0x00);
@@ -1158,9 +1569,9 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
             uint32_t trackcount;
 
             CHECKAUTH;
-            CHECKLEN(6 + doff);
+            L3_NEED(4);
 
-            index = get_u32(&buf[0x02 + doff]);
+            index = get_u32(&L3_PARAM(0));
             trackcount = playlist_amount();
 
             if (index >= trackcount)
@@ -1208,37 +1619,76 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
              * around this for now.
              */
             uint32_t track_index;
-            struct playlist_track_info track;
+            struct iap_chapter_info chapter;
             struct mp3entry id3;
+            bool has_artwork = false;
+            bool has_chapters = false;
 
-            CHECKLEN(0x09 + doff);
+            L3_NEED(7);
             CHECKAUTH;
 
-            track_index = get_u32(&buf[0x03 + doff]);
-            if (-1 == playlist_get_track_info(NULL, track_index, &track)) {
+            track_index = get_u32(&L3_PARAM(1));
+
+            /* Read the metadata before opening the TX buffer, the way
+             * iap-lingo4.c does at its equivalent site.
+             *
+             * iap_get_trackinfo() reaches get_metadata() and a file
+             * read, and Rockbox's native scheduler is cooperative -- so
+             * another thread runs precisely while this one is blocked.
+             * The tuner driver transmits from the UI thread through
+             * iap_send_pkt(), which begins by resetting iap_txnext to
+             * the payload start, and it is reachable from
+             * apps/radio/radio.c whenever the user opens the radio
+             * screen. With the buffer opened first, its packet landed
+             * on top of this half-built reply and the two went out as
+             * one frame under a single length and checksum.
+             *
+             * Filling the buffer only after every blocking call has
+             * returned closes the window without needing a lock: this
+             * thread now owns the buffer for a stretch of code that
+             * cannot yield. */
+            /* The range check lives inside iap_get_trackinfo() now: it
+             * is what converts the accessory's index into a playlist
+             * one, so a check out here tested a different track than
+             * the one that got read. */
+            if (!iap_get_trackinfo(track_index, &id3)) {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
+
+            if (L3_PARAM(0) == 0x00 || L3_PARAM(0) == 0x08)
+                has_artwork = iap_artwork_available(&id3);
+
+            if (L3_PARAM(0) == 0x00)
+                has_chapters = iap_chapter_at(&id3, 0, &chapter);
+
+            if (L3_PARAM(0) == 0x01
+                && !iap_chapter_at(&id3, get_u16(&L3_PARAM(5)), &chapter))
+            {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
 
             IAP_TX_INIT(0x03, 0x13);
             L3_TX_TRANSID();
-            IAP_TX_PUT(buf[2 + doff]);
-            switch (buf[2 + doff])
+            IAP_TX_PUT(L3_PARAM(0));
+            switch (L3_PARAM(0))
             {
                 /* 0x00: Track caps/info
                  * Information length: 10 bytes
                  */
                 case 0x00:
                 {
-                    iap_get_trackinfo(track_index, &id3);
-                    /* Track capabilities. None of these are supported, yet */
-                    IAP_TX_PUT_U32(0x00);
+                    uint32_t capabilities = has_artwork ? BIT_N(2) : 0;
+
+                    if (has_chapters)
+                        capabilities |= BIT_N(1);
+                    IAP_TX_PUT_U32(capabilities);
 
                     /* Track length in ms */
                     IAP_TX_PUT_U32(id3.length);
 
-                    /* Chapter count, stays at 0 */
-                    IAP_TX_PUT_U16(0x00);
+                    IAP_TX_PUT_U16(has_chapters ? chapter.count : 0);
 
                     iap_send_tx();
                     break;
@@ -1249,11 +1699,8 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x01:
                 {
-                    /* Chapter length, set at 0 (no chapters) */
-                    IAP_TX_PUT_U32(0x00);
-
-                    /* Chapter name, empty */
-                    IAP_TX_PUT_STRING("");
+                    IAP_TX_PUT_U32(chapter.offset_ms);
+                    IAP_TX_PUT_STRLCPY(chapter.name);
 
                     iap_send_tx();
                     break;
@@ -1265,7 +1712,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 case 0x02:
                 {
                     /* Artist name */
-                    iap_get_trackinfo(track_index, &id3);
                     IAP_TX_PUT_STRLCPY(id3.artist);
 
                     iap_send_tx();
@@ -1278,7 +1724,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 case 0x03:
                 {
                     /* Album name */
-                    iap_get_trackinfo(track_index, &id3);
                     IAP_TX_PUT_STRLCPY(id3.album);
 
                     iap_send_tx();
@@ -1291,7 +1736,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 case 0x04:
                 {
                     /* Genre name */
-                    iap_get_trackinfo(track_index, &id3);
                     IAP_TX_PUT_STRLCPY(id3.genre_string);
 
                     iap_send_tx();
@@ -1304,7 +1748,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 case 0x05:
                 {
                     /* Track title */
-                    iap_get_trackinfo(track_index, &id3);
                     IAP_TX_PUT_STRLCPY(id3.title);
 
                     iap_send_tx();
@@ -1317,7 +1760,6 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                 case 0x06:
                 {
                     /* Track Composer */
-                    iap_get_trackinfo(track_index, &id3);
                     IAP_TX_PUT_STRLCPY(id3.composer);
 
                     iap_send_tx();
@@ -1347,7 +1789,10 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
                  */
                 case 0x08:
                 {
-                    /* No artwork, return packet containing just the type byte */
+                    if (has_artwork) {
+                        IAP_TX_PUT_U16(IAP_ARTWORK_FORMAT_ID);
+                        IAP_TX_PUT_U16(1);
+                    }
                     iap_send_tx();
                     break;
                 }
@@ -1424,11 +1869,14 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         {
             CHECKAUTH;
 
-            /* We return the empty list, meaning no artwork
-             * TODO: Fix to return actual artwork formats
-             */
             IAP_TX_INIT(0x03, 0x17);
             L3_TX_TRANSID();
+            if (iap_artwork_supported()) {
+                IAP_TX_PUT_U16(IAP_ARTWORK_FORMAT_ID);
+                IAP_TX_PUT(IAP_ARTWORK_PIXEL_FORMAT);
+                IAP_TX_PUT_U16(IAP_ARTWORK_WIDTH);
+                IAP_TX_PUT_U16(IAP_ARTWORK_HEIGHT);
+            }
 
             iap_send_tx();
             break;
@@ -1474,11 +1922,31 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x18:
         {
-            CHECKAUTH;
-            CHECKLEN(0x0C + doff);
+            struct mp3entry id3;
+            enum iap_artwork_start_result result;
+            uint32_t session_id;
+            uint32_t track_index;
 
-            /* No artwork support currently */
-            cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+            CHECKAUTH;
+            L3_NEED(10);
+
+            session_id = iap_artwork_session_id();
+            track_index = get_u32(&L3_PARAM(0));
+            if (get_u16(&L3_PARAM(4)) != IAP_ARTWORK_FORMAT_ID
+                || get_u32(&L3_PARAM(6)) != 0
+                || !iap_get_trackinfo(track_index, &id3)) {
+                cmd_ack(cmd, IAP_ACK_BAD_PARAM);
+                break;
+            }
+
+            result = iap_artwork_start_transfer(0x03, 0x18, 0x19,
+                                                doff != 0,
+                                                l3_tid_hi, l3_tid_lo,
+                                                session_id, &id3);
+            if (result == IAP_ARTWORK_START_FAILED)
+                cmd_ack(cmd, IAP_ACK_CMD_FAILED);
+            else if (result == IAP_ARTWORK_START_BUSY)
+                cmd_ack(cmd, IAP_ACK_NO_RESOURCE);
             break;
         }
 
@@ -1508,6 +1976,20 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
          */
         case 0x1A:
         {
+            /* Table 2-7 (p.105) gives this lingo two answers:
+             * "No (0x00-0x07, 0x1A-0x1E)" over serial and "Yes" over
+             * USB. 0x1C and 0x1E are gated and 0x1A was not, which
+             * matches neither column -- one range, two rules.
+             *
+             * Gated, for the USB reading. That is the stricter of the
+             * two, it is the transport this firmware ships HID on, and
+             * it costs nothing for an accessory that never asks for
+             * authentication: iap-lingo0.c:717 puts one straight into
+             * AUST_AUTH. Only an accessory part way through a handshake
+             * it started itself is refused, and only until it
+             * finishes. */
+            CHECKAUTH;
+
             IAP_TX_INIT(0x03, 0x1B);
             L3_TX_TRANSID();
 
@@ -1577,7 +2059,7 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         case 0x1E:
         {
             CHECKAUTH;
-            CHECKLEN(4 + doff);
+            L3_NEED(2);
 
             /* Sound check is not supported right now
              * TODO: Fix
@@ -1614,26 +2096,30 @@ void iap_handlepkt_mode3(const unsigned int len, const unsigned char *buf)
         case 0x1F:
         {
             uint32_t index;
-            uint32_t trackcount;
+            uint16_t artwork_index;
+            uint16_t artwork_count;
+            struct mp3entry id3;
+            bool has_artwork;
 
             CHECKAUTH;
-            CHECKLEN(0x0C + doff);
+            L3_NEED(10);
 
-            /* Artwork is currently unsuported, just check for a valid
-             * track index
-             */
-            index = get_u32(&buf[0x02 + doff]);
-            trackcount = playlist_amount();
+            index = get_u32(&L3_PARAM(0));
+            artwork_index = get_u16(&L3_PARAM(6));
+            artwork_count = get_u16(&L3_PARAM(8));
 
-            if (index >= trackcount)
-            {
+            if (get_u16(&L3_PARAM(4)) != IAP_ARTWORK_FORMAT_ID
+                || !iap_get_trackinfo(index, &id3)) {
                 cmd_ack(cmd, IAP_ACK_BAD_PARAM);
                 break;
             }
+            has_artwork = iap_artwork_available(&id3);
 
-            /* Send an empty list */
             IAP_TX_INIT(0x03, 0x20);
             L3_TX_TRANSID();
+            if (artwork_index == 0 && artwork_count != 0
+                && has_artwork)
+                IAP_TX_PUT_U32(0);
 
             iap_send_tx();
             break;

@@ -291,7 +291,7 @@ cd build-sim && ./rockboxui
 
 ## Roadmap
 
-**iPod Video 5G/5.5G MFi digital audio.** iPod Video builds are available with all UI features (Cover Flow, dynamic colors, themes). MFi digital audio has been ported to the PP5022/ARC USB controller but is untested on hardware. Alpha builds are available for testing.
+**iPod Video 5G/5.5G MFi digital audio.** Master supports serial iAP and analog line-out on iPod Video, but does not advertise Digital Audio because its USB audio transport is not enabled. The experimental USB work remains on the separate `ipod5g-mfi-usb` branch.
 
 **Generic USB audio support via host mode.** The current support uses USB device mode — the accessory is the host and the iPod authenticates as an Apple audio source. This only works with iPod MFi accessories. The next step is USB host mode, where the iPod becomes the host and sends audio to any class-compliant UAC device — standard USB-C DAC dongles via a dock-to-OTG adapter. The S5L8702's DWC OTG controller supports host mode in hardware; the work is in the host stack and UAC class driver.
 

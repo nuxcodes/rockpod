@@ -178,7 +178,15 @@ int plugin_open(const char *plugin, const char *parameter);
  * when this happens please take the opportunity to sort in
  * any new functions "waiting" at the end of the list.
  */
-#define PLUGIN_API_VERSION 280
+/* 281: HAVE_VOLUME_IN_LIST was defined for ipod6g and ipodvideo, which
+ * inserts ACTION_LIST_VOLUP and ACTION_LIST_VOLDOWN into the middle of
+ * the action enum (apps/action.h:198) and shifts every ordinal after
+ * them by two. apps/plugin.c:969 accepts a plugin on exact version
+ * equality, so a .rock built before that change would have loaded and
+ * silently misread every action from ACTION_TREE_ROOT_INIT onward --
+ * wrong keymaps in every plugin, with no diagnostic, for anyone who
+ * updated rockbox.ipod without also updating .rockbox/rocks/. */
+#define PLUGIN_API_VERSION 281
 
 /* 239 Marks the removal of ARCHOS HWCODEC and CHARCELL */
 

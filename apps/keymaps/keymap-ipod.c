@@ -97,6 +97,10 @@ static const struct button_mapping button_context_wps[]  = {
     LAST_ITEM_IN_LIST,
 }; /* button_context_wps */
 
+static const struct button_mapping button_context_iap[] = {
+    LAST_ITEM_IN_LIST,
+};
+
 static const struct button_mapping button_context_settings[]  = {
     { ACTION_SETTINGS_INC,          BUTTON_SCROLL_FWD,         BUTTON_NONE },
     { ACTION_SETTINGS_INCREPEAT,    BUTTON_SCROLL_FWD|BUTTON_REPEAT,  BUTTON_NONE },
@@ -326,6 +330,29 @@ static const struct button_mapping remote_button_context_standard[]  = {
     LAST_ITEM_IN_LIST
 }; /* remote_button_context_standard */
 
+#ifdef HAVE_VOLUME_IN_LIST
+/* The remote's dedicated volume keys, in a list context of their own.
+ *
+ * They were first put in remote_button_context_standard, which
+ * get_context_mapping_remote()'s default arm makes the terminus of
+ * every remote context -- not just the list ones. ACTION_LIST_VOLUP
+ * then reached screens that have no use for it, and the yes/no screen
+ * treats any action it does not recognise as No (apps/gui/yesno.c:320),
+ * so a volume press over "Delete file?" dismissed the dialog.
+ *
+ * Only apps/gui/list.c:695 consumes these actions, so they belong in
+ * the contexts gui_synclist drives. That is where the other keymaps
+ * using HAVE_VOLUME_IN_LIST put them. */
+static const struct button_mapping remote_button_context_list[]  = {
+    { ACTION_LIST_VOLUP,     BUTTON_RC_VOL_UP,                 BUTTON_NONE },
+    { ACTION_LIST_VOLUP,     BUTTON_RC_VOL_UP|BUTTON_REPEAT,   BUTTON_NONE },
+    { ACTION_LIST_VOLDOWN,   BUTTON_RC_VOL_DOWN,               BUTTON_NONE },
+    { ACTION_LIST_VOLDOWN,   BUTTON_RC_VOL_DOWN|BUTTON_REPEAT, BUTTON_NONE },
+
+    LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
+}; /* remote_button_context_list */
+#endif
+
 static const struct button_mapping remote_button_context_wps[]  = {
     { ACTION_WPS_VOLDOWN,   BUTTON_RC_VOL_DOWN,               BUTTON_NONE },
     { ACTION_WPS_VOLDOWN,   BUTTON_RC_VOL_DOWN|BUTTON_REPEAT, BUTTON_NONE },
@@ -350,12 +377,37 @@ static const struct button_mapping remote_button_context_wps[]  = {
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
 }; /* remote_button_context_wps */
 
+static const struct button_mapping remote_button_context_iap[] = {
+    { ACTION_WPS_VOLDOWN,  BUTTON_RC_VOL_DOWN,                BUTTON_NONE },
+    { ACTION_WPS_VOLDOWN,  BUTTON_RC_VOL_DOWN|BUTTON_REPEAT,  BUTTON_NONE },
+    { ACTION_WPS_VOLUP,    BUTTON_RC_VOL_UP,                  BUTTON_NONE },
+    { ACTION_WPS_VOLUP,    BUTTON_RC_VOL_UP|BUTTON_REPEAT,    BUTTON_NONE },
+    { ACTION_WPS_PLAY,     BUTTON_RC_PLAY|BUTTON_REL,         BUTTON_RC_PLAY },
+    { ACTION_WPS_STOP,     BUTTON_RC_PLAY|BUTTON_REPEAT,      BUTTON_NONE },
+    { ACTION_WPS_SKIPNEXT, BUTTON_RC_RIGHT|BUTTON_REL,        BUTTON_RC_RIGHT },
+    { ACTION_WPS_SEEKFWD,  BUTTON_RC_RIGHT|BUTTON_REPEAT,     BUTTON_NONE },
+    { ACTION_WPS_STOPSEEK, BUTTON_RC_RIGHT|BUTTON_REL,
+                           BUTTON_RC_RIGHT|BUTTON_REPEAT },
+    { ACTION_WPS_SKIPPREV, BUTTON_RC_LEFT|BUTTON_REL,         BUTTON_RC_LEFT },
+    { ACTION_WPS_SEEKBACK, BUTTON_RC_LEFT|BUTTON_REPEAT,      BUTTON_NONE },
+    { ACTION_WPS_STOPSEEK, BUTTON_RC_LEFT|BUTTON_REL,
+                           BUTTON_RC_LEFT|BUTTON_REPEAT },
+    LAST_ITEM_IN_LIST
+};
+
 static const struct button_mapping remote_button_context_tree[]  = {
     { ACTION_TREE_WPS,          BUTTON_RC_PLAY|BUTTON_REL,    BUTTON_RC_PLAY },
     { ACTION_TREE_STOP,         BUTTON_RC_PLAY|BUTTON_REPEAT, BUTTON_RC_PLAY },
     { ACTION_TREE_HOTKEY,       BUTTON_RC_SELECT|BUTTON_PLAY,   BUTTON_NONE },
 
+#ifdef HAVE_VOLUME_IN_LIST
+    /* Through the list context, so the file browser gets the volume
+     * keys, and on to CONTEXT_STD from there. Same terminus, one extra
+     * hop. */
+    LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_LIST)
+#else
     LAST_ITEM_IN_LIST__NEXTLIST(CONTEXT_STD)
+#endif
 }; /* remote_button_context_tree */
 
 static const struct button_mapping remote_button_context_quickscreen[]  = {
@@ -412,10 +464,21 @@ static const struct button_mapping* get_context_mapping_remote( int context )
     {
         case CONTEXT_WPS:
             return remote_button_context_wps;
+        case CONTEXT_IAP:
+            return remote_button_context_iap;
         case CONTEXT_TREE:
         case CONTEXT_MAINMENU:
         case CONTEXT_CUSTOM|CONTEXT_TREE:
             return remote_button_context_tree;
+#ifdef HAVE_VOLUME_IN_LIST
+        /* The contexts gui_synclist drives, which are the only ones
+         * that act on ACTION_LIST_VOLUP/VOLDOWN (apps/gui/list.c:695).
+         * remote_button_context_tree chains here rather than straight
+         * to CONTEXT_STD, so the file browser is covered too. */
+        case CONTEXT_LIST:
+        case CONTEXT_BOOKMARKSCREEN:
+            return remote_button_context_list;
+#endif
         case CONTEXT_QUICKSCREEN:
             return remote_button_context_quickscreen;
 
@@ -445,6 +508,8 @@ const struct button_mapping* get_context_mapping(int context)
             return button_context_standard;
         case CONTEXT_WPS:
             return button_context_wps;
+        case CONTEXT_IAP:
+            return button_context_iap;
 
         case CONTEXT_TREE:
         case CONTEXT_MAINMENU:

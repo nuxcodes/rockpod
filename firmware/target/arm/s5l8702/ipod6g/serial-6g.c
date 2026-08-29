@@ -49,6 +49,7 @@
 extern const struct uartc s5l8702_uartc;
 #ifdef IPOD_ACCESSORY_PROTOCOL
 static void iap_rx_isr(int, char*, char*, uint32_t);
+static volatile bool acc_plugged;
 #endif
 
 struct uartc_port ser_port IDATA_ATTR =
@@ -77,12 +78,28 @@ struct uartc_port ser_port IDATA_ATTR =
  */
 int tx_rdy(void)
 {
+#ifdef IPOD_ACCESSORY_PROTOCOL
+    int oldlevel = disable_irq_save();
+    bool ready = !acc_plugged || uartc_port_tx_ready(&ser_port);
+
+    restore_irq(oldlevel);
+    return ready ? 1 : 0;
+#else
     return uartc_port_tx_ready(&ser_port) ? 1 : 0;
+#endif
 }
 
 void tx_writec(unsigned char c)
 {
+#ifdef IPOD_ACCESSORY_PROTOCOL
+    int oldlevel = disable_irq_save();
+
+    if (acc_plugged)
+        uartc_port_tx_byte(&ser_port, c);
+    restore_irq(oldlevel);
+#else
     uartc_port_tx_byte(&ser_port, c);
+#endif
 }
 
 #ifndef IPOD_ACCESSORY_PROTOCOL
@@ -115,7 +132,6 @@ static enum {
 } abr_status;
 
 static int bitrate = 0;
-static bool acc_plugged = false;
 
 static void serial_acc_tick(void)
 {
@@ -138,6 +154,9 @@ static void serial_acc_tick(void)
         {
             uartc_port_close(&ser_port);
             uartc_close(ser_port.uartc);
+
+            /* This IRQ path may post, but must defer mutexes and queue_send(). */
+            iap_reset_state(IF_IAP_MP(0));
         }
     }
 }
@@ -193,9 +212,6 @@ void serial_bitrate(int rate)
 
 static void iap_rx_isr(int len, char *data, char *err, uint32_t abr_cnt)
 {
-    /* ignore Rx errors, upper layer will discard bad packets */
-    (void) err;
-
     static int sync_retry;
 
     if (abr_status == ABR_STATUS_LAUNCHED) {
@@ -230,7 +246,26 @@ static void iap_rx_isr(int len, char *data, char *err, uint32_t abr_cnt)
     /* process received data */
     while (len--)
     {
-        bool sync_done = !iap_getc(IF_IAP_MP(0,) *data++);
+        unsigned char rxdata = *data++;
+        unsigned char rxerr = *err++;
+
+        if (rxerr)
+        {
+            iap_rx_flush();
+
+            if ((rxerr & UERSTAT_FRAME_ERR_BIT) && bitrate == 0)
+            {
+                serial_bitrate(0);
+                break;
+            }
+
+            if (rxerr & (UERSTAT_PARITY_ERR_BIT |
+                         UERSTAT_FRAME_ERR_BIT |
+                         UERSTAT_BREAK_DETECT_BIT))
+                continue;
+        }
+
+        bool sync_done = !iap_getc(IF_IAP_MP(0,) rxdata);
 
         if (abr_status == ABR_STATUS_SYNCING)
         {
