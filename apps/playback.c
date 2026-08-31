@@ -910,22 +910,20 @@ static bool playback_aa_fill_id3(int pl_offset, struct mp3entry *id3)
     return ok;
 }
 
-/* True when the file buffer is not actively filling from disk. */
+/* True when we are not in the middle of adding tracks to the file buffer.
+ * Do not require data_rem == 0: a large FLAC keeps remaining > 0 for the
+ * whole track, which would starve AA forever. Disk contention is handled
+ * by running this thread below PRIORITY_BUFFERING. */
 static bool playback_aa_buffer_idle(void)
 {
-    struct buffering_debug dbg;
-
     switch (filling)
     {
     case STATE_FILLING:
     case STATE_ENDING:
         return false;
     default:
-        break;
+        return true;
     }
-
-    buffering_get_debugdata(&dbg);
-    return dbg.data_rem == 0;
 }
 
 static void playback_aa_kick(void)
@@ -955,10 +953,12 @@ static void playback_aa_process_one(void)
         mutex_unlock(&aa_job_mutex);
         return;
     }
+    off = aa_work_order[aa_work_index];
     mutex_unlock(&aa_job_mutex);
 
-    /* Do not start disk I/O if buffering became busy since the loop woke. */
-    if (!playback_aa_buffer_idle())
+    /* Current track (offset 0) may decode during fill so WPS is not blank.
+     * Neighbors wait until filling is idle so they do not steal the disk. */
+    if (off != 0 && !playback_aa_buffer_idle())
         return;
 
     mutex_lock(&aa_job_mutex);
@@ -1000,13 +1000,16 @@ static void NORETURN_ATTR playback_aa_thread(void)
     while (1)
     {
         bool pending;
+        int next_off = 0;
 
         mutex_lock(&aa_job_mutex);
         pending = play_status != PLAY_STOPPED &&
                   aa_work_index < AA_WINDOW_SIZE;
+        if (pending)
+            next_off = aa_work_order[aa_work_index];
         mutex_unlock(&aa_job_mutex);
 
-        if (pending && playback_aa_buffer_idle())
+        if (pending && (next_off == 0 || playback_aa_buffer_idle()))
         {
             playback_aa_process_one();
             continue;
