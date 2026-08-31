@@ -1049,28 +1049,33 @@ long gui_wps_show(void)
                 }
                 break;
 
-                /* iPod Classic 6G custom: open PictureFlow instead of stopping */
             case ACTION_WPS_STOP:
                 {
-                    theme_enabled = false;
-                    gwps_leave_wps(false);
-                    filetype_load_plugin("pictureflow", NULL);
-                    if (!(audio_status() & AUDIO_STATUS_PLAY))
+                    int sel_action = global_settings.wps_select_action;
+                    if (sel_action == 2)
                     {
-                        /* audio stopped in PictureFlow; return to WPS
-                           via wpsscrn() which handles playlist resume */
-                        gwps_leave_wps(true);
-                        return GO_TO_WPS;
+                        /* iPod Classic 6G custom: return to PictureFlow instead of stopping 
+                        if sel_action = 2 */
+                        theme_enabled = false;
+                        gwps_leave_wps(false);
+                        filetype_load_plugin("pictureflow", NULL);
+                        if (!(audio_status() & AUDIO_STATUS_PLAY))
+                        {
+                            /* audio stopped in PictureFlow; return to WPS
+                            via wpsscrn() which handles playlist resume */
+                            gwps_leave_wps(true);
+                            return GO_TO_WPS;
+                        }
+                        restore = true;
                     }
-                    restore = true;
+                    else
+                    {
+                        /* In other cases, stop & exit */
+                        bookmark = true;
+                        exit = true;
+                    }
                 }
                 break;
-#if 0 /* original stop behavior */
-            case ACTION_WPS_STOP:
-                bookmark = true;
-                exit = true;
-                break;
-#endif
 
             case ACTION_WPS_LIST_BOOKMARKS:
                 gwps_leave_wps(true);
