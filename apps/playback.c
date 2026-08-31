@@ -24,6 +24,7 @@
 #include "system.h"
 #include "version.h"
 #include "kernel.h"
+#include "thread.h"
 #include "panic.h"
 #include "core_alloc.h"
 #include "sound.h"
@@ -858,9 +859,19 @@ static void send_track_event(unsigned int id, unsigned int flags,
                              struct mp3entry *id3);
 
 #ifdef HAVE_ALBUMART
-static int aa_work_index;
+static int aa_work_index = AA_WINDOW_SIZE;
 static unsigned int aa_job_gen;
 static const int aa_work_order[AA_WINDOW_SIZE] = { 0, -1, 1, -2, 2 };
+static struct mutex aa_job_mutex;
+static struct event_queue aa_queue SHAREDBSS_ATTR;
+static unsigned int aa_thread_id;
+static long aa_stack[(DEFAULT_STACK_SIZE + 0x2000)/sizeof(long)];
+static const char aa_thread_name[] = "albumart";
+
+enum
+{
+    Q_AA_WORK = 1, /* fill next idle window slot */
+};
 
 static void playback_aa_claimed_dims(struct dim *dims)
 {
@@ -899,33 +910,67 @@ static bool playback_aa_fill_id3(int pl_offset, struct mp3entry *id3)
     return ok;
 }
 
+/* True when the file buffer is not actively filling from disk. */
+static bool playback_aa_buffer_idle(void)
+{
+    struct buffering_debug dbg;
+
+    switch (filling)
+    {
+    case STATE_FILLING:
+    case STATE_ENDING:
+        return false;
+    default:
+        break;
+    }
+
+    buffering_get_debugdata(&dbg);
+    return dbg.data_rem == 0;
+}
+
 static void playback_aa_kick(void)
 {
     if (play_status == PLAY_STOPPED)
         return;
 
     albumart_cache_kick();
+    mutex_lock(&aa_job_mutex);
     aa_job_gen++;
     aa_work_index = 0;
-    LOGFQUEUE("audio > audio Q_AUDIO_AA_WORK");
-    audio_queue_post(Q_AUDIO_AA_WORK, 0);
+    mutex_unlock(&aa_job_mutex);
+    LOGFQUEUE("audio > aa Q_AA_WORK");
+    queue_post(&aa_queue, Q_AA_WORK, 0);
 }
 
-static void playback_aa_on_work(void)
+static void playback_aa_process_one(void)
 {
     static struct mp3entry aa_id3;
-    unsigned int gen = aa_job_gen;
+    unsigned int gen;
     int off;
     bool current_done = false;
 
-    if (play_status == PLAY_STOPPED)
+    mutex_lock(&aa_job_mutex);
+    if (play_status == PLAY_STOPPED || aa_work_index >= AA_WINDOW_SIZE)
+    {
+        mutex_unlock(&aa_job_mutex);
+        return;
+    }
+    mutex_unlock(&aa_job_mutex);
+
+    /* Do not start disk I/O if buffering became busy since the loop woke. */
+    if (!playback_aa_buffer_idle())
         return;
 
-    if (aa_work_index >= AA_WINDOW_SIZE)
+    mutex_lock(&aa_job_mutex);
+    if (play_status == PLAY_STOPPED || aa_work_index >= AA_WINDOW_SIZE)
+    {
+        mutex_unlock(&aa_job_mutex);
         return;
-
+    }
+    gen = aa_job_gen;
     off = aa_work_order[aa_work_index];
     aa_work_index++;
+    mutex_unlock(&aa_job_mutex);
 
     if (playlist_check(off))
     {
@@ -940,20 +985,37 @@ static void playback_aa_on_work(void)
     {
         send_track_event(PLAYBACK_EVENT_CUR_TRACK_READY, 0,
                          id3_get(PLAYING_ID3));
-        /* Return to queue_wait so the lower-priority WPS thread can
-         * redraw. Neighbors resume on SYS_TIMEOUT. */
-        return;
     }
 
-    sleep(1);
+    mutex_lock(&aa_job_mutex);
+    if (gen != aa_job_gen)
+        aa_work_index = 0;
+    mutex_unlock(&aa_job_mutex);
+}
 
-    if (gen != aa_job_gen || play_status == PLAY_STOPPED)
-        return;
+static void NORETURN_ATTR playback_aa_thread(void)
+{
+    struct queue_event ev;
 
-    if (aa_work_index < AA_WINDOW_SIZE)
+    while (1)
     {
-        LOGFQUEUE("audio > audio Q_AUDIO_AA_WORK");
-        audio_queue_post(Q_AUDIO_AA_WORK, 0);
+        bool pending;
+
+        mutex_lock(&aa_job_mutex);
+        pending = play_status != PLAY_STOPPED &&
+                  aa_work_index < AA_WINDOW_SIZE;
+        mutex_unlock(&aa_job_mutex);
+
+        if (pending && playback_aa_buffer_idle())
+        {
+            playback_aa_process_one();
+            continue;
+        }
+
+        if (pending)
+            queue_wait_w_tmo(&aa_queue, &ev, HZ/4);
+        else
+            queue_wait(&aa_queue, &ev);
     }
 }
 #endif /* HAVE_ALBUMART */
@@ -3139,7 +3201,11 @@ static void audio_stop_playback(void)
 
     wipe_track_metadata(true);
 #ifdef HAVE_ALBUMART
+    mutex_lock(&aa_job_mutex);
+    aa_work_index = AA_WINDOW_SIZE;
+    mutex_unlock(&aa_job_mutex);
     albumart_cache_clear();
+    queue_post(&aa_queue, Q_AA_WORK, 0);
 #endif
     /* Go idle */
     filling = STATE_IDLE;
@@ -3614,13 +3680,6 @@ void audio_playback_handler(struct queue_event *ev)
             audio_on_fill_buffer();
             break;
 
-#ifdef HAVE_ALBUMART
-        case Q_AUDIO_AA_WORK:
-            LOGFQUEUE("playback < Q_AUDIO_AA_WORK");
-            playback_aa_on_work();
-            break;
-#endif
-
         case Q_AUDIO_FINISH_LOAD_TRACK:
             /* metadata is buffered */
             LOGFQUEUE("playback < Q_AUDIO_FINISH_LOAD_TRACK");
@@ -3655,13 +3714,6 @@ void audio_playback_handler(struct queue_event *ev)
 
         case SYS_TIMEOUT:
             LOGFQUEUE_SYS_TIMEOUT("playback < SYS_TIMEOUT");
-#ifdef HAVE_ALBUMART
-            if (aa_work_index < AA_WINDOW_SIZE &&
-                play_status != PLAY_STOPPED)
-            {
-                playback_aa_on_work();
-            }
-#endif
             break;
 
         default:
@@ -4163,11 +4215,13 @@ void playback_aa_get_debugdata(struct albumart_cache_debug *dbg)
 
     albumart_cache_get_debugdata(dbg);
 
+    mutex_lock(&aa_job_mutex);
     dbg->work_index = aa_work_index;
     if (aa_work_index < AA_WINDOW_SIZE)
         dbg->work_offset = aa_work_order[aa_work_index];
     else
         dbg->work_offset = 0;
+    mutex_unlock(&aa_job_mutex);
     dbg->skip_offset = skip_offset;
 }
 #endif /* HAVE_ALBUMART */
@@ -4351,6 +4405,16 @@ void INIT_ATTR playback_init(void)
     mutex_init(&id3_mutex);
     track_list_init();
     buffering_init();
+#ifdef HAVE_ALBUMART
+    mutex_init(&aa_job_mutex);
+    queue_init(&aa_queue, false);
+    aa_thread_id = create_thread(playback_aa_thread, aa_stack,
+            sizeof(aa_stack), 0, aa_thread_name
+            IF_PRIO(, PRIORITY_BACKGROUND)
+            IF_COP(, CPU));
+    if (!aa_thread_id)
+        panicf("Could not create aa thread");
+#endif
     pcmbuf_update_frequency();
 #ifdef HAVE_CROSSFADE
     /* Set crossfade setting for next buffer init which should be about... */

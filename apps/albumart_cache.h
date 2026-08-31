@@ -39,19 +39,22 @@ struct dim;
  * dims[i] is unused when width or height is 0. */
 size_t albumart_cache_pool_size(const struct dim *dims, int nslots);
 
-/* Bind the cache to a freshly carved pool. Clears all loaded images. */
+/* Bind the cache to a freshly carved pool. Clears all loaded images.
+ * Waits for any in-flight decode to finish before repointing scratch. */
 void albumart_cache_reset(void *buf, size_t size,
                           const struct dim *dims, int nslots);
 
-/* Drop decoded images but keep the pool (playback stop). */
+/* Drop decoded images but keep the pool (playback stop).
+ * Waits for any in-flight decode to finish. */
 void albumart_cache_clear(void);
 
-/* Invalidate in-flight decode and start a new window fill. */
+/* Invalidate in-flight decode (discard result) and start a new window fill. */
 void albumart_cache_kick(void);
 
 /* Decode and publish one playlist-relative offset (all claimed dims).
  * id3 may be NULL when metadata is unavailable. Returns true if this
- * completed offset 0 for the current generation. */
+ * completed offset 0 for the current generation. Holds an exclusive
+ * decode lock so reset/clear cannot repoint scratch mid-decode. */
 bool albumart_cache_work(int pl_offset, const struct mp3entry *id3);
 
 /* Bitmap for playlist-relative offset and claimed dim slot, or NULL. */

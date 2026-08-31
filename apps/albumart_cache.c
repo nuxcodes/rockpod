@@ -59,6 +59,19 @@ struct aa_block
 };
 
 static struct mutex aa_mutex;
+/* Exclusive decode vs reset/clear: JPEG writes scratch without aa_mutex. */
+static struct mutex decode_mutex;
+static bool mutex_ready;
+
+static void albumart_cache_mutex_init(void)
+{
+    if (!mutex_ready)
+    {
+        mutex_init(&aa_mutex);
+        mutex_init(&decode_mutex);
+        mutex_ready = true;
+    }
+}
 
 static void *scratch;
 static size_t scratch_size;
@@ -299,14 +312,11 @@ void albumart_cache_reset(void *buf, size_t size,
 {
     unsigned char *p;
     int d, b;
-    static bool mutex_ready = false;
 
-    if (!mutex_ready)
-    {
-        mutex_init(&aa_mutex);
-        mutex_ready = true;
-    }
+    albumart_cache_mutex_init();
 
+    /* Wait for any in-flight decode before repointing scratch/blocks */
+    mutex_lock(&decode_mutex);
     mutex_lock(&aa_mutex);
 
     scratch = NULL;
@@ -376,12 +386,16 @@ void albumart_cache_reset(void *buf, size_t size,
 
 reset_done:
     mutex_unlock(&aa_mutex);
+    mutex_unlock(&decode_mutex);
 }
 
 void albumart_cache_clear(void)
 {
     int d, b;
 
+    albumart_cache_mutex_init();
+
+    mutex_lock(&decode_mutex);
     mutex_lock(&aa_mutex);
     windows_reset(window);
     work_gen++;
@@ -394,10 +408,13 @@ void albumart_cache_clear(void)
         }
     }
     mutex_unlock(&aa_mutex);
+    mutex_unlock(&decode_mutex);
 }
 
 void albumart_cache_kick(void)
 {
+    albumart_cache_mutex_init();
+
     mutex_lock(&aa_mutex);
     work_gen++;
     mutex_unlock(&aa_mutex);
@@ -413,8 +430,11 @@ bool albumart_cache_work(int pl_offset, const struct mp3entry *id3)
     if (wi < 0 || wi >= AA_WINDOW_SIZE)
         return false;
 
+    albumart_cache_mutex_init();
+
     current = (pl_offset == 0);
 
+    mutex_lock(&decode_mutex);
     mutex_lock(&aa_mutex);
     gen = work_gen;
     mutex_unlock(&aa_mutex);
@@ -434,7 +454,8 @@ bool albumart_cache_work(int pl_offset, const struct mp3entry *id3)
             if (gen != work_gen)
             {
                 mutex_unlock(&aa_mutex);
-                return false;
+                current = false;
+                goto work_done;
             }
             window[wi][d] = -1;
             recompute_in_use();
@@ -446,7 +467,8 @@ bool albumart_cache_work(int pl_offset, const struct mp3entry *id3)
         if (gen != work_gen)
         {
             mutex_unlock(&aa_mutex);
-            return false;
+            current = false;
+            goto work_done;
         }
 
         b = find_block_by_ident(&id);
@@ -467,7 +489,8 @@ bool albumart_cache_work(int pl_offset, const struct mp3entry *id3)
         if (gen != work_gen)
         {
             mutex_unlock(&aa_mutex);
-            return false;
+            current = false;
+            goto work_done;
         }
 
         b = find_block_by_ident(&id);
@@ -489,11 +512,15 @@ bool albumart_cache_work(int pl_offset, const struct mp3entry *id3)
     if (gen != work_gen)
         current = false;
     mutex_unlock(&aa_mutex);
+
+work_done:
+    mutex_unlock(&decode_mutex);
     return current;
 }
 
 void albumart_cache_lock(void)
 {
+    albumart_cache_mutex_init();
     mutex_lock(&aa_mutex);
 }
 
@@ -546,6 +573,7 @@ struct bitmap *albumart_cache_get_locked(int pl_offset, int dim_slot)
 struct bitmap *albumart_cache_get(int pl_offset, int dim_slot)
 {
     struct bitmap *bmp;
+    albumart_cache_mutex_init();
     mutex_lock(&aa_mutex);
     bmp = albumart_cache_get_locked(pl_offset, dim_slot);
     mutex_unlock(&aa_mutex);
@@ -560,6 +588,8 @@ void albumart_cache_get_debugdata(struct albumart_cache_debug *dbg)
         return;
 
     memset(dbg, 0, sizeof(*dbg));
+
+    albumart_cache_mutex_init();
 
     mutex_lock(&aa_mutex);
     for (d = 0; d < nslots; d++)

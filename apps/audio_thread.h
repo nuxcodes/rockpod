@@ -47,7 +47,6 @@ enum
 
     /* audio -> audio */
     Q_AUDIO_FILL_BUFFER,        /* continue buffering next track */
-    Q_AUDIO_AA_WORK,            /* decode one album-art window slot */
 
     /* buffering -> audio */
     Q_AUDIO_BUFFERING,          /* some buffer event */
