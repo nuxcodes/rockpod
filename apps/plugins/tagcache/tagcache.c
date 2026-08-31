@@ -760,7 +760,7 @@ static int commit_menu(void)
     int button,i;
     int selection, ret = 0;
 
-    rb->gui_synclist_init(&lists,list_get_name_cb,0, false, 1, NULL);
+    rb->gui_synclist_init(&lists,list_get_name_cb,0, false, 1, NULL, false);
     rb->gui_synclist_set_nb_items(&lists, 9);
     rb->gui_synclist_select_item(&lists, 0);
 

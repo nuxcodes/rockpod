@@ -183,7 +183,7 @@ enum plugin_status plugin_start(const void* parameter)
     menu_table = rb->root_menu_get_options(&menu_item_count);
     load_from_cfg();
 
-    rb->gui_synclist_init(&list, menu_get_name, NULL, false, 1, NULL);
+    rb->gui_synclist_init(&list, menu_get_name, NULL, false, 1, NULL, false);
     if (rb->global_settings->talk_menu)
         rb->gui_synclist_set_voice_callback(&list, menu_speak_item);
     rb->gui_synclist_set_icon_callback(&list, menu_get_icon);

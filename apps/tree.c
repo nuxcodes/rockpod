@@ -394,6 +394,28 @@ static int tree_get_file_position(char * filename)
     return(ret);
 }
 
+static void set_multiselection_selected_size(void)
+{
+    if (tc.multiselection_enabled)
+    {
+        int offsetdiff = tc.selected_item - tc.multiselection_offset_item;
+        if (offsetdiff < 0)
+        {
+            tc.multiselection_selected_size = (- offsetdiff) + 1;
+        }
+        else if (offsetdiff == 0)
+        {
+            tc.multiselection_selected_size = 1;
+        }
+        else
+        {
+            tc.multiselection_selected_size = - (offsetdiff);
+        }
+    }
+    else
+        tc.multiselection_selected_size = 1;
+}
+
 /*
  * Called when a new dir is loaded (for example when returning from other apps ...)
  * also completely redraws the tree
@@ -461,7 +483,7 @@ static int update_dir(void)
         }
     }
 
-    gui_synclist_init(list, &tree_get_filename, &tc, false, 1, NULL);
+    gui_synclist_init(list, &tree_get_filename, &tc, false, 1, NULL, true);
 
 #ifdef HAVE_TAGCACHE
     if (id3db)
@@ -526,8 +548,10 @@ static int update_dir(void)
     gui_synclist_set_color_callback(list, &tree_get_filecolor);
 #endif
     if( tc.selected_item >= tc.filesindir)
-        tc.selected_item=tc.filesindir-1;
+        tc.selected_item = tc.filesindir-1;
 
+    set_multiselection_selected_size();
+    list->selected_size = tc.multiselection_selected_size;
     gui_synclist_select_item(list, tc.selected_item);
     gui_synclist_draw(list);
     gui_synclist_speak_item(list);
@@ -702,6 +726,79 @@ static void set_current_file_ex(const char *path, const char *filename)
     }
 }
 
+static bool tree_insert_selection_is_dir_recurse(void)
+{
+    bool recurse = (global_settings.recursive_dir_insert == RECURSE_ON);
+    if (global_settings.recursive_dir_insert == RECURSE_ASK)
+    {
+
+        const char *lines[] = {
+            ID2P(LANG_RECURSE_DIRECTORY_QUESTION),
+            ID2P(LANG_ALL_FOLDERS_FROM_CURRENT_SELECTION)
+        };
+        const struct text_message message={lines, 2};
+        /* Ask if user wants to recurse directory */
+        recurse = (gui_syncyesno_run(&message, NULL, NULL)==YESNO_YES);
+    }
+    return recurse == RECURSE_ON;
+}
+
+static bool tree_insert_selection(int position, bool queue,
+    const char* playlist, bool new_playlist,
+    struct playlist_insert_context* context_to_use, char* buf, size_t bufsize, char* currdir,
+    bool* dir_recurse_asked, bool* dir_recurse, int selected_size)
+{
+    bool result = false;
+    #ifdef HAVE_TAGCACHE
+    bool id3db = *tc.dirfilter == SHOW_ID3DB;
+    if (id3db)
+    {
+        result = tagtree_insert_selection(position, queue, playlist,
+            new_playlist, context_to_use, selected_size);
+    }
+    else
+    #else
+    (void) selected_size;
+    #endif
+    {
+        struct entry *entry = get_valid_entry(__func__, &tc, tc.selected_item);
+        ft_assemble_path(buf, bufsize, currdir, entry->name);
+        if ((entry->attr & FILE_ATTR_MASK) == FILE_ATTR_AUDIO)
+        {
+            if (context_to_use == NULL)
+                result = catalog_insert_into(playlist, new_playlist, buf, FILE_ATTR_AUDIO, NULL) >= 0;
+            else
+                result = playlist_insert_context_add(context_to_use, buf) >= 0;
+        }
+        else if ((entry->attr & FILE_ATTR_MASK) == FILE_ATTR_M3U)
+        {
+            if (context_to_use == NULL)
+                result = catalog_insert_into(playlist, new_playlist, buf, FILE_ATTR_M3U, NULL) >= 0;
+            else
+                result = playlist_entries_iterate(buf, context_to_use, NULL);
+        }
+        else if (entry->attr & ATTR_DIRECTORY)
+        {
+            if (!(*dir_recurse_asked))
+            {
+                /* We ask the user only once for all the selection */
+                *dir_recurse = tree_insert_selection_is_dir_recurse();
+                *dir_recurse_asked = true;
+            }
+            if (context_to_use == NULL)
+                result = catalog_insert_into(playlist, new_playlist, buf, ATTR_DIRECTORY, dir_recurse) >= 0;
+            else
+                result = playlist_insert_directory(NULL, buf, position, queue, *dir_recurse, context_to_use) >= 0;
+            if (ft_load(&tc, currdir) < 0)
+            {
+                /* Reload current dir */
+                result = -1;
+            }
+        }
+    }
+    return result;
+}
+
 /* Selects a file and update tree context properly */
 void set_current_file(const char *path)
 {
@@ -711,6 +808,7 @@ void set_current_file(const char *path)
 
 static int exit_to_new_screen(int screen)
 {
+    tc.multiselection_enabled = false;
     gui_synclist_scroll_stop(&tree_lists);
     return screen;
 }
@@ -766,7 +864,23 @@ static int dirbrowse(void)
                             list_do_action_timeout(&tree_lists, HZ/2));
         oldbutton = button;
         gui_synclist_do_button(&tree_lists, &button);
-        tc.selected_item = gui_synclist_get_sel_pos(&tree_lists);
+        struct gui_synclist * const list = &tree_lists;
+        bool list_redraw_needed = false;
+        if (tc.selected_item != gui_synclist_get_sel_pos(list))
+        {
+            tc.selected_item = gui_synclist_get_sel_pos(list);
+            list_redraw_needed = true;
+        }
+        set_multiselection_selected_size();
+        if (list->selected_size != tc.multiselection_selected_size)
+        {
+            list->selected_size = tc.multiselection_selected_size;
+            list_redraw_needed = true;
+        }
+        if (list_redraw_needed)
+            /* it's important to refresh conditionally only when something changed,
+                or all texts scrolling will be broken */
+            gui_synclist_draw(list);
         int customaction = ONPLAY_NO_CUSTOMACTION;
         bool do_restore_display = true;
         #ifdef HAVE_TAGCACHE
@@ -781,11 +895,18 @@ static int dirbrowse(void)
                 }
             }
         #endif
+        if (button == ACTION_STD_OK && tc.multiselection_selected_size != 1)
+        {
+            button = ACTION_STD_CONTEXT;
+        }
         switch ( button ) {
             case ACTION_STD_OK:
                 /* nothing to do if no files to display */
                 if ( numentries == 0 )
                     break;
+                if (tc.multiselection_enabled && tc.multiselection_selected_size != 1)
+                    break;
+                tc.multiselection_enabled = false;
                 if (tc.browse->flags & BROWSE_SELECTONLY)
                 {
                     struct entry *entry =
@@ -821,6 +942,12 @@ static int dirbrowse(void)
                 break;
 
             case ACTION_STD_CANCEL:
+                if (tc.multiselection_enabled)
+                {
+                    tc.multiselection_enabled = false;
+                    restore = do_restore_display;
+                    break;
+                }
                 exit_to_new_screen(0);
                 if (*tc.dirfilter > NUM_FILTER_MODES && tc.dirlevel < 1) {
                     exit_func = true;
@@ -912,12 +1039,13 @@ static int dirbrowse(void)
                 bool hotkey = button == ACTION_TREE_HOTKEY;
                 int onplay_result;
                 int attr = 0;
+                size_t bufsize;
 
                 if (tc.browse->flags & BROWSE_NO_CONTEXT_MENU)
                     break;
 
                 if(!numentries)
-                    onplay_result = onplay(NULL, 0, curr_context, hotkey, customaction);
+                    onplay_result = onplay(NULL, 0, curr_context, hotkey, customaction, false);
                 else {
 #ifdef HAVE_TAGCACHE
                     if (id3db)
@@ -959,15 +1087,101 @@ static int dirbrowse(void)
                     else
 #endif
                     {
-                        struct entry *entry =
-                               get_valid_entry(__func__, &tc, tc.selected_item);
-
+                        struct entry *entry = get_valid_entry(__func__, &tc, tc.selected_item);
                         attr = entry->attr;
-
-                        ft_assemble_path(buf, sizeof(buf), currdir, entry->name);
-
+                        bufsize = sizeof(buf);
+                        ft_assemble_path(buf, bufsize, currdir, entry->name);
                     }
-                    onplay_result = onplay(buf, attr, curr_context, hotkey, customaction);
+                    if (tc.multiselection_selected_size != 1)
+                        attr |= FILE_ATTR_MULTISELECTION;
+                    onplay_result = onplay(buf, attr, curr_context, hotkey, customaction, true);
+                    struct add_to_pl_param *choice = onplay_show_playlist_menu_get_current_choice();
+                    char* cat_menu_choice = onplay_show_playlist_cat_menu_get_current_choice();
+                    int initial_selected_item = tc.selected_item;
+                    int selected_item = tc.selected_item;
+                    int selected_size = tc.multiselection_selected_size;
+                    if (selected_size < 0)
+                    {
+                        selected_item -= (- selected_size);
+                        selected_size = ((- selected_size) + 1);
+                    }
+                    struct playlist_insert_context pl_context;
+                    bool new_playlist;
+                    bool dir_recurse_asked = false;
+                    bool dir_recurse = false;
+                    if (choice != NULL)
+                    {
+                        bool queue = (choice->flags & PL_QUEUE) == PL_QUEUE;
+                        new_playlist = (choice->flags & PL_REPLACE) == PL_REPLACE;
+                        if (new_playlist && global_settings.keep_current_track_on_replace_playlist)
+                        {
+                            if (audio_status() & AUDIO_STATUS_PLAY)
+                            {
+                                playlist_remove_all_tracks(NULL);
+                                new_playlist = false;
+                            }
+                        }
+                        if (new_playlist)
+                        {
+                            playlist_create(NULL, NULL);
+                        }
+                        if (playlist_insert_context_create(NULL, &pl_context, choice->position, queue, true) >= 0)
+                        {
+                            for (int i = 0; i < selected_size; i++)
+                            {
+                                if (i > 0 && action_userabort(TIMEOUT_NOBLOCK))
+                                    break;
+                                tc.selected_item = selected_item + i;
+                                if (!tree_insert_selection(choice->position, queue, NULL,
+                                        new_playlist, &pl_context, buf, bufsize, currdir,
+                                        &dir_recurse_asked, &dir_recurse, selected_size))
+                                {
+                                    break;
+                                }
+                            }
+                            tc.selected_item = initial_selected_item;
+                        }
+                        playlist_insert_context_release(&pl_context);
+                        if (new_playlist && (playlist_amount() > 0))
+                        {
+                            if (global_settings.playlist_shuffle)
+                                playlist_shuffle(current_tick, -1);
+                            playlist_start(0, 0, 0);
+                            onplay_result = ONPLAY_START_PLAY;
+                        }
+                        tc.multiselection_enabled = false;
+                    }
+                    else if (cat_menu_choice != NULL)
+                    {
+                        new_playlist = onplay_show_playlist_cat_menu_current_choice_is_new_playlist();
+                        #ifdef HAVE_TAGCACHE
+                        if (id3db)
+                        {
+                            if (!new_playlist)
+                                tagtree_load(&tc); /* because display_playlists was called */
+                        }
+                        else
+                        #endif
+                        {
+                            if (!new_playlist)
+                                ft_load(&tc, currdir); /* because display_playlists was called */
+                        }
+                        for (int i = 0; i < selected_size; i++)
+                        {
+                            if (i > 0 && action_userabort(TIMEOUT_NOBLOCK))
+                                break;
+                            tc.selected_item = selected_item + i;
+                            if (!tree_insert_selection(PLAYLIST_INSERT_LAST, false, cat_menu_choice,
+                                    new_playlist, NULL, buf, bufsize, currdir,
+                                    &dir_recurse_asked, &dir_recurse, selected_size))
+                            {
+                                break;
+                            }
+                            new_playlist = false;
+                        }
+                        tc.selected_item = initial_selected_item;
+                        tc.multiselection_enabled = false;
+                    }
                 }
                 switch (onplay_result)
                 {
@@ -981,6 +1195,19 @@ static int dirbrowse(void)
 
                     case ONPLAY_RELOAD_DIR:
                         reload_dir = true;
+                        break;
+
+                    case ONPLAY_MULTISELECT:
+                        restore = do_restore_display;
+                        if (!tc.multiselection_enabled)
+                        {
+                            tc.multiselection_enabled = true;
+                            tc.multiselection_offset_item = tc.selected_item;
+                        }
+                        else
+                        {
+                            tc.multiselection_enabled = false;
+                        }
                         break;
 
                     case ONPLAY_START_PLAY:
@@ -1045,9 +1272,12 @@ static int dirbrowse(void)
 
             if (!reload_dir)
             {
+                tc.multiselection_enabled = false;
+                tc.selected_item = 0;
+                set_multiselection_selected_size();
+                list->selected_size = tc.multiselection_selected_size;
                 gui_synclist_select_item(&tree_lists, 0);
                 gui_synclist_draw(&tree_lists);
-                tc.selected_item = 0;
                 lastdir[0] = 0;
             }
 
@@ -1107,6 +1337,8 @@ int rockbox_browse(struct browse_context *browse)
         backups[backup_count] = tc;
     backup_count++;
     int *prev_dirfilter = tc.dirfilter;
+    tc.multiselection_enabled = false;
+    tc.multiselection_selected_size = 1;
     tc.dirfilter = &dirfilter;
     tc.sort_dir = global_settings.sort_dir;
 

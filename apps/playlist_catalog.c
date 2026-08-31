@@ -288,7 +288,7 @@ static int add_track_to_playlist(char* filename, void* context)
 /* Add "sel" file into specified "playlist".  How to insert depends on type
    of file */
 int catalog_insert_into(const char* playlist, bool new_playlist,
-                        const char* sel, int sel_attr)
+                        const char* sel, int sel_attr, bool* forced_recurse_dir)
 {
     int fd;
     int result = -1;
@@ -349,21 +349,25 @@ int catalog_insert_into(const char* playlist, bool new_playlist,
     else if (sel_attr & ATTR_DIRECTORY)
     {
         /* search directory for tracks and append to playlist */
-        bool recurse;
-        const char *lines[] = {
-            ID2P(LANG_RECURSE_DIRECTORY_QUESTION), sel};
-        const struct text_message message={lines, 2};
         struct add_track_context context;
-
-
-        if (sel[1] == '\0' && sel[0] == PATH_ROOTCHR)
-            recurse = true;
-        else if (global_settings.recursive_dir_insert != RECURSE_ASK)
-            recurse = (bool)global_settings.recursive_dir_insert;
+        bool recurse;
+        if (forced_recurse_dir != NULL)
+            recurse = *forced_recurse_dir;
         else
         {
-            /* Ask if user wants to recurse directory */
-            recurse = (gui_syncyesno_run(&message, NULL, NULL)==YESNO_YES);
+            const char *lines[] = {
+                ID2P(LANG_RECURSE_DIRECTORY_QUESTION), sel};
+            const struct text_message message={lines, 2};
+    
+            if (sel[1] == '\0' && sel[0] == PATH_ROOTCHR)
+                recurse = true;
+            else if (global_settings.recursive_dir_insert != RECURSE_ASK)
+                recurse = (bool)global_settings.recursive_dir_insert;
+            else
+            {
+                /* Ask if user wants to recurse directory */
+                recurse = (gui_syncyesno_run(&message, NULL, NULL)==YESNO_YES);
+            }
         }
 
         context.fd = fd;
@@ -457,13 +461,14 @@ bool catalog_pick_new_playlist_name(char *pl_name, size_t buf_size,
     return do_save;
 }
 
+static char playlist[MAX_PATH + 7]; /* room for /.m3u8\0*/
+
 static int (*ctx_add_to_playlist)(const char* playlist, bool new_playlist);
 bool catalog_add_to_a_playlist(const char* sel, int sel_attr,
                                bool new_playlist, char *m3u8name,
                                void (*add_to_pl_cb))
 {
     int result;
-    char playlist[MAX_PATH + 7]; /* room for /.m3u8\0*/
     size_t basename_start;
     if ((browser_status & CATBROWSE_PLAYLIST) == CATBROWSE_PLAYLIST)
         return false;
@@ -515,7 +520,59 @@ bool catalog_add_to_a_playlist(const char* sel, int sel_attr,
         result = ctx_add_to_playlist(playlist, new_playlist);
     }
     else
-        result = catalog_insert_into(playlist, new_playlist, sel, sel_attr);
+        result = catalog_insert_into(playlist, new_playlist, sel, sel_attr, NULL);
 
     return (result == 0);
+}
+
+char* catalog_add_to_a_playlist_get_choice(const char* sel, int sel_attr,
+                               bool new_playlist, char *m3u8name)
+{
+    size_t basename_start;
+    if ((browser_status & CATBROWSE_PLAYLIST) == CATBROWSE_PLAYLIST)
+        return NULL;
+
+    if (initialize_catalog_buf(playlist, sizeof(playlist)) < 0)
+        return NULL;
+
+    if (new_playlist)
+    {
+        if (m3u8name == NULL)
+        {
+            const char *name;
+            /* If sel is empty, root, or playlist directory  we use 'all' */
+            if (!sel || !strcmp(sel, "/") || !strcmp(sel, playlist))
+            {
+                sel = "/";
+                name = "/all";
+            }
+            else /*If sel is a folder, we prefill the text field with its name*/
+                name = strrchr(sel, '/');
+
+            if (name == NULL || ((sel_attr & ATTR_DIRECTORY) != ATTR_DIRECTORY) || 
+                    ((sel_attr & FILE_ATTR_MULTISELECTION) == FILE_ATTR_MULTISELECTION))
+                create_numbered_filename(playlist, playlist, PLAYLIST_UNTITLED_PREFIX,
+                                         ".m3u8", 1 IF_CNFN_NUM_(, NULL));
+            else
+            {
+                basename_start = strlen(playlist) + 1;
+                strlcat(playlist, name, sizeof(playlist));
+                fix_path_part(playlist, basename_start,
+                              sizeof(playlist) - 1 - basename_start) ;
+                apply_playlist_extension(playlist, sizeof(playlist));
+            }
+        }
+        else
+            strmemccpy(playlist, m3u8name, sizeof(playlist));
+
+        if (!catalog_pick_new_playlist_name(playlist, sizeof(playlist), NULL))
+            return NULL;
+    }
+    else
+    {
+        if (display_playlists(playlist, CATBROWSE_PLAYLIST) < 0)
+            return NULL;
+    }
+
+    return playlist;
 }

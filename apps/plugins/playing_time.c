@@ -317,7 +317,7 @@ static int pt_speak_info(int selected_item, void * data)
 static bool pt_display_stats(struct playing_time_info *pti)
 {
     struct gui_synclist pt_lists;
-    rb->gui_synclist_init(&pt_lists, &pt_get_info, pti, true, 2, NULL);
+    rb->gui_synclist_init(&pt_lists, &pt_get_info, pti, true, 2, NULL, false);
     if (rb->global_settings->talk_menu)
         rb->gui_synclist_set_voice_callback(&pt_lists, pt_speak_info);
     rb->gui_synclist_set_nb_items(&pt_lists, pti->remaining_only ? 2 : 8*2);
@@ -367,7 +367,7 @@ static int pt_options_speak(int selected_item, void * data)
 static int pt_options(struct playing_time_info *pti)
 {
     struct gui_synclist pt_options;
-    rb->gui_synclist_init(&pt_options, &pt_options_name, NULL, true, 1, NULL);
+    rb->gui_synclist_init(&pt_options, &pt_options_name, NULL, true, 1, NULL, false);
     if (rb->global_settings->talk_menu)
         rb->gui_synclist_set_voice_callback(&pt_options, pt_options_speak);
     rb->gui_synclist_set_nb_items(&pt_options, *pti->single_mode_tag ? 3 : 2);

@@ -2367,21 +2367,21 @@ const struct settings_list settings[] = {
     TABLE_SETTING(0, hotkey_tree,
         LANG_HOTKEY_FILE_BROWSER, HOTKEY_OFF, "hotkey tree",
 #ifdef HAVE_TAGCACHE
-        "off,properties,pictureflow,open with,delete,insert,insert shuffled",
+        "off,properties,pictureflow,open with,delete,insert,insert shuffled,multiselection",
 #else
-        "off,properties,open with,delete,insert,insert shuffled",
+        "off,properties,open with,delete,insert,insert shuffled,multiselection",
 #endif
         UNIT_INT, hotkey_formatter, hotkey_getlang, NULL,
 #ifdef HAVE_TAGCACHE
-        7,
+        8,
 #else
-        6,
+        7,
 #endif
         HOTKEY_OFF,HOTKEY_PROPERTIES,
 #ifdef HAVE_TAGCACHE
         HOTKEY_PICTUREFLOW,
 #endif
-        HOTKEY_OPEN_WITH, HOTKEY_DELETE, HOTKEY_INSERT, HOTKEY_INSERT_SHUFFLED),
+        HOTKEY_OPEN_WITH, HOTKEY_DELETE, HOTKEY_INSERT, HOTKEY_INSERT_SHUFFLED, HOTKEY_MULTISELECTION),
 #endif /* HAVE_HOTKEY */
 
     INT_SETTING(F_TIME_SETTING, resume_rewind, LANG_RESUME_REWIND, 0,

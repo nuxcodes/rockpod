@@ -508,7 +508,7 @@ static void synclist_set(char* menu_id, int selected_item, int items, int sel_si
 
     list_voice_cb(0, menu_id);
     rb->gui_synclist_init(&lists,list_get_name_cb,
-                          menu_id, false, sel_size, NULL);
+                          menu_id, false, sel_size, NULL, false);
     if (menu_id == MENU_ID(M_TESTPUT))
     {
         testput_cols = printcell_set_columns(&lists, NULL,

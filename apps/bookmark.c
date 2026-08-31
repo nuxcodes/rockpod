@@ -988,7 +988,7 @@ static int select_bookmark(const char* bookmark_file_name,
         = (strcmp(bookmark_file_name, RECENT_BOOKMARK_FILE) == 0);
 
     gui_synclist_init(&list, &get_bookmark_info,
-                      (void*) bookmarks, false, 2, NULL);
+                      (void*) bookmarks, false, 2, NULL, false);
 
     if(global_settings.talk_menu)
         gui_synclist_set_voice_callback(&list, bookmark_list_voice_cb);

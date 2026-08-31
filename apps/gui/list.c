@@ -159,15 +159,19 @@ void gui_synclist_init(struct gui_synclist * gui_list,
     list_get_name callback_get_item_name,
     void * data,
     bool scroll_all,
-    int selected_size, struct viewport list_parent[NB_SCREENS]
+    int selected_size, struct viewport list_parent[NB_SCREENS],
+    bool multiple_selection_force_single_entry_scroll
     )
 {
     gui_list->callback_get_item_icon = NULL;
     gui_list->callback_get_item_name = callback_get_item_name;
     gui_list->callback_speak_item = NULL;
     gui_list->callback_draw_item = NULL;
+    gui_list->multiple_selection_force_single_entry_scroll = multiple_selection_force_single_entry_scroll;
     gui_list->nb_items = 0;
     gui_list->selected_item = 0;
+    gui_list->min_index_forbid_limit = 0;
+    gui_list->end_index_forbid_limit = 0;
     gui_synclist_init_display_settings(gui_list);
 #ifdef HAVE_TOUCHSCREEN
     gui_list->y_pos = 0;
@@ -255,30 +259,34 @@ static void gui_list_put_selection_on_screen(struct gui_synclist * gui_list,
     int nb_lines = list_get_nb_lines(gui_list, screen);
     int bottom = MAX(0, gui_list->nb_items - nb_lines);
     int new_start_item = gui_list->start_item[screen];
-    int difference = gui_list->selected_item - gui_list->start_item[screen];
-    const int scroll_limit_up   = (nb_lines < gui_list->selected_size+2 ? 0:1);
-    const int scroll_limit_down = (scroll_limit_up+gui_list->selected_size);
+    int selected_item = gui_list->selected_item;
+    int selected_size = gui_list->selected_size;
+    if (gui_list->multiple_selection_force_single_entry_scroll)
+        selected_size = 1;
+    int difference = selected_item - gui_list->start_item[screen];
+    const int scroll_limit_up   = (nb_lines < selected_size + 2 ? 0:1);
+    const int scroll_limit_down = (scroll_limit_up+selected_size);
 
-    if (gui_list->selected_size >= nb_lines)
+    if (selected_size >= nb_lines)
     {
-        new_start_item = gui_list->selected_item;
+        new_start_item = selected_item;
     }
     else if (gui_list->scroll_paginated)
     {
-        nb_lines -= nb_lines%gui_list->selected_size;
+        nb_lines -= nb_lines%selected_size;
         if (difference < 0 || difference >= nb_lines)
         {
-            new_start_item = gui_list->selected_item -
-                                (gui_list->selected_item%nb_lines);
+            new_start_item = selected_item -
+                                (selected_item%nb_lines);
         }
     }
     else if (difference <= scroll_limit_up) /* list moved up */
     {
-        new_start_item = gui_list->selected_item - scroll_limit_up;
+        new_start_item = selected_item - scroll_limit_up;
     }
     else if (difference > nb_lines - scroll_limit_down) /* list moved down */
     {
-        new_start_item = gui_list->selected_item + scroll_limit_down - nb_lines;
+        new_start_item = selected_item + scroll_limit_down - nb_lines;
     }
     if (new_start_item < 0)
         gui_list->start_item[screen] = 0;
@@ -388,22 +396,31 @@ void gui_synclist_select_item(struct gui_synclist * gui_list, int item_number)
 static void gui_list_select_at_offset(struct gui_synclist * gui_list,
                                       int offset, bool allow_wrap)
 {
-    if (gui_list->selected_size > 1)
-    {
-        offset *= gui_list->selected_size;
-    }
+    int selected_item = gui_list->selected_item;
+    int selected_size = gui_list->selected_size;
+    int max_index = gui_list->nb_items - gui_list->end_index_forbid_limit;
+    if (max_index < gui_list->min_index_forbid_limit)
+        max_index = gui_list->min_index_forbid_limit;
+    if (gui_list->multiple_selection_force_single_entry_scroll)
+        selected_size = 1;
+    else if (selected_size > 1)
+        offset *= selected_size;
 
-    int new_selection = gui_list->selected_item + offset;
-    int remain = (gui_list->nb_items - gui_list->selected_size);
+    int new_selection = selected_item + offset;
+    int remain = (max_index - selected_size);
+    if (remain < gui_list->min_index_forbid_limit)
+        remain = gui_list->min_index_forbid_limit;
+    else if (remain > max_index)
+        remain = max_index;
 
-    if (new_selection >= gui_list->nb_items)
+    if (new_selection >= max_index)
     {
-        new_selection = allow_wrap ? 0 : remain;
+        new_selection = (allow_wrap ? gui_list->min_index_forbid_limit : remain);
         edge_beep(gui_list, allow_wrap);
     }
-    else if (new_selection < 0)
+    else if (new_selection < gui_list->min_index_forbid_limit)
     {
-        new_selection = allow_wrap ? remain : 0;
+        new_selection = (allow_wrap ? remain : gui_list->min_index_forbid_limit);
         edge_beep(gui_list, allow_wrap);
     }
 
@@ -516,7 +533,7 @@ static void gui_synclist_select_next_page(struct gui_synclist * lists,
                                           bool allow_wrap)
 {
     int nb_lines = list_get_nb_lines(lists, screen);
-    if (lists->selected_size > 1)
+    if (lists->selected_size > 1 && !lists->multiple_selection_force_single_entry_scroll)
         nb_lines = MAX(1, nb_lines/lists->selected_size);
 
     gui_list_select_at_offset(lists, nb_lines, allow_wrap);
@@ -527,7 +544,7 @@ static void gui_synclist_select_previous_page(struct gui_synclist * lists,
                                               bool allow_wrap)
 {
     int nb_lines = list_get_nb_lines(lists, screen);
-    if (lists->selected_size > 1)
+    if (lists->selected_size > 1 && !lists->multiple_selection_force_single_entry_scroll)
         nb_lines = MAX(1, nb_lines/lists->selected_size);
 
     gui_list_select_at_offset(lists, -nb_lines, allow_wrap);
@@ -577,8 +594,11 @@ bool gui_synclist_keyclick_callback(int action, void* data)
         if (action == ACTION_STD_PREV && !lists->wraparound)
             return false;
     }
+    int selected_size = lists->selected_size;
+    if (lists->multiple_selection_force_single_entry_scroll)
+        selected_size = 1;
 
-    if (lists->selected_item == lists->nb_items - lists->selected_size)
+    if (lists->selected_item == lists->nb_items - selected_size)
     {
         if (action == ACTION_STD_NEXTREPEAT)
             return false;
@@ -708,6 +728,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 #ifndef HAVE_WHEEL_ACCELERATION
             if (button_queue_count() < FRAMEDROP_TRIGGER)
 #endif
+            if (!lists->multiple_selection_force_single_entry_scroll)
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;
@@ -721,6 +742,7 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 #ifndef HAVE_WHEEL_ACCELERATION
             if (button_queue_count() < FRAMEDROP_TRIGGER)
 #endif
+            if (!lists->multiple_selection_force_single_entry_scroll)
                 gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
@@ -728,7 +750,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 
         case ACTION_TREE_PGRIGHT:
             gui_synclist_scroll_right(lists);
-            gui_synclist_draw(lists);
+            if (!lists->multiple_selection_force_single_entry_scroll)
+                gui_synclist_draw(lists);
             yield();
             return true;
         case ACTION_TREE_ROOT_INIT:
@@ -754,7 +777,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
                 return false;
             }
             gui_synclist_scroll_left(lists);
-            gui_synclist_draw(lists);
+            if (!lists->multiple_selection_force_single_entry_scroll)
+                gui_synclist_draw(lists);
             pgleft_allow_cancel = false; /* stop ACTION_TREE_PAGE_LEFT
                                             skipping to root */
             yield();
@@ -771,7 +795,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 #endif
                                           SCREEN_MAIN;
             gui_synclist_select_previous_page(lists, screen, false);
-            gui_synclist_draw(lists);
+            if (!lists->multiple_selection_force_single_entry_scroll)
+                gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_NEXT;
         }
@@ -786,7 +811,8 @@ bool gui_synclist_do_button(struct gui_synclist * lists, int *actionptr)
 #endif
                                           SCREEN_MAIN;
             gui_synclist_select_next_page(lists, screen, false);
-            gui_synclist_draw(lists);
+            if (!lists->multiple_selection_force_single_entry_scroll)
+                gui_synclist_draw(lists);
             yield();
             *actionptr = ACTION_STD_PREV;
         }
@@ -939,7 +965,7 @@ bool simplelist_show_list(struct simplelist_info *info)
     }
 
     gui_synclist_init(&lists, getname,  info->callback_data,
-                      info->scroll_all, info->selection_size, NULL);
+                      info->scroll_all, info->selection_size, NULL, false);
 
     if (info->title)
         gui_synclist_set_title(&lists, info->title, info->title_icon);

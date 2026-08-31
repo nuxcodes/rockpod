@@ -265,7 +265,7 @@ static int init_menu_lists(const struct menu_item_ex *menu,
 
     current_submenus_menu = (struct menu_item_ex *)menu;
 
-    gui_synclist_init(lists,get_menu_item_name,(void*)menu,false,1, parent);
+    gui_synclist_init(lists,get_menu_item_name,(void*)menu,false,1, parent, false);
     title = init_title(menu, &icon, buf, buf_sz);
     gui_synclist_set_title(lists, title, icon);
     gui_synclist_set_icon_callback(lists, global_settings.show_icons?menu_get_icon:NULL);

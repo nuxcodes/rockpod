@@ -155,10 +155,12 @@ struct gui_synclist
     bool scroll_all;
     int nb_items;
     int selected_item;
-
+    int min_index_forbid_limit; /* don't let the user scroll under it */
+    int end_index_forbid_limit; /* don't let the user scroll past (number_items-this var) */
     int start_item[NB_SCREENS]; /* the item that is displayed at the top of the screen */
     /* the number of lines that are selected at the same time */
     int selected_size;
+    bool multiple_selection_force_single_entry_scroll;
     /* the number of pixels each line occupies (including optional padding on touchscreen */
     int line_height[NB_SCREENS];
     int offset_position[NB_SCREENS]; /* the list's screen scroll placement in pixels */
@@ -199,7 +201,8 @@ extern void gui_synclist_init(
     void * data,
     bool scroll_all,
     int selected_size,
-    struct viewport parent[NB_SCREENS] /* NOTE: new screens should NOT set this to NULL */
+    struct viewport parent[NB_SCREENS], /* NOTE: new screens should NOT set this to NULL */
+    bool multiple_selection_force_single_entry_scroll
     );
 extern void gui_synclist_set_nb_items(struct gui_synclist * lists, int nb_items);
 extern void gui_synclist_set_icon_callback(struct gui_synclist * lists, list_get_icon icon_callback);

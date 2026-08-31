@@ -654,7 +654,7 @@ enum plugin_status plugin_start(const void *parameter)
     (void)parameter;
     int ret;
 
-    rb->gui_synclist_init(&kb_list, &kb_list_cb, NULL, false, 1, NULL);
+    rb->gui_synclist_init(&kb_list, &kb_list_cb, NULL, false, 1, NULL, false);
 
     rb->gui_synclist_set_title(&kb_list, "Keybox", NOICON);
     rb->gui_synclist_set_nb_items(&kb_list, 0);

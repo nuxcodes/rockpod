@@ -25,6 +25,7 @@
 #include "config.h"
 #include "tagcache.h"
 #include "tree.h"
+#include "playlist.h"
 
 #define TAGNAVI_VERSION    "#! rockbox/tagbrowser/2.0"
 #define TAGMENU_MAX_ITEMS  64
@@ -48,6 +49,7 @@ int tagtree_get_filename(struct tree_context* c, char *buf, int buflen);
 int tagtree_get_custom_action(struct tree_context* c);
 bool tagtree_get_subentry_filename(char *buf, size_t bufsize);
 bool tagtree_subentries_do_action(bool (*action_cb)(const char *file_name));
+bool tagtree_insert_selection(int position, bool queue, const char* playlist, bool new_playlist, struct playlist_insert_context* context_to_use, int selected_size);
 
 #endif
 #endif

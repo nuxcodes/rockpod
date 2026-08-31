@@ -468,6 +468,7 @@ static const struct plugin_api rockbox_api = {
     set_current_file,
     set_dirfilter,
     onplay_show_playlist_menu,
+    onplay_show_playlist_menu_get_choice,
     onplay_show_playlist_cat_menu,
     browse_id3,
 

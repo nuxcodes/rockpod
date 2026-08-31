@@ -807,7 +807,7 @@ refresh_info:
             info.info_id[info.count++] = i;
     }
 
-    gui_synclist_init(&id3_lists, &id3_get_name_cb, &info, true, 2, NULL);
+    gui_synclist_init(&id3_lists, &id3_get_name_cb, &info, true, 2, NULL, false);
     if(global_settings.talk_menu)
         gui_synclist_set_voice_callback(&id3_lists, id3_speak_item);
     gui_synclist_set_nb_items(&id3_lists, info.count*2);

@@ -237,16 +237,6 @@ MAKE_ONPLAYMENU( wps_playlist_menu, ID2P(LANG_CURRENT_PLAYLIST),
                  &search_playlist_item, &reshuffle_item, &playing_time_item
                );
 
-/* argument for add_to_playlist (for use by menu callbacks) */
-#define PL_NONE    0x00
-#define PL_QUEUE   0x01
-#define PL_REPLACE 0x02
-struct add_to_pl_param
-{
-    int8_t position;
-    uint8_t flags;
-};
-
 static struct add_to_pl_param addtopl_insert           = {PLAYLIST_INSERT, PL_NONE};
 static struct add_to_pl_param addtopl_insert_first     = {PLAYLIST_INSERT_FIRST, PL_NONE};
 static struct add_to_pl_param addtopl_insert_last      = {PLAYLIST_INSERT_LAST, PL_NONE};
@@ -261,6 +251,13 @@ static struct add_to_pl_param addtopl_queue_last_shuf  = {PLAYLIST_INSERT_LAST_S
 
 static struct add_to_pl_param addtopl_replace          = {PLAYLIST_INSERT, PL_REPLACE};
 static struct add_to_pl_param addtopl_replace_shuffled = {PLAYLIST_INSERT_LAST_SHUFFLED, PL_REPLACE};
+
+static bool addto_pl_return_only_choice = false;
+static struct add_to_pl_param *addto_pl_current_choice = NULL;
+
+static bool show_playlist_cat_menu_return_only_choice = false;
+static char *show_playlist_cat_menu_current_choice = NULL;
+static bool show_playlist_cat_menu_current_choice_is_new_playlist = false;
 
 static void op_playlist_insert_selected(int position, bool queue)
 {
@@ -311,6 +308,12 @@ static int add_to_playlist(void* arg)
     /* warn if replacing the playlist */
     if (new_playlist && !warn_on_pl_erase())
         return 1;
+        
+    if (addto_pl_return_only_choice)
+    {
+        addto_pl_current_choice = param;
+        return 1;
+    }
 
     splash(0, ID2P(LANG_WAIT));
 
@@ -519,16 +522,50 @@ void onplay_show_playlist_menu(const char* path, int attr, void (*playlist_inser
     do_menu(&tree_playlist_menu, NULL, NULL, false);
 }
 
+struct add_to_pl_param* onplay_show_playlist_menu_get_choice(void)
+{
+    addto_pl_current_choice = NULL;
+    addto_pl_return_only_choice = true;
+    in_queue_submenu = false;
+    do_menu(&tree_playlist_menu, NULL, NULL, false);
+    addto_pl_return_only_choice = false;
+    return addto_pl_current_choice;
+}
+
+struct add_to_pl_param* onplay_show_playlist_menu_get_current_choice(void)
+{
+    return addto_pl_current_choice;
+}
+
 /* playlist catalog options */
 static bool cat_add_to_a_playlist(void)
 {
-    return catalog_add_to_a_playlist(selected_file.path, selected_file.attr,
+    if (show_playlist_cat_menu_return_only_choice)
+    {
+        show_playlist_cat_menu_current_choice = catalog_add_to_a_playlist_get_choice(selected_file.path, selected_file.attr, false, NULL);
+        return true;
+    }
+    else
+        return catalog_add_to_a_playlist(selected_file.path, selected_file.attr,
                                      false, NULL, ctx_add_to_playlist);
+}
+
+char* onplay_show_playlist_cat_menu_get_current_choice(void)
+{
+    return show_playlist_cat_menu_current_choice;
 }
 
 static bool cat_add_to_a_new_playlist(void)
 {
-    return catalog_add_to_a_playlist(selected_file.path, selected_file.attr,
+    if (show_playlist_cat_menu_return_only_choice)
+    {
+        show_playlist_cat_menu_current_choice = catalog_add_to_a_playlist_get_choice(selected_file.path, selected_file.attr,
+            true, NULL);
+        show_playlist_cat_menu_current_choice_is_new_playlist = true;
+        return true;
+    }
+    else
+        return catalog_add_to_a_playlist(selected_file.path, selected_file.attr,
                                      true, NULL, ctx_add_to_playlist);
 }
 
@@ -543,6 +580,21 @@ MENUITEM_FUNCTION(cat_add_to_new, 0, ID2P(LANG_CATALOG_ADD_TO_NEW),
 MAKE_ONPLAYMENU(cat_playlist_menu, ID2P(LANG_ADD_TO_PL),
                 cat_playlist_callback, Icon_Playlist,
                 &cat_add_to_list, &cat_add_to_new);
+
+bool onplay_show_playlist_cat_menu_current_choice_is_new_playlist(void)
+{
+    return show_playlist_cat_menu_current_choice_is_new_playlist;
+}
+
+char* onplay_show_playlist_cat_menu_get_choice(void)
+{
+    show_playlist_cat_menu_current_choice = NULL;
+    show_playlist_cat_menu_current_choice_is_new_playlist = false;
+    show_playlist_cat_menu_return_only_choice = true;
+    do_menu(&cat_playlist_menu, NULL, NULL, false);
+    show_playlist_cat_menu_return_only_choice = false;
+    return show_playlist_cat_menu_current_choice;
+}
 
 void onplay_show_playlist_cat_menu(const char* track_name, int attr, void (*add_to_pl_cb))
 {
@@ -837,6 +889,12 @@ static bool list_viewers(void)
     return false;
 }
 
+static bool set_multiselect(void)
+{
+    onplay_result = ONPLAY_MULTISELECT;
+    return true;
+}
+
 #ifdef HAVE_TAGCACHE
 static bool prepare_database_sel(void *param)
 {
@@ -905,6 +963,10 @@ MENUITEM_FUNCTION_W_PARAM(properties_item, 0, ID2P(LANG_PROPERTIES),
 MENUITEM_FUNCTION_W_PARAM(track_info_item, 0, ID2P(LANG_MENU_SHOW_ID3_INFO),
                   onplay_load_plugin, (void *)"properties",
                   clipboard_callback, Icon_NOICON);
+MENUITEM_FUNCTION(multiselect_item_enable, 0, ID2P(LANG_MULTISELECT_ENABLE),
+                  set_multiselect, clipboard_callback, Icon_NOICON);
+MENUITEM_FUNCTION(multiselect_item_disable, 0, ID2P(LANG_MULTISELECT_DISABLE),
+                  set_multiselect, clipboard_callback, Icon_NOICON);
 #ifdef HAVE_TAGCACHE
 MENUITEM_FUNCTION_W_PARAM(pictureflow_item, 0, ID2P(LANG_ONPLAY_PICTUREFLOW),
                   onplay_load_plugin, (void *)"pictureflow",
@@ -1017,9 +1079,17 @@ static int clipboard_callback(int action,
                               struct gui_synclist *this_list)
 {
     (void)this_list;
+    bool multiselection_enabled = tree_get_context()->multiselection_enabled;
     switch (action)
     {
         case ACTION_REQUEST_MENUITEM:
+            if (this_item == &multiselect_item_disable)
+                return (multiselection_enabled ? action : ACTION_EXIT_MENUITEM);
+            if (this_item == &multiselect_item_enable)
+                return (!multiselection_enabled ? action : ACTION_EXIT_MENUITEM);
+            if (multiselection_enabled && 
+                    this_item != &tree_playlist_menu && this_item != &cat_playlist_menu)
+                return ACTION_EXIT_MENUITEM;
 #ifdef HAVE_MULTIVOLUME
             /* no rename+delete for volumes */
             if ((selected_file.attr & ATTR_VOLUME) &&
@@ -1162,6 +1232,8 @@ MAKE_ONPLAYMENU( tree_onplay_menu, ID2P(LANG_ONPLAY_MENU_TITLE),
            &rename_file_item, &clipboard_cut_item, &clipboard_copy_item,
            &clipboard_paste_item, &delete_file_item, &delete_dir_item,
            &list_viewers_item, &create_dir_item, &properties_item, &track_info_item,
+           &multiselect_item_enable,
+           &multiselect_item_disable,
 #ifdef HAVE_TAGCACHE
            &pictureflow_item,
 #endif
@@ -1189,7 +1261,7 @@ static int onplaymenu_callback(int action,
             }
             break;
         case ACTION_REQUEST_MENUITEM:
-            if (this_item == &view_playlist_item)
+            if (this_item == &view_playlist_item && !tree_get_context()->multiselection_enabled)
             {
                 if ((selected_file.attr & FILE_ATTR_MASK) == FILE_ATTR_M3U &&
                         selected_file.context == CONTEXT_TREE)
@@ -1335,6 +1407,11 @@ static const struct hotkey_assignment hotkey_items[] = {
       .func = HOTKEY_FUNC(bookmark_load_menu, NULL),
       .return_code = ONPLAY_START_PLAY,
       .flags = HOTKEY_FLAG_WPS },
+    { .action = HOTKEY_MULTISELECTION,
+      .lang_id = LANG_MULTISELECT_TOGGLE,
+      .func = HOTKEY_FUNC(NULL, NULL),
+      .return_code = ONPLAY_MULTISELECT,
+      .flags = HOTKEY_FLAG_TREE },
     { .action = HOTKEY_PROPERTIES,
       .lang_id = LANG_PROPERTIES,
       .func = HOTKEY_FUNC(hotkey_tree_run_plugin, (void *)"properties"),
@@ -1387,11 +1464,17 @@ static int execute_hotkey(bool is_wps)
 }
 #endif /* HOTKEY */
 
-int onplay(char* file, int attr, int from_context, bool hotkey, int customaction)
+int onplay(char* file, int attr, int from_context, bool hotkey, int customaction, bool getchoice)
 {
+    addto_pl_return_only_choice = getchoice;
+    show_playlist_cat_menu_return_only_choice = getchoice;
+    show_playlist_cat_menu_current_choice_is_new_playlist = false;
+    addto_pl_current_choice = NULL;
+    show_playlist_cat_menu_current_choice = NULL;
     const struct menu_item_ex *menu;
     onplay_result = ONPLAY_OK;
     ctx_current_playlist_insert = NULL;
+
     selected_file_set(from_context, NULL, attr);
 
 #ifdef HAVE_TAGCACHE
@@ -1401,13 +1484,13 @@ int onplay(char* file, int attr, int from_context, bool hotkey, int customaction
         if (file != NULL)
         {
             /* add a leading slash so that catalog_add_to_a_playlist
-               later prefills the name when creating a new playlist */
+                later prefills the name when creating a new playlist */
             snprintf(selected_file.buf, MAX_PATH, "/%s", file);
             selected_file.path = selected_file.buf;
         }
     }
-   else
-#endif
+    else
+    #endif
     {
         ctx_add_to_playlist = NULL;
         if (file != NULL)
@@ -1421,13 +1504,20 @@ int onplay(char* file, int attr, int from_context, bool hotkey, int customaction
 
 #ifdef HAVE_HOTKEY
     if (hotkey)
-        return execute_hotkey(from_context == CONTEXT_WPS);
+    {
+        int result = execute_hotkey(from_context == CONTEXT_WPS);
+        addto_pl_return_only_choice = false;
+        show_playlist_cat_menu_return_only_choice = false;
+        return result;
+    }
 #else
     (void)hotkey;
 #endif
     if (customaction == ONPLAY_CUSTOMACTION_SHUFFLE_SONGS)
     {
         int returnCode = add_to_playlist(&addtopl_replace_shuffled);
+        addto_pl_return_only_choice = false;
+        show_playlist_cat_menu_return_only_choice = false;
         if (returnCode == 1)
             // User did not want to erase his current playlist, so let's show again the database main menu
             return ONPLAY_RELOAD_DIR;
@@ -1444,7 +1534,8 @@ int onplay(char* file, int attr, int from_context, bool hotkey, int customaction
     if (get_current_activity() == ACTIVITY_CONTEXTMENU) /* Activity may have been      */
         pop_current_activity();                         /* popped already by menu item */
 
-
+    addto_pl_return_only_choice = false;
+    show_playlist_cat_menu_return_only_choice = false;
     if (menu_selection == GO_TO_WPS)
         return ONPLAY_START_PLAY;
     if (menu_selection == GO_TO_ROOT)

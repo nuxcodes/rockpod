@@ -302,7 +302,7 @@ enum plugin_status plugin_start(const void* parameter)
     rb->cpu_boost(0);
 #endif
     /* now dump it in the list */
-    rb->gui_synclist_init(&lists,list_get_name_cb,0, false, 1, NULL);
+    rb->gui_synclist_init(&lists,list_get_name_cb,0, false, 1, NULL, false);
     rb->gui_synclist_set_icon_callback(&lists, list_get_icon_cb);
     create_view(&lists);
     rb->gui_synclist_set_nb_items(&lists,view_item_count);
