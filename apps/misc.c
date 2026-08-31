@@ -73,6 +73,7 @@
 
 #ifdef IPOD_ACCESSORY_PROTOCOL
 #include "iap.h"
+#include "iap_screen.h"
 #endif
 
 #if (CONFIG_STORAGE & STORAGE_MMC)
@@ -676,6 +677,16 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
             system_restore();
             return SYS_USB_CONNECTED;
         }
+
+#ifdef IPOD_ACCESSORY_PROTOCOL
+        case SYS_IAP_UI_ENTER:
+            if (iap_remote_ui_active())
+                gui_iap_screen_run();
+            break;
+
+        case SYS_IAP_UI_EXIT:
+            break;
+#endif
 
         case SYS_POWEROFF:
         case SYS_REBOOT:

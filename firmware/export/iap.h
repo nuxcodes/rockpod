@@ -42,15 +42,42 @@
 #endif
 
 extern bool iap_getc(IF_IAP_MP(int port,) unsigned char x);
+/* Leave the serial bit rate as the user configured it. The USB HID
+ * transport has no bit rate of its own, and iap_setup(0) would set the
+ * serial one to autobaud: serial_bitrate() stores its argument before
+ * the !acc_plugged early return, so the setting was lost for the rest
+ * of the boot the first time a host enumerated. */
+#define IAP_RATE_UNCHANGED (-1)
+
 extern void iap_setup(int ratenum);
 extern void iap_malloc(void);
 extern void iap_bitrate_set(int ratenum);
 extern void iap_periodic(void);
 extern void iap_handlepkt(void);
+extern bool iap_remote_ui_active(void);
+extern bool iap_play_or_resume(void);
 extern void iap_send_pkt(const unsigned char * data, int len);
 extern void iap_send_reply(const unsigned char * data, int len,
                            unsigned char tid_hi, unsigned char tid_lo);
 const unsigned char *iap_get_serbuf(void);
+
+/* Codec volume to the protocol's 0..255 UI volume (MFi Table 4-61,
+ * event 0x04). Declared here as well as in apps/iap/iap-core.h so the
+ * remote tuner driver, which builds the same event 0x04 packet, uses
+ * one conversion rather than a second one of its own. */
+/* Two scales, and the difference matters on the wire. MFi Table 4-61
+ * (p.261): the UI level is "normalized to volume limit settings", the
+ * absolute one is not. Event 0x04 and GetiPodStateInfo(0x04) want the
+ * UI byte; only the absolute-volume paths want the other. */
+unsigned char iap_volume_to_byte(int volume);
+unsigned char iap_volume_to_ui_byte(int volume);
+
+/* Discard a partially received packet. The USB HID transport calls this
+ * when it abandons a report set, which MFi Accessory Hardware
+ * Specification R9 Table 3-2 (p.56) requires: "Any incomplete iAP
+ * packets received prior to the arrival of this report are flushed and
+ * lost." */
+void iap_rx_flush(void);
 
 /* Transport abstraction — USB HID driver overrides this for iAP-over-USB */
 extern void (*iap_transport_send)(const unsigned char *buf, int len);
@@ -64,5 +91,11 @@ extern int iap_repeatbtn;
 extern bool iap_record(bool onoff);
 #endif
 void iap_reset_state(IF_IAP_MP_NONVOID(int port) ); /* 0 is dock, 1 is headphone */
+
+#ifdef HAVE_IAP_ACCESSORY_POLL
+/* Targets whose accessory-detect line can only be read from thread
+ * context implement this; iap_periodic() calls it. */
+void iap_accessory_poll(void);
+#endif
 bool dbg_iap(void);
 #endif

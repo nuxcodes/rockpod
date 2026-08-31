@@ -64,6 +64,7 @@ tagtree.c
 filetree.c
 #ifdef IPOD_ACCESSORY_PROTOCOL
 iap/iap-core.c
+iap/iap-artwork.c
 iap/iap-lingo0.c
 #ifdef HAVE_LINE_REC
 iap/iap-lingo1.c
@@ -183,6 +184,9 @@ usb_keymaps.c
 #endif
 #ifndef USB_NONE
 gui/usb_screen.c
+#endif
+#ifdef IPOD_ACCESSORY_PROTOCOL
+gui/iap_screen.c
 #endif
 #ifdef HAVE_TAGCACHE
 tagcache.c
