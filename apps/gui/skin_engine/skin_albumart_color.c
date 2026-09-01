@@ -28,7 +28,6 @@
 #include "kernel.h"
 #include "audio.h"
 #include "playback.h"
-#include "buffering.h"
 #include "appevents.h"
 #include "skin_albumart_color.h"
 
@@ -448,12 +447,10 @@ void dynamic_colors_check_extraction(int aa_slot)
         return;
     }
 
-    int handle = playback_current_aa_hid(aa_slot);
-    if (handle >= 0)
+    struct bitmap *bmp = playback_current_aa_bitmap(aa_slot);
+    if (bmp)
     {
-        struct bitmap *bmp;
-        if (bufgetdata(handle, 0, (void *)&bmp) > 0)
-            extract_colors(bmp);
+        extract_colors(bmp);
         needs_extraction = false;
     }
     else

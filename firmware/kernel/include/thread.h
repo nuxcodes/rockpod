@@ -66,10 +66,11 @@
 #define IO_PRIORITY_IMMEDIATE    0
 #define IO_PRIORITY_BACKGROUND   32
 
+/* Extra slot for the album-art decode worker (HAVE_ALBUMART). */
 # ifdef HAVE_HARDWARE_CLICK
-#  define BASETHREADS  17
+#  define BASETHREADS  18
 # else
-#  define BASETHREADS  16
+#  define BASETHREADS  17
 # endif
 
 #ifndef TARGET_EXTRA_THREADS

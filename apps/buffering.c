@@ -32,7 +32,6 @@
 #include "bmp.h"
 #ifdef HAVE_ALBUMART
 #include "albumart.h"
-#include "jpeg_load.h"
 #include "playback.h"
 #endif
 #include "buffering.h"
@@ -848,34 +847,8 @@ static int load_image(int fd, const char *path,
                       struct bufopen_bitmap_data *data,
                       size_t bufidx, size_t max_size)
 {
-    (void)path;
-    int rc;
-    struct bitmap *bmp = ringbuf_ptr(bufidx);
-    struct dim *dim = data->dim;
-    struct mp3_albumart *aa = data->embedded_albumart;
-
-    /* get the desired image size */
-    bmp->width = dim->width, bmp->height = dim->height;
-    /* FIXME: alignment may be needed for the data buffer. */
-    bmp->data = ringbuf_ptr(bufidx + sizeof(struct bitmap));
-
-#if (LCD_DEPTH > 1) || defined(HAVE_REMOTE_LCD) && (LCD_REMOTE_DEPTH > 1)
-    bmp->maskdata = NULL;
-#endif
-    const int format = FORMAT_NATIVE | FORMAT_DITHER |
-                       FORMAT_RESIZE | FORMAT_KEEP_ASPECT;
-#ifdef HAVE_JPEG
-    if (aa != NULL) {
-        lseek(fd, aa->pos, SEEK_SET);
-        rc = clip_jpeg_fd(fd, aa->type, aa->size, bmp, (int)max_size, format, NULL);
-    }
-    else if (strcmp(path + strlen(path) - 4, ".bmp"))
-        rc = read_jpeg_fd(fd, bmp, (int)max_size, format, NULL);
-    else
-#endif
-        rc = read_bmp_fd(fd, bmp, (int)max_size, format, NULL);
-
-    return rc + (rc > 0 ? sizeof(struct bitmap) : 0);
+    return albumart_decode_fd(fd, path, data->dim, data->embedded_albumart,
+                              ringbuf_ptr(bufidx), max_size);
 }
 #endif /* HAVE_ALBUMART */
 
@@ -965,20 +938,8 @@ int bufopen(const char *file, off_t offset, enum data_type type,
          * so the file size should not be used as it may be too large
          * or too small */
         struct bufopen_bitmap_data *aa = user_data;
-        size = BM_SIZE(aa->dim->width, aa->dim->height, FORMAT_NATIVE, false);
-        size += sizeof(struct bitmap);
-
-#ifdef HAVE_JPEG
-        /* JPEG loading requires extra memory
-         * TODO: don't add unncessary overhead for .bmp images! */
-        size += JPEG_DECODE_OVERHEAD;
-#endif
-       /* resize_on_load requires space for 1 line + 2 spare lines */
-#ifdef HAVE_LCD_COLOR
-        size += sizeof(struct uint32_argb) * 3 * aa->dim->width;
-#else
-        size += sizeof(uint32_t) * 3 * aa->dim->width;
-#endif
+        size = albumart_decoded_size(aa->dim);
+        size += albumart_decode_overhead(aa->dim->width);
     }
 #endif /* HAVE_ALBUMART */
 
