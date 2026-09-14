@@ -52,6 +52,7 @@
 
 #include "wps_internals.h"
 #include "skin_engine.h"
+#include "skin_display.h"
 #include "statusbar-skinned.h"
 #include "root_menu.h"
 #ifdef HAVE_RECORDING
@@ -1225,18 +1226,7 @@ const char *get_token_value(struct gui_wps *gwps,
         case SKIN_TOKEN_ALBUMART_FOUND:
             if (SKINOFFSETTOPTR(get_skin_buffer(data), data->albumart))
             {
-                int handle = -1;
-                handle = playback_current_aa_hid(data->playback_aa_slot);
-#if CONFIG_TUNER
-                if (in_radio_screen() || (get_radio_status() != FMRADIO_OFF))
-                {
-                    struct skin_albumart *aa = SKINOFFSETTOPTR(get_skin_buffer(data), data->albumart);
-                    if (!aa) return NULL;
-                    struct dim dim = {aa->width, aa->height};
-                    handle = radio_get_art_hid(&dim);
-                }
-#endif
-                if (handle >= 0)
+                if (skin_get_albumart_bitmap(data))
                     return "C";
             }
             return NULL;

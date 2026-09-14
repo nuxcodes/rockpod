@@ -1450,7 +1450,7 @@ static int parse_albumart_load(struct skin_element* element,
     aa->y =  percent_parse_param(get_param(element, 1), curr_vp->vp.height);
     aa->width =  percent_parse_param(get_param(element, 2), curr_vp->vp.width);
     aa->height =  percent_parse_param(get_param(element, 3), curr_vp->vp.height);
-    aa->draw_handle = -1;
+    aa->draw_bmp = NULL;
 
     /* if we got here, we parsed everything ok .. ! */
     if (aa->width < 0)

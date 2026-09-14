@@ -424,10 +424,10 @@ void wps_display_images(struct gui_wps *gwps, struct viewport* vp)
 #ifdef HAVE_ALBUMART
     /* now draw the AA */
     struct skin_albumart *aa = SKINOFFSETTOPTR(get_skin_buffer(data), data->albumart);
-    if (aa && aa->draw_handle >= 0)
+    if (aa && aa->draw_bmp)
     {
-        draw_album_art(gwps, aa->draw_handle, false);
-        aa->draw_handle = -1;
+        draw_album_art(gwps, aa->draw_bmp, false);
+        aa->draw_bmp = NULL;
     }
 #endif
 
@@ -649,21 +649,44 @@ void draw_peakmeters(struct gui_wps *gwps, int line_number,
 }
 
 #ifdef HAVE_ALBUMART
-/* Draw the album art bitmap from the given handle ID onto the given WPS.
-   Call with clear = true to clear the bitmap instead of drawing it. */
-void draw_album_art(struct gui_wps *gwps, int handle_id, bool clear)
+struct bitmap *skin_get_albumart_bitmap(struct wps_data *data)
 {
-    if (!gwps || !gwps->data || !gwps->display || handle_id < 0)
+    struct bitmap *bmp;
+
+    if (!data)
+        return NULL;
+
+    bmp = playback_current_aa_bitmap(data->playback_aa_slot);
+#if CONFIG_TUNER
+    if (in_radio_screen() || (get_radio_status() != FMRADIO_OFF))
+    {
+        struct skin_albumart *aa = SKINOFFSETTOPTR(get_skin_buffer(data),
+                                                   data->albumart);
+        int handle = -1;
+        if (aa)
+        {
+            struct dim dim = { aa->width, aa->height };
+            handle = radio_get_art_hid(&dim);
+        }
+        bmp = NULL;
+        if (handle >= 0)
+            bufgetdata(handle, 0, (void *)&bmp);
+    }
+#endif
+    return bmp;
+}
+
+/* Draw the album art bitmap onto the given WPS.
+   Call with clear = true to clear the bitmap instead of drawing it. */
+void draw_album_art(struct gui_wps *gwps, struct bitmap *bmp, bool clear)
+{
+    if (!gwps || !gwps->data || !gwps->display || !bmp)
         return;
 
     struct wps_data *data = gwps->data;
     struct skin_albumart *aa = SKINOFFSETTOPTR(get_skin_buffer(data), data->albumart);
 
     if (!aa)
-        return;
-
-    struct bitmap *bmp;
-    if (bufgetdata(handle_id, 0, (void *)&bmp) <= 0)
         return;
 
     short x = aa->x;

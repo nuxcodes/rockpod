@@ -115,6 +115,12 @@ void playback_release_aa_slot(int slot)
 {
     return;
 }
+
+struct bitmap *playback_current_aa_bitmap(int slot)
+{
+    (void)slot;
+    return NULL;
+}
 #endif
 
 int resize_on_load(struct bitmap *bm, bool dither,

@@ -34,13 +34,15 @@
 #endif
 
 #ifdef HAVE_ALBUMART
-
 #include "bmp.h"
 #include "metadata.h"
+#include "albumart_cache.h"
 /*
- * Returns the handle id of the buffered albumart for the given slot id
- **/
-int playback_current_aa_hid(int slot);
+ * Returns the decoded album art bitmap for the given slot, or NULL.
+ * Window is ±2 around playlist current; skip_offset is applied for
+ * fast skip preview.
+ */
+struct bitmap *playback_current_aa_bitmap(int slot);
 
 /*
  * Hands out an albumart slot for buffering albumart using the size
@@ -64,6 +66,9 @@ void playback_release_aa_slot(int slot);
  *
  * Save to call from other threads */
 void playback_update_aa_dims(void);
+
+/* Snapshot AA window + background job for the buffering debug screen */
+void playback_aa_get_debugdata(struct albumart_cache_debug *dbg);
 
 struct bufopen_bitmap_data {
     struct dim *dim;

@@ -285,7 +285,7 @@ struct skin_albumart {
     unsigned char yalign; /* WPS_ALBUMART_ALIGN_TOP, _CENTER, _BOTTOM */
     unsigned char state; /* WPS_ALBUMART_NONE, _CHECK, _LOAD */
 
-    int draw_handle;
+    struct bitmap *draw_bmp;
 };
 #endif
 

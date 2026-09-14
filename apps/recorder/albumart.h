@@ -25,6 +25,7 @@
 #if defined(HAVE_ALBUMART) || defined(PLUGIN)
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "metadata.h"
 #include "skin_engine/skin_engine.h"
 
@@ -39,6 +40,18 @@ bool search_albumart_files(const struct mp3entry *id3, const char *size_string,
                            char *buf, int buflen);
 
 void get_albumart_size(struct bitmap *bmp);
+
+#ifndef PLUGIN
+/* Decoded native bitmap bytes for a target dim, including struct bitmap */
+size_t albumart_decoded_size(const struct dim *dim);
+/* Extra workspace JPEG/BMP loaders need on top of the pixel buffer */
+size_t albumart_decode_overhead(int width);
+/* Decode file or embedded JPEG into buf. Returns total bytes used
+ * (struct bitmap + pixels) or <= 0 on failure. */
+int albumart_decode_fd(int fd, const char *path, const struct dim *dim,
+                       struct mp3_albumart *embedded,
+                       void *buf, size_t max_size);
+#endif
 
 #endif /* HAVE_ALBUMART */
 

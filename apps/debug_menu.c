@@ -86,6 +86,9 @@
 #include "pcmbuf.h"
 #include "buffering.h"
 #include "playback.h"
+#ifdef HAVE_ALBUMART
+#include "albumart_cache.h"
+#endif
 #if defined(HAVE_SPDIF_OUT) || defined(HAVE_SPDIF_IN)
 #include "spdif.h"
 #endif
@@ -478,6 +481,46 @@ static bool dbg_buffering_thread(void)
             screens[i].putsf(0, line++, "track count: %2u", audio_track_count());
 
             screens[i].putsf(0, line++, "handle count: %d", (int)d.num_handles);
+
+#ifdef HAVE_ALBUMART
+            {
+                struct albumart_cache_debug aa;
+                playback_aa_get_debugdata(&aa);
+
+                screens[i].putsf(0, line++, fmt_used, "aa",
+                                 (long)aa.used_size, (long)aa.pool_size);
+
+                gui_scrollbar_draw(&screens[i], 0, line*SYSFONT_HEIGHT,
+                                   screens[i].lcdwidth, 6,
+                                   aa.pool_size ? (int)aa.pool_size : 1,
+                                   0, (int)aa.used_size, HORIZONTAL);
+                line++;
+
+                screens[i].putsf(0, line++, "aa slots: %d/%d",
+                                 aa.slots_used, aa.slots_total);
+
+                screens[i].putsf(0, line++,
+                    "aa win: -2 %c -1 %c 0 %c +1 %c +2 %c",
+                    aa.occupied[0] ? '#' : '.',
+                    aa.occupied[1] ? '#' : '.',
+                    aa.occupied[2] ? '#' : '.',
+                    aa.occupied[3] ? '#' : '.',
+                    aa.occupied[4] ? '#' : '.');
+
+                if (aa.skip_offset)
+                    screens[i].putsf(0, line++,
+                                     "aa job: %d/%d off=%d skip=%d",
+                                     aa.work_index, AA_WINDOW_SIZE,
+                                     aa.work_offset, aa.skip_offset);
+                else
+                    screens[i].putsf(0, line++, "aa job: %d/%d off=%d",
+                                     aa.work_index, AA_WINDOW_SIZE,
+                                     aa.work_offset);
+
+                screens[i].putsf(0, line++, "aa now: %s",
+                                 aa.occupied[AA_WINDOW_RADIUS] ? "yes" : "no");
+            }
+#endif
 
 #if (CONFIG_PLATFORM & PLATFORM_NATIVE)
             screens[i].putsf(0, line++, "cpu freq: %3dMHz",
