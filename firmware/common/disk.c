@@ -565,6 +565,111 @@ int disk_unmount_all(void)
     return unmounted;
 }
 
+#if defined(MAX_VIRT_SECTOR_SIZE) && defined(DEFAULT_VIRT_SECTOR_SIZE)
+/* Return the BPB bytes-per-sector value if 'sector' looks like a FAT boot
+ * sector, otherwise 0. Only cheap structural checks; we're deciding what
+ * block size to advertise, not mounting anything. */
+static unsigned int fat_boot_sector_bps(const unsigned char *sector)
+{
+    if (BYTES2INT16(sector, 510) != 0xaa55)
+        return 0;
+    if (sector[0] != 0xeb && sector[0] != 0xe9) /* x86 jump opcode */
+        return 0;
+
+    unsigned int bps = BYTES2INT16(sector, 11);
+    unsigned int spc = sector[13];
+    unsigned int numfats = sector[16];
+
+    if (bps < 512 || bps > 4096 || (bps & (bps - 1)))
+        return 0;
+    if (!spc || (spc & (spc - 1)))
+        return 0;
+    if (numfats < 1 || numfats > 2)
+        return 0;
+
+    return bps;
+}
+
+/* Work out the sector multiplier from what is actually on the disk rather
+ * than from whatever the last disk_mount() left behind.
+ *
+ * iTunes formats the iPod Classic (4096) / Video (2048) with a "virtual"
+ * sector size larger than the drive's logical sector, and the MBR LBAs and
+ * the FAT BPB are both written in those units. If USB advertises the raw
+ * 512-byte logical sector, the host reads the MBR in the wrong units, looks
+ * for the boot sector in the wrong place and sees no filesystem.
+ *
+ * Returns the multiplier (>= 1) on success or 0 if no recognisable layout
+ * was found. Does not change any mount state. */
+int disk_probe_sector_multiplier(IF_MD_NONVOID(int drive))
+{
+    if (!CHECK_DRV(drive))
+        return 0;
+
+    unsigned char *sector = dc_get_buffer();
+    if (!sector)
+        return 0;
+
+    int result = 0;
+    unsigned int log_size = LOG_SECTOR_SIZE(drive);
+    unsigned int max_mult = MAX_VIRT_SECTOR_SIZE / log_size;
+    unsigned int bps;
+
+    if (storage_read_sectors(IF_MD(drive,) 0, 1, sector) < 0)
+        goto out;
+
+    /* "superfloppy": sector 0 is the FAT boot sector itself */
+    bps = fat_boot_sector_bps(sector);
+    if (bps)
+    {
+        unsigned int mult = bps / log_size;
+        if (bps % log_size == 0 && mult >= 1 && mult <= max_mult)
+            result = mult;
+        goto out;
+    }
+
+    if (BYTES2INT16(sector, 510) != 0xaa55)
+        goto out; /* no partition table either */
+
+    /* MBR: for each partition, find the multiplier that puts a FAT boot
+     * sector at start*mult whose bytes-per-sector agrees with mult. */
+    for (int i = 0; i < 4 && !result; i++)
+    {
+        const unsigned char *ptr = sector + 0x1be + 16*i;
+        unsigned char type = ptr[4];
+        sector_t start = BYTES2INT32(ptr, 8);
+
+        if (start == 0 || type == 0x05 || type == 0x0f ||
+            type == PARTITION_TYPE_GPT_GUARD)
+            continue;
+
+        for (unsigned int mult = 1; mult <= max_mult; mult <<= 1)
+        {
+            if (storage_read_sectors(IF_MD(drive,) start * mult, 1, sector) < 0)
+                continue;
+
+            if (fat_boot_sector_bps(sector) == mult * log_size)
+            {
+                result = mult;
+                break;
+            }
+        }
+
+        if (!result)
+        {
+            /* Re-read the MBR for the next partition entry */
+            if (storage_read_sectors(IF_MD(drive,) 0, 1, sector) < 0)
+                break;
+        }
+    }
+
+out:
+    dc_release_buffer(sector);
+    DEBUGF("disk_probe_sector_multiplier: %d\n", result);
+    return result;
+}
+#endif /* MAX_VIRT_SECTOR_SIZE && DEFAULT_VIRT_SECTOR_SIZE */
+
 bool disk_present(IF_MD_NONVOID(int drive))
 {
     int rc = -1;

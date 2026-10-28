@@ -1390,7 +1390,19 @@ int ata_event(long id, intptr_t data)
     }
     else if (id == SYS_USB_CONNECTED)
     {
-        STG_EVENT_ASSERT_ACTIVE(STORAGE_ATA);
+        /* Match the generic ATA driver's USB path: the disk must be awake
+         * before storage acknowledges the connection. Rockpod's deep-sleep
+         * path can otherwise leave the medium unavailable during the first
+         * USB storage probe. */
+        mutex_lock(&ata_mutex);
+        if (!ata_powered)
+            rc = ata_power_up();
+        else
+            ata_set_active();
+        mutex_unlock(&ata_mutex);
+
+        if (rc == 0)
+            STG_EVENT_ASSERT_ACTIVE(STORAGE_ATA);
     }
     else
     {

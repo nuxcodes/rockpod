@@ -53,6 +53,8 @@ int disk_get_sector_multiplier(IF_MD_NONVOID(int drive));
 /* The logical sector size to use when we have no valid paritions */
 #ifdef DEFAULT_VIRT_SECTOR_SIZE
 void disk_set_sector_multiplier(IF_MD(int drive,) int mult);
+/* Derive the multiplier from the on-disk MBR/FAT layout; 0 if unknown */
+int disk_probe_sector_multiplier(IF_MD_NONVOID(int drive));
 #endif
 #endif
 
